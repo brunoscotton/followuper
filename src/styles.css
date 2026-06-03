@@ -64,6 +64,24 @@ h1 {
   line-height: 1;
 }
 
+.app-logo {
+  display: block;
+  object-fit: contain;
+}
+
+.header-logo {
+  height: 76px;
+  max-width: min(420px, 62vw);
+  object-position: left center;
+}
+
+.login-logo {
+  height: 90px;
+  margin-top: 4px;
+  max-width: 100%;
+  object-position: left center;
+}
+
 h2 {
   font-size: 1.05rem;
 }
@@ -858,9 +876,9 @@ td {
 .login-panel {
   display: grid;
   gap: 16px;
-  max-width: 420px;
+  max-width: 520px;
   padding: 24px;
-  width: min(420px, 100%);
+  width: min(520px, 100%);
 }
 
 .login-panel .app-alert {

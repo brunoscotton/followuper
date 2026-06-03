@@ -1,4 +1,4 @@
-# Followuper
+# FollowUper
 
 Dashboard para acompanhamento de cotações, follow-ups e mudanças de status.
 

@@ -792,6 +792,19 @@ export function App() {
     }
   }
 
+  async function removeTrackingEntry(id) {
+    const previousEntries = trackingEntries;
+    setTrackingEntries((current) => current.filter((entry) => entry.id !== id));
+
+    try {
+      await deleteTrackingEntry(id);
+      setAppError('');
+    } catch (error) {
+      setTrackingEntries(previousEntries);
+      setAppError(error.message || 'Não foi possível excluir o rastreio.');
+    }
+  }
+
   function openTrackingModal(entry) {
     setTrackingModal(entry);
     setTrackingForm({
@@ -926,7 +939,7 @@ export function App() {
       <main className="app-shell center-shell">
         <div className="loading-panel">
           <Database size={28} />
-          <p>Carregando Followuper...</p>
+          <p>Carregando FollowUper...</p>
         </div>
       </main>
     );
@@ -941,7 +954,7 @@ export function App() {
       <section className="topbar">
         <div>
           <p className="eyebrow">Dashboard comercial</p>
-          <h1>Followuper</h1>
+          <img className="app-logo header-logo" src="/followuper-logo.png" alt="FollowUper" />
         </div>
         <div className="top-stack">
           <div className="session-actions">
@@ -1033,6 +1046,7 @@ export function App() {
           entries={visibleTrackingEntries}
           metrics={trackingMetrics}
           onEdit={openTrackingModal}
+          onRemove={removeTrackingEntry}
           onAddStandalone={openStandaloneTrackingModal}
           setActiveTrackingTab={setActiveTrackingTab}
           setActiveView={setActiveView}
@@ -1435,6 +1449,7 @@ function TrackingWorkspace({
   metrics,
   onAddStandalone,
   onEdit,
+  onRemove,
   searchTerm,
   setActiveTrackingTab,
   setActiveView,
@@ -1532,15 +1547,26 @@ function TrackingWorkspace({
                   <td>{entry.status}</td>
                   <td>{entry.finalizedAt ? formatDateTime(entry.finalizedAt) : '—'}</td>
                   <td>
-                    <button
-                      className="icon-button neutral"
-                      type="button"
-                      title="Editar rastreio"
-                      aria-label="Editar rastreio"
-                      onClick={() => onEdit(entry)}
-                    >
-                      <Pencil size={17} />
-                    </button>
+                    <div className="row-actions">
+                      <button
+                        className="icon-button neutral"
+                        type="button"
+                        title="Editar rastreio"
+                        aria-label="Editar rastreio"
+                        onClick={() => onEdit(entry)}
+                      >
+                        <Pencil size={17} />
+                      </button>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        title="Excluir rastreio"
+                        aria-label="Excluir rastreio"
+                        onClick={() => onRemove(entry.id)}
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -1855,11 +1881,11 @@ function LoginScreen({ error, onLogin }) {
     <main className="login-shell">
       <form className="login-panel" onSubmit={handleSubmit}>
         <div className="login-mark">
-          <ShieldCheck size={32} />
+          <ShieldCheck size={24} />
         </div>
         <div>
           <p className="eyebrow">Acesso restrito</p>
-          <h1>Followuper</h1>
+          <img className="app-logo login-logo" src="/followuper-logo.png" alt="FollowUper" />
         </div>
 
         {error && <div className="app-alert">{error}</div>}
