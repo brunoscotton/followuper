@@ -971,10 +971,19 @@ function QuotesWorkspace({
                       <td>{quote.seller}</td>
                       <td>
                         <div className="due-cell">
-                          {due ? <CalendarClock size={16} /> : <Clock3 size={16} />}
-                          <span>{formatDateTime(dueAt)}</span>
-                          {due && <b>Follow-up</b>}
-                          {unchanged && <b className="neutral">Sem alteração</b>}
+                          {isClosed(quote) ? (
+                            <>
+                              <CheckCircle2 size={16} />
+                              <span>Finalizada</span>
+                            </>
+                          ) : (
+                            <>
+                              {due ? <CalendarClock size={16} /> : <Clock3 size={16} />}
+                              <span>{formatDateTime(dueAt)}</span>
+                              {due && <b>Follow-up</b>}
+                              {unchanged && <b className="neutral">Sem alteração</b>}
+                            </>
+                          )}
                         </div>
                       </td>
                       <td>
@@ -1101,6 +1110,7 @@ function TrackingWorkspace({ activeTrackingTab, entries, metrics, onEdit, setAct
           <tbody>
             {entries.map((entry) => {
               const colorClass = situationColorClass[entry.deliverySituation] || 'blue';
+              const hasTrackingCode = entry.trackingCode.trim();
               return (
                 <tr className={`tracking-row ${colorClass}`} key={entry.id}>
                   <td className="strong-text">{entry.quoteNumber}</td>
@@ -1113,7 +1123,7 @@ function TrackingWorkspace({ activeTrackingTab, entries, metrics, onEdit, setAct
                     </span>
                   </td>
                   <td>
-                    <span className={`situation ${colorClass}`}>{entry.deliverySituation}</span>
+                    {hasTrackingCode ? <span className={`situation ${colorClass}`}>{entry.deliverySituation}</span> : '—'}
                   </td>
                   <td>{formatDateWithWeekday(entry.expectedDeliveryDate)}</td>
                   <td className="notes-cell">{entry.notes || '—'}</td>
