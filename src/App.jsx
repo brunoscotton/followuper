@@ -20,10 +20,12 @@ import React from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { getCurrentSession, onAuthChange, signIn, signOut } from './services/authRepository';
 import {
+  cacheQuotes,
   createQuote,
   deleteQuote,
   loadQuotes as loadStoredQuotes,
   persistenceMode,
+  subscribeToQuoteChanges,
   updateQuote,
 } from './services/quotesRepository';
 import { isSupabaseConfigured } from './services/supabaseClient';
@@ -105,6 +107,10 @@ function isStatusUnchanged(quote, now) {
   return !isClosed(quote) && quote.statusUpdatedAt === quote.createdAt && oneDayAfterCreation <= now;
 }
 
+function sortQuotes(quotes) {
+  return [...quotes].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
 export function App() {
   const [quotes, setQuotes] = useState([]);
   const [form, setForm] = useState(initialForm);
@@ -155,6 +161,7 @@ export function App() {
 
   useEffect(() => {
     let active = true;
+    let unsubscribeRealtime = () => {};
 
     if (!authChecked) return () => {};
 
@@ -168,11 +175,38 @@ export function App() {
 
     setIsLoading(true);
     loadStoredQuotes()
-      .then(({ quotes: loadedQuotes, mode, migratedCount }) => {
+      .then(({ quotes: loadedQuotes, mode }) => {
         if (!active) return;
         setQuotes(loadedQuotes);
-        setDataStatus(migratedCount ? `${mode === 'supabase' ? 'Supabase' : 'Local'} · ${migratedCount} importadas` : mode === 'supabase' ? 'Supabase' : 'Local');
+        setDataStatus(mode === 'supabase' ? 'Supabase · tempo real' : 'Local');
         setAppError('');
+
+        if (mode === 'supabase') {
+          unsubscribeRealtime = subscribeToQuoteChanges(({ eventType, quote, oldId }) => {
+            setQuotes((current) => {
+              let nextQuotes = current;
+
+              if (eventType === 'INSERT' && quote) {
+                const exists = current.some((item) => item.id === quote.id);
+                nextQuotes = exists
+                  ? current.map((item) => (item.id === quote.id ? quote : item))
+                  : [quote, ...current];
+              }
+
+              if (eventType === 'UPDATE' && quote) {
+                nextQuotes = current.map((item) => (item.id === quote.id ? quote : item));
+              }
+
+              if (eventType === 'DELETE' && oldId) {
+                nextQuotes = current.filter((item) => item.id !== oldId);
+              }
+
+              const sortedQuotes = sortQuotes(nextQuotes);
+              cacheQuotes(sortedQuotes);
+              return sortedQuotes;
+            });
+          });
+        }
       })
       .catch((error) => {
         if (!active) return;
@@ -184,6 +218,7 @@ export function App() {
 
     return () => {
       active = false;
+      unsubscribeRealtime();
     };
   }, [authChecked, user]);
 

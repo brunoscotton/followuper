@@ -12,6 +12,8 @@ create table if not exists public.quotes (
   created_at timestamptz not null default now()
 );
 
+alter table public.quotes replica identity full;
+
 alter table public.quotes enable row level security;
 
 drop policy if exists "Authenticated users can read quotes" on public.quotes;
@@ -43,3 +45,16 @@ create policy "Authenticated users can delete quotes"
   for delete
   to authenticated
   using (true);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'quotes'
+  ) then
+    alter publication supabase_realtime add table public.quotes;
+  end if;
+end $$;

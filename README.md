@@ -20,6 +20,8 @@ Com Supabase configurado, o app exige login e salva tudo no banco.
 4. Em Authentication > Users, crie os usuários que poderão acessar o sistema.
 5. Em Project Settings > API, copie a Project URL e a anon public key.
 
+Sempre que `supabase/schema.sql` mudar, execute o arquivo novamente no SQL Editor. Ele e idempotente e tambem habilita realtime para inclusoes, alteracoes e exclusoes.
+
 ## Variáveis de ambiente
 
 Crie um `.env.local` para desenvolvimento:

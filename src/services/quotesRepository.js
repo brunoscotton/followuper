@@ -16,6 +16,10 @@ function saveLocalQuotes(quotes) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(quotes));
 }
 
+export function cacheQuotes(quotes) {
+  saveLocalQuotes(sortQuotes(quotes));
+}
+
 function toQuote(row) {
   return {
     id: row.id,
@@ -54,39 +58,17 @@ function sortQuotes(quotes) {
   return [...quotes].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
-async function importLocalQuotes(remoteQuotes) {
-  const localQuotes = loadLocalQuotes();
-  if (!localQuotes.length) return { quotes: remoteQuotes, migratedCount: 0 };
-
-  const remoteIds = new Set(remoteQuotes.map((quote) => quote.id));
-  const missingQuotes = localQuotes.filter((quote) => !remoteIds.has(quote.id));
-  if (!missingQuotes.length) return { quotes: remoteQuotes, migratedCount: 0 };
-
-  const { data, error } = await supabase
-    .from('quotes')
-    .insert(missingQuotes.map(toRow))
-    .select('*');
-
-  if (error) throw error;
-
-  const mergedQuotes = sortQuotes([...remoteQuotes, ...data.map(toQuote)]);
-  saveLocalQuotes(mergedQuotes);
-  return { quotes: mergedQuotes, migratedCount: missingQuotes.length };
-}
-
 export async function loadQuotes() {
   if (!supabase) {
-    return { quotes: sortQuotes(loadLocalQuotes()), mode: 'local', migratedCount: 0 };
+    return { quotes: sortQuotes(loadLocalQuotes()), mode: 'local' };
   }
 
   const { data, error } = await supabase.from('quotes').select('*').order('created_at', { ascending: false });
   if (error) throw error;
 
   const remoteQuotes = data.map(toQuote);
-  const migrated = await importLocalQuotes(remoteQuotes);
-
-  saveLocalQuotes(migrated.quotes);
-  return { quotes: migrated.quotes, mode: 'supabase', migratedCount: migrated.migratedCount };
+  saveLocalQuotes(remoteQuotes);
+  return { quotes: remoteQuotes, mode: 'supabase' };
 }
 
 export async function createQuote(quote) {
@@ -130,4 +112,23 @@ export async function deleteQuote(id) {
   if (error) throw error;
 
   saveLocalQuotes(loadLocalQuotes().filter((quote) => quote.id !== id));
+}
+
+export function subscribeToQuoteChanges(onChange) {
+  if (!supabase) return () => {};
+
+  const channel = supabase
+    .channel('public:quotes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, (payload) => {
+      onChange({
+        eventType: payload.eventType,
+        quote: payload.new?.id ? toQuote(payload.new) : null,
+        oldId: payload.old?.id,
+      });
+    })
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
