@@ -21,6 +21,9 @@ export function cacheQuotes(quotes) {
 }
 
 function toQuote(row) {
+  const followUpUnit = row.follow_up_unit || 'days';
+  const followUpAmount = row.follow_up_amount || row.follow_up_days || 1;
+
   return {
     id: row.id,
     quoteNumber: row.quote_number,
@@ -28,10 +31,14 @@ function toQuote(row) {
     paymentTerms: row.payment_terms || '',
     quoteDate: row.quote_date,
     seller: row.seller,
-    followUpDays: row.follow_up_days,
+    followUpDays: row.follow_up_days || (followUpUnit === 'days' ? followUpAmount : 1),
+    followUpAmount,
+    followUpUnit,
+    followUpStartedAt: row.follow_up_started_at || row.created_at,
     status: row.status,
     createdAt: row.created_at,
     statusUpdatedAt: row.status_updated_at,
+    archivedAt: row.archived_at || '',
     closeDetails: row.close_details || undefined,
   };
 }
@@ -46,9 +53,13 @@ function toRow(quote) {
   if ('quoteDate' in quote) row.quote_date = quote.quoteDate;
   if ('seller' in quote) row.seller = quote.seller;
   if ('followUpDays' in quote) row.follow_up_days = quote.followUpDays;
+  if ('followUpAmount' in quote) row.follow_up_amount = quote.followUpAmount;
+  if ('followUpUnit' in quote) row.follow_up_unit = quote.followUpUnit;
+  if ('followUpStartedAt' in quote) row.follow_up_started_at = quote.followUpStartedAt;
   if ('status' in quote) row.status = quote.status;
   if ('createdAt' in quote) row.created_at = quote.createdAt;
   if ('statusUpdatedAt' in quote) row.status_updated_at = quote.statusUpdatedAt;
+  if ('archivedAt' in quote) row.archived_at = quote.archivedAt || null;
   if ('closeDetails' in quote) row.close_details = quote.closeDetails || null;
 
   return row;

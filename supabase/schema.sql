@@ -6,8 +6,12 @@ create table if not exists public.quotes (
   quote_date date not null,
   seller text not null check (seller in ('Elton', 'Bruno', 'Stephanie')),
   follow_up_days integer not null default 1 check (follow_up_days >= 1),
+  follow_up_amount numeric not null default 1 check (follow_up_amount > 0),
+  follow_up_unit text not null default 'days' check (follow_up_unit in ('days', 'hours', 'minutes')),
+  follow_up_started_at timestamptz,
   status text not null default 'sem-resposta' check (status in ('sem-resposta', 'negociacao', 'fechada')),
   status_updated_at timestamptz not null,
+  archived_at timestamptz,
   close_details jsonb,
   created_at timestamptz not null default now()
 );
@@ -43,6 +47,24 @@ create table if not exists public.tracking_entries (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.quotes add column if not exists follow_up_amount numeric not null default 1;
+alter table public.quotes add column if not exists follow_up_unit text not null default 'days';
+alter table public.quotes add column if not exists follow_up_started_at timestamptz;
+alter table public.quotes add column if not exists archived_at timestamptz;
+
+alter table public.quotes drop constraint if exists quotes_follow_up_amount_check;
+alter table public.quotes add constraint quotes_follow_up_amount_check check (follow_up_amount > 0);
+alter table public.quotes drop constraint if exists quotes_follow_up_unit_check;
+alter table public.quotes add constraint quotes_follow_up_unit_check check (follow_up_unit in ('days', 'hours', 'minutes'));
+
+update public.quotes
+set follow_up_amount = coalesce(follow_up_amount, follow_up_days, 1),
+    follow_up_unit = coalesce(follow_up_unit, 'days'),
+    follow_up_started_at = coalesce(follow_up_started_at, created_at)
+where follow_up_started_at is null
+   or follow_up_amount is null
+   or follow_up_unit is null;
 
 alter table public.quotes replica identity full;
 alter table public.tracking_entries replica identity full;

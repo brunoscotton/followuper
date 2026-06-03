@@ -248,6 +248,29 @@ small {
   grid-template-columns: 1fr 130px;
 }
 
+.followup-input-group {
+  display: grid;
+  gap: 8px;
+}
+
+.checkbox-label {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+}
+
+.checkbox-label input {
+  min-height: auto;
+  width: auto;
+}
+
+.inline-field-pair {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(72px, 1fr) minmax(98px, 120px);
+}
+
 .form-pair.wide {
   grid-template-columns: 1fr 190px;
 }
@@ -323,7 +346,7 @@ small {
 .tabs {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(4, minmax(145px, 1fr));
+  grid-template-columns: repeat(5, minmax(135px, 1fr));
   margin-bottom: 12px;
 }
 
@@ -453,8 +476,16 @@ td {
   border-left-color: #ef4444;
 }
 
+.quote-row.overdue td {
+  background: #fff1f2;
+}
+
 .quote-row:hover td {
   background: #fbfcfe;
+}
+
+.quote-row.overdue:hover td {
+  background: #ffe4e6;
 }
 
 .quote-row.expandable {
@@ -495,6 +526,19 @@ td {
   color: #354353;
 }
 
+.inline-reset-button {
+  background: transparent;
+  border: 0;
+  color: #be123c;
+  font-weight: 900;
+  padding: 0;
+  text-align: left;
+}
+
+.inline-reset-button:hover {
+  text-decoration: underline;
+}
+
 .icon-button {
   align-items: center;
   background: #fff1f2;
@@ -525,6 +569,21 @@ td {
   align-items: center;
   display: flex;
   gap: 8px;
+}
+
+.archive-button {
+  background: #be123c;
+  border: 1px solid #be123c;
+  border-radius: 7px;
+  color: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 900;
+  min-height: 36px;
+  padding: 7px 10px;
+}
+
+.archive-button:hover {
+  background: #9f1239;
 }
 
 .closed-details-row td {
@@ -871,6 +930,7 @@ button:disabled {
   .quote-form,
   .form-pair,
   .form-pair.wide,
+  .inline-field-pair,
   .tabs {
     grid-template-columns: 1fr;
   }

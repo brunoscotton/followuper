@@ -27,6 +27,8 @@ O schema cria duas tabelas:
 - `quotes`: cotações e dados de fechamento.
 - `tracking_entries`: rastreios gerados automaticamente quando uma cotação e finalizada.
 
+As cotações usam campos de follow-up por unidade (`days`, `hours`, `minutes`) e arquivamento. Depois de atualizar o projeto, execute o schema antes de usar o deploy em produção.
+
 ## Variáveis de ambiente
 
 Crie um `.env.local` para desenvolvimento:

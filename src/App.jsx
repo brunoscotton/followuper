@@ -52,6 +52,7 @@ const tabs = [
   { value: 'abertas', label: 'Cotações em aberto' },
   { value: 'followup', label: 'Cotações para Follow-up' },
   { value: 'fechadas', label: 'Cotações finalizadas' },
+  { value: 'arquivadas', label: 'Arquivadas' },
   { value: 'todas', label: 'Visualizar todas' },
 ];
 
@@ -103,7 +104,9 @@ const initialForm = {
   paymentTerms: '',
   quoteDate: getTodayInputValue(),
   seller: 'Elton',
-  followUpDays: 1,
+  followUpAmount: 1,
+  followUpUnit: 'days',
+  followUpUsesTime: false,
 };
 
 const initialQuoteEditForm = {
@@ -112,7 +115,9 @@ const initialQuoteEditForm = {
   paymentTerms: '',
   quoteDate: getTodayInputValue(),
   seller: 'Elton',
-  followUpDays: 1,
+  followUpAmount: 1,
+  followUpUnit: 'days',
+  followUpUsesTime: false,
 };
 
 const initialTrackingForm = {
@@ -130,6 +135,17 @@ function getTodayInputValue() {
 function addDays(dateValue, days) {
   const date = new Date(dateValue);
   date.setDate(date.getDate() + Number(days || 0));
+  return date;
+}
+
+function addFollowUpTime(dateValue, amount, unit) {
+  const date = new Date(dateValue);
+  const numericAmount = Number(amount || 1);
+
+  if (unit === 'minutes') date.setMinutes(date.getMinutes() + numericAmount);
+  else if (unit === 'hours') date.setHours(date.getHours() + numericAmount);
+  else date.setDate(date.getDate() + numericAmount);
+
   return date;
 }
 
@@ -170,8 +186,20 @@ function isClosed(quote) {
   return quote.status === 'fechada';
 }
 
+function isArchived(quote) {
+  return Boolean(quote.archivedAt);
+}
+
+function getFollowUpDueAt(quote) {
+  return addFollowUpTime(
+    quote.followUpStartedAt || quote.createdAt,
+    quote.followUpAmount || quote.followUpDays || 1,
+    quote.followUpUnit || 'days',
+  );
+}
+
 function isFollowUpDue(quote, now) {
-  return !isClosed(quote) && addDays(quote.createdAt, quote.followUpDays) <= now;
+  return !isClosed(quote) && !isArchived(quote) && getFollowUpDueAt(quote) <= now;
 }
 
 function isStatusUnchanged(quote, now) {
@@ -330,9 +358,10 @@ export function App() {
     const unchangedStatus = quotes.filter((quote) => isStatusUnchanged(quote, now));
 
     return {
-      abertas: quotes.filter((quote) => !isClosed(quote)).length,
+      abertas: quotes.filter((quote) => !isClosed(quote) && !isArchived(quote)).length,
       followup: followUpDue.length,
       fechadas: quotes.filter(isClosed).length,
+      arquivadas: quotes.filter(isArchived).length,
       todas: quotes.length,
       followUpDue: followUpDue.length,
       unchangedStatus: unchangedStatus.length,
@@ -353,9 +382,10 @@ export function App() {
 
     return quotes
       .filter((quote) => {
-        if (activeTab === 'abertas') return !isClosed(quote);
+        if (activeTab === 'abertas') return !isClosed(quote) && !isArchived(quote);
         if (activeTab === 'followup') return isFollowUpDue(quote, now);
         if (activeTab === 'fechadas') return isClosed(quote);
+        if (activeTab === 'arquivadas') return isArchived(quote);
         return true;
       })
       .filter((quote) => {
@@ -391,7 +421,13 @@ export function App() {
   );
 
   function updateForm(field, value) {
-    setForm((current) => ({ ...current, [field]: value }));
+    setForm((current) => {
+      if (field === 'followUpUsesTime') {
+        return { ...current, followUpUsesTime: value, followUpUnit: value ? 'hours' : 'days' };
+      }
+
+      return { ...current, [field]: value };
+    });
     setErrors((current) => ({ ...current, [field]: '' }));
   }
 
@@ -402,8 +438,8 @@ export function App() {
     if (!form.clientName.trim()) nextErrors.clientName = 'Informe o nome do cliente.';
     if (!form.quoteDate) nextErrors.quoteDate = 'Informe a data da cotação.';
     if (!form.seller) nextErrors.seller = 'Selecione o vendedor.';
-    if (!form.followUpDays || Number(form.followUpDays) < 1) {
-      nextErrors.followUpDays = 'Use pelo menos 1 dia.';
+    if (!form.followUpAmount || Number(form.followUpAmount) <= 0) {
+      nextErrors.followUpAmount = 'Use um prazo maior que zero.';
     }
 
     setErrors(nextErrors);
@@ -446,10 +482,14 @@ export function App() {
       paymentTerms: form.paymentTerms.trim(),
       quoteDate: form.quoteDate,
       seller: form.seller,
-      followUpDays: Number(form.followUpDays),
+      followUpDays: form.followUpUnit === 'days' ? Number(form.followUpAmount) : 1,
+      followUpAmount: Number(form.followUpAmount),
+      followUpUnit: form.followUpUnit,
+      followUpStartedAt: createdAt,
       status: 'sem-resposta',
       createdAt,
       statusUpdatedAt: createdAt,
+      archivedAt: '',
     };
 
     const previousQuotes = quotes;
@@ -573,13 +613,21 @@ export function App() {
       paymentTerms: quote.paymentTerms || '',
       quoteDate: quote.quoteDate,
       seller: quote.seller,
-      followUpDays: quote.followUpDays,
+      followUpAmount: quote.followUpAmount || quote.followUpDays || 1,
+      followUpUnit: quote.followUpUnit || 'days',
+      followUpUsesTime: (quote.followUpUnit || 'days') !== 'days',
     });
     setQuoteEditErrors({});
   }
 
   function updateQuoteEditForm(field, value) {
-    setQuoteEditForm((current) => ({ ...current, [field]: value }));
+    setQuoteEditForm((current) => {
+      if (field === 'followUpUsesTime') {
+        return { ...current, followUpUsesTime: value, followUpUnit: value ? 'hours' : 'days' };
+      }
+
+      return { ...current, [field]: value };
+    });
     setQuoteEditErrors((current) => ({ ...current, [field]: '' }));
   }
 
@@ -590,8 +638,8 @@ export function App() {
     if (!quoteEditForm.clientName.trim()) nextErrors.clientName = 'Informe o nome do cliente.';
     if (!quoteEditForm.quoteDate) nextErrors.quoteDate = 'Informe a data da cotação.';
     if (!quoteEditForm.seller) nextErrors.seller = 'Selecione o vendedor.';
-    if (!quoteEditForm.followUpDays || Number(quoteEditForm.followUpDays) < 1) {
-      nextErrors.followUpDays = 'Use pelo menos 1 dia.';
+    if (!quoteEditForm.followUpAmount || Number(quoteEditForm.followUpAmount) <= 0) {
+      nextErrors.followUpAmount = 'Use um prazo maior que zero.';
     }
 
     setQuoteEditErrors(nextErrors);
@@ -609,7 +657,9 @@ export function App() {
       paymentTerms: quoteEditForm.paymentTerms.trim(),
       quoteDate: quoteEditForm.quoteDate,
       seller: quoteEditForm.seller,
-      followUpDays: Number(quoteEditForm.followUpDays),
+      followUpDays: quoteEditForm.followUpUnit === 'days' ? Number(quoteEditForm.followUpAmount) : 1,
+      followUpAmount: Number(quoteEditForm.followUpAmount),
+      followUpUnit: quoteEditForm.followUpUnit,
     };
 
     setQuotes((current) =>
@@ -633,6 +683,46 @@ export function App() {
     setQuoteEditModal(null);
     setQuoteEditForm(initialQuoteEditForm);
     setQuoteEditErrors({});
+  }
+
+  async function restartFollowUp(id) {
+    const previousQuotes = quotes;
+    const startedAt = new Date().toISOString();
+    const changes = {
+      followUpAmount: 5,
+      followUpUnit: 'days',
+      followUpDays: 5,
+      followUpStartedAt: startedAt,
+      archivedAt: '',
+    };
+
+    setQuotes((current) => current.map((quote) => (quote.id === id ? { ...quote, ...changes } : quote)));
+
+    try {
+      const savedQuote = await updateQuote(id, changes);
+      setQuotes((current) => current.map((quote) => (quote.id === id ? savedQuote : quote)));
+      setAppError('');
+    } catch (error) {
+      setQuotes(previousQuotes);
+      setAppError(error.message || 'Não foi possível reiniciar o follow-up.');
+    }
+  }
+
+  async function archiveQuote(id) {
+    const previousQuotes = quotes;
+    const changes = { archivedAt: new Date().toISOString() };
+
+    setQuotes((current) => current.map((quote) => (quote.id === id ? { ...quote, ...changes } : quote)));
+
+    try {
+      const savedQuote = await updateQuote(id, changes);
+      setQuotes((current) => current.map((quote) => (quote.id === id ? savedQuote : quote)));
+      setActiveTab('arquivadas');
+      setAppError('');
+    } catch (error) {
+      setQuotes(previousQuotes);
+      setAppError(error.message || 'Não foi possível arquivar a cotação.');
+    }
   }
 
   async function ensureTrackingEntry(quote, details) {
@@ -852,9 +942,11 @@ export function App() {
           form={form}
           metrics={metrics}
           now={now}
+          onArchiveQuote={archiveQuote}
           onChangeStatus={changeStatus}
           onEditQuote={openQuoteEditModal}
           onRemoveQuote={removeQuote}
+          onRestartFollowUp={restartFollowUp}
           onSubmit={handleSubmit}
           onUpdateForm={updateForm}
           openCloseModal={openCloseModal}
@@ -919,9 +1011,11 @@ function QuotesWorkspace({
   form,
   metrics,
   now,
+  onArchiveQuote,
   onChangeStatus,
   onEditQuote,
   onRemoveQuote,
+  onRestartFollowUp,
   onSubmit,
   onUpdateForm,
   openCloseModal,
@@ -977,16 +1071,34 @@ function QuotesWorkspace({
             {errors.quoteDate && <small>{errors.quoteDate}</small>}
           </label>
 
-          <label>
-            Follow-up em dias
-            <input
-              type="number"
-              min="1"
-              value={form.followUpDays}
-              onChange={(event) => onUpdateForm('followUpDays', event.target.value)}
-            />
-            {errors.followUpDays && <small>{errors.followUpDays}</small>}
-          </label>
+          <div className="followup-input-group">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={form.followUpUsesTime}
+                onChange={(event) => onUpdateForm('followUpUsesTime', event.target.checked)}
+              />
+              Tempo
+            </label>
+            <label>
+              {form.followUpUsesTime ? 'Follow-up em tempo' : 'Follow-up em dias'}
+              <div className="inline-field-pair">
+                <input
+                  type="number"
+                  min="1"
+                  value={form.followUpAmount}
+                  onChange={(event) => onUpdateForm('followUpAmount', event.target.value)}
+                />
+                {form.followUpUsesTime && (
+                  <select value={form.followUpUnit} onChange={(event) => onUpdateForm('followUpUnit', event.target.value)}>
+                    <option value="hours">Horas</option>
+                    <option value="minutes">Minutos</option>
+                  </select>
+                )}
+              </div>
+              {errors.followUpAmount && <small>{errors.followUpAmount}</small>}
+            </label>
+          </div>
         </div>
 
         <label>
@@ -1072,7 +1184,7 @@ function QuotesWorkspace({
             <tbody>
               {visibleQuotes.map((quote) => {
                 const statusMeta = getStatusMeta(quote.status);
-                const dueAt = addDays(quote.createdAt, quote.followUpDays);
+                const dueAt = getFollowUpDueAt(quote);
                 const due = isFollowUpDue(quote, now);
                 const unchanged = isStatusUnchanged(quote, now);
                 const showCloseDetails = isClosed(quote) && quote.closeDetails;
@@ -1082,7 +1194,7 @@ function QuotesWorkspace({
                 return (
                   <React.Fragment key={quote.id}>
                     <tr
-                      className={`quote-row ${statusMeta.color} ${showCloseDetails ? 'expandable' : ''}`}
+                      className={`quote-row ${statusMeta.color} ${showCloseDetails ? 'expandable' : ''} ${due ? 'overdue' : ''}`}
                       onClick={() => showCloseDetails && onToggleQuoteDetails(quote.id)}
                     >
                       <td>
@@ -1108,16 +1220,28 @@ function QuotesWorkspace({
                       <td>{quote.seller}</td>
                       <td>
                         <div className="due-cell">
-                          {isClosed(quote) ? (
+                          {isClosed(quote) || isArchived(quote) ? (
                             <>
                               <CheckCircle2 size={16} />
-                              <span>Finalizada</span>
+                              <span>{isClosed(quote) ? 'Finalizada' : 'Arquivada'}</span>
                             </>
                           ) : (
                             <>
                               {due ? <CalendarClock size={16} /> : <Clock3 size={16} />}
-                              <span>{formatDateTime(dueAt)}</span>
-                              {due && <b>Follow-up</b>}
+                              {due ? (
+                                <button
+                                  className="inline-reset-button"
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onRestartFollowUp(quote.id);
+                                  }}
+                                >
+                                  Follow-up vencido - Reiniciar
+                                </button>
+                              ) : (
+                                <span>{formatDateTime(dueAt)}</span>
+                              )}
                               {unchanged && <b className="neutral">Sem alteração</b>}
                             </>
                           )}
@@ -1137,6 +1261,18 @@ function QuotesWorkspace({
                               }}
                             >
                               <Pencil size={17} />
+                            </button>
+                          )}
+                          {due && (
+                            <button
+                              className="archive-button"
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onArchiveQuote(quote.id);
+                              }}
+                            >
+                              Arquivar
                             </button>
                           )}
                           {showCloseDetails && (
@@ -1452,16 +1588,34 @@ function QuoteEditModal({ errors, form, onCancel, onSubmit, onUpdate }) {
             {errors.quoteDate && <small>{errors.quoteDate}</small>}
           </label>
 
-          <label>
-            Follow-up em dias
-            <input
-              type="number"
-              min="1"
-              value={form.followUpDays}
-              onChange={(event) => onUpdate('followUpDays', event.target.value)}
-            />
-            {errors.followUpDays && <small>{errors.followUpDays}</small>}
-          </label>
+          <div className="followup-input-group">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={form.followUpUsesTime}
+                onChange={(event) => onUpdate('followUpUsesTime', event.target.checked)}
+              />
+              Tempo
+            </label>
+            <label>
+              {form.followUpUsesTime ? 'Follow-up em tempo' : 'Follow-up em dias'}
+              <div className="inline-field-pair">
+                <input
+                  type="number"
+                  min="1"
+                  value={form.followUpAmount}
+                  onChange={(event) => onUpdate('followUpAmount', event.target.value)}
+                />
+                {form.followUpUsesTime && (
+                  <select value={form.followUpUnit} onChange={(event) => onUpdate('followUpUnit', event.target.value)}>
+                    <option value="hours">Horas</option>
+                    <option value="minutes">Minutos</option>
+                  </select>
+                )}
+              </div>
+              {errors.followUpAmount && <small>{errors.followUpAmount}</small>}
+            </label>
+          </div>
         </div>
 
         <label>
