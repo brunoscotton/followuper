@@ -121,7 +121,9 @@ const initialQuoteEditForm = {
 };
 
 const initialTrackingForm = {
+  clientName: '',
   trackingCode: '',
+  invoiceNumber: '',
   deliverySituation: 'etiqueta',
   expectedDeliveryDate: '',
   notes: '',
@@ -253,7 +255,9 @@ export function App() {
   const [quoteEditForm, setQuoteEditForm] = useState(initialQuoteEditForm);
   const [quoteEditErrors, setQuoteEditErrors] = useState({});
   const [trackingModal, setTrackingModal] = useState(null);
+  const [standaloneTrackingModal, setStandaloneTrackingModal] = useState(false);
   const [trackingForm, setTrackingForm] = useState(initialTrackingForm);
+  const [trackingFormErrors, setTrackingFormErrors] = useState({});
   const [expandedQuoteIds, setExpandedQuoteIds] = useState([]);
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -408,6 +412,7 @@ export function App() {
             entry.quoteNumber,
             entry.clientName,
             entry.orderNumber,
+            entry.invoiceNumber,
             entry.carrier,
             entry.trackingCode,
             entry.deliverySituation,
@@ -748,6 +753,7 @@ export function App() {
       quoteNumber: quote.quoteNumber,
       clientName: quote.clientName,
       orderNumber: details.orderNumber,
+      invoiceNumber: '',
       carrier: details.carrier,
       trackingCode: '',
       deliverySituation: 'etiqueta',
@@ -790,6 +796,7 @@ export function App() {
     setTrackingModal(entry);
     setTrackingForm({
       trackingCode: entry.trackingCode || '',
+      invoiceNumber: entry.invoiceNumber || '',
       deliverySituation: entry.deliverySituation || 'etiqueta',
       expectedDeliveryDate: entry.expectedDeliveryDate || '',
       notes: entry.notes || '',
@@ -799,6 +806,16 @@ export function App() {
 
   function updateTrackingForm(field, value) {
     setTrackingForm((current) => ({ ...current, [field]: value }));
+    setTrackingFormErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  function validateStandaloneTrackingForm() {
+    const nextErrors = {};
+
+    if (!trackingForm.clientName.trim()) nextErrors.clientName = 'Informe o nome.';
+
+    setTrackingFormErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
   }
 
   async function saveTrackingForm(event) {
@@ -808,6 +825,7 @@ export function App() {
     const previousEntries = trackingEntries;
     const changes = {
       trackingCode: trackingForm.trackingCode.trim(),
+      invoiceNumber: trackingForm.invoiceNumber.trim(),
       deliverySituation: trackingForm.deliverySituation,
       expectedDeliveryDate: trackingForm.expectedDeliveryDate,
       notes: trackingForm.notes.trim(),
@@ -833,6 +851,7 @@ export function App() {
       );
       setTrackingModal(null);
       setTrackingForm(initialTrackingForm);
+      setTrackingFormErrors({});
       setActiveTrackingTab(savedEntry.status);
       setAppError('');
     } catch (error) {
@@ -843,7 +862,57 @@ export function App() {
 
   function cancelTrackingModal() {
     setTrackingModal(null);
+    setStandaloneTrackingModal(false);
     setTrackingForm(initialTrackingForm);
+    setTrackingFormErrors({});
+  }
+
+  function openStandaloneTrackingModal() {
+    setStandaloneTrackingModal(true);
+    setTrackingForm(initialTrackingForm);
+    setTrackingFormErrors({});
+  }
+
+  async function saveStandaloneTrackingForm(event) {
+    event.preventDefault();
+    if (!validateStandaloneTrackingForm()) return;
+
+    const previousEntries = trackingEntries;
+    const nowIso = new Date().toISOString();
+    const nextEntry = {
+      id: crypto.randomUUID(),
+      quoteId: null,
+      quoteNumber: 'Avulso',
+      clientName: trackingForm.clientName.trim(),
+      orderNumber: '',
+      invoiceNumber: trackingForm.invoiceNumber.trim(),
+      carrier: '',
+      trackingCode: trackingForm.trackingCode.trim(),
+      deliverySituation: trackingForm.deliverySituation,
+      expectedDeliveryDate: trackingForm.expectedDeliveryDate,
+      notes: trackingForm.notes.trim(),
+      status: trackingForm.status,
+      finalizedAt: trackingForm.status === 'Finalizado' ? nowIso : '',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    setTrackingEntries((current) => sortTrackingEntries([nextEntry, ...current]));
+
+    try {
+      const savedEntry = await createTrackingEntry(nextEntry);
+      setTrackingEntries((current) =>
+        sortTrackingEntries([savedEntry, ...current.filter((entry) => entry.id !== savedEntry.id)]),
+      );
+      setStandaloneTrackingModal(false);
+      setTrackingForm(initialTrackingForm);
+      setTrackingFormErrors({});
+      setActiveTrackingTab(savedEntry.status);
+      setAppError('');
+    } catch (error) {
+      setTrackingEntries(previousEntries);
+      setAppError(error.message || 'Não foi possível adicionar o rastreio avulso.');
+    }
   }
 
   function toggleQuoteDetails(id) {
@@ -964,6 +1033,7 @@ export function App() {
           entries={visibleTrackingEntries}
           metrics={trackingMetrics}
           onEdit={openTrackingModal}
+          onAddStandalone={openStandaloneTrackingModal}
           setActiveTrackingTab={setActiveTrackingTab}
           setActiveView={setActiveView}
           searchTerm={trackingSearchTerm}
@@ -994,10 +1064,23 @@ export function App() {
 
       {trackingModal && (
         <TrackingEditModal
+          errors={trackingFormErrors}
           form={trackingForm}
           entry={trackingModal}
           onCancel={cancelTrackingModal}
           onSubmit={saveTrackingForm}
+          onUpdate={updateTrackingForm}
+        />
+      )}
+
+      {standaloneTrackingModal && (
+        <TrackingEditModal
+          errors={trackingFormErrors}
+          form={trackingForm}
+          entry={null}
+          isStandalone
+          onCancel={cancelTrackingModal}
+          onSubmit={saveStandaloneTrackingForm}
           onUpdate={updateTrackingForm}
         />
       )}
@@ -1350,6 +1433,7 @@ function TrackingWorkspace({
   activeTrackingTab,
   entries,
   metrics,
+  onAddStandalone,
   onEdit,
   searchTerm,
   setActiveTrackingTab,
@@ -1364,6 +1448,10 @@ function TrackingWorkspace({
           <h2>Rastreios</h2>
         </div>
         <div className="panel-actions">
+          <button className="secondary-button compact" type="button" onClick={onAddStandalone}>
+            <Plus size={16} />
+            Adicionar rastreio avulso
+          </button>
           <label className="search-box">
             <Search size={18} />
             <input
@@ -1409,6 +1497,7 @@ function TrackingWorkspace({
               <th>Cotação</th>
               <th>Cliente</th>
               <th>Nº pedido</th>
+              <th>Nº Nota Fiscal</th>
               <th>Transportadora</th>
               <th>Cod. Rastreio</th>
               <th>Situação entrega</th>
@@ -1428,6 +1517,7 @@ function TrackingWorkspace({
                   <td className="strong-text">{entry.quoteNumber}</td>
                   <td>{entry.clientName}</td>
                   <td>{entry.orderNumber || '—'}</td>
+                  <td>{entry.invoiceNumber || '—'}</td>
                   <td>{entry.carrier || '—'}</td>
                   <td>
                     <span className={entry.trackingCode ? 'tracking-code' : 'tracking-code missing'}>
@@ -1643,21 +1733,31 @@ function QuoteEditModal({ errors, form, onCancel, onSubmit, onUpdate }) {
   );
 }
 
-function TrackingEditModal({ entry, form, onCancel, onSubmit, onUpdate }) {
+function TrackingEditModal({ entry, errors = {}, form, isStandalone = false, onCancel, onSubmit, onUpdate }) {
   return (
     <div className="modal-backdrop" role="presentation">
       <form className="close-modal tracking-modal" onSubmit={onSubmit}>
         <div className="modal-header">
           <div>
-            <p className="eyebrow">Editar rastreio</p>
-            <h2>
-              {entry.quoteNumber} · {entry.clientName}
-            </h2>
+            <p className="eyebrow">{isStandalone ? 'Adicionar rastreio avulso' : 'Editar rastreio'}</p>
+            <h2>{isStandalone ? 'Rastreio avulso' : `${entry.quoteNumber} · ${entry.clientName}`}</h2>
           </div>
           <button className="modal-close" type="button" aria-label="Fechar janela" onClick={onCancel}>
             <X size={18} />
           </button>
         </div>
+
+        {isStandalone && (
+          <label>
+            Nome
+            <input
+              value={form.clientName}
+              onChange={(event) => onUpdate('clientName', event.target.value)}
+              placeholder="Ex: Cliente antigo"
+            />
+            {errors.clientName && <small>{errors.clientName}</small>}
+          </label>
+        )}
 
         <label>
           Cod. Rastreio
@@ -1665,6 +1765,15 @@ function TrackingEditModal({ entry, form, onCancel, onSubmit, onUpdate }) {
             value={form.trackingCode}
             onChange={(event) => onUpdate('trackingCode', event.target.value)}
             placeholder="Ex: BR123456789"
+          />
+        </label>
+
+        <label>
+          Nº Nota Fiscal
+          <input
+            value={form.invoiceNumber}
+            onChange={(event) => onUpdate('invoiceNumber', event.target.value)}
+            placeholder="Ex: NF-2048"
           />
         </label>
 

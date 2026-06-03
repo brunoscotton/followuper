@@ -22,6 +22,7 @@ create table if not exists public.tracking_entries (
   quote_number text not null,
   client_name text not null,
   order_number text,
+  invoice_number text,
   carrier text,
   tracking_code text,
   delivery_situation text not null default 'etiqueta' check (
@@ -52,6 +53,7 @@ alter table public.quotes add column if not exists follow_up_amount numeric not 
 alter table public.quotes add column if not exists follow_up_unit text not null default 'days';
 alter table public.quotes add column if not exists follow_up_started_at timestamptz;
 alter table public.quotes add column if not exists archived_at timestamptz;
+alter table public.tracking_entries add column if not exists invoice_number text;
 
 alter table public.quotes drop constraint if exists quotes_follow_up_amount_check;
 alter table public.quotes add constraint quotes_follow_up_amount_check check (follow_up_amount > 0);

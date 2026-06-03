@@ -25,6 +25,7 @@ function toTrackingEntry(row) {
     quoteNumber: row.quote_number,
     clientName: row.client_name,
     orderNumber: row.order_number || '',
+    invoiceNumber: row.invoice_number || '',
     carrier: row.carrier || '',
     trackingCode: row.tracking_code || '',
     deliverySituation: row.delivery_situation || 'etiqueta',
@@ -45,6 +46,7 @@ function toRow(entry) {
   if ('quoteNumber' in entry) row.quote_number = entry.quoteNumber;
   if ('clientName' in entry) row.client_name = entry.clientName;
   if ('orderNumber' in entry) row.order_number = entry.orderNumber || null;
+  if ('invoiceNumber' in entry) row.invoice_number = entry.invoiceNumber || null;
   if ('carrier' in entry) row.carrier = entry.carrier || null;
   if ('trackingCode' in entry) row.tracking_code = entry.trackingCode || null;
   if ('deliverySituation' in entry) row.delivery_situation = entry.deliverySituation;
