@@ -213,6 +213,7 @@ export function App() {
   const [closeErrors, setCloseErrors] = useState({});
   const [trackingModal, setTrackingModal] = useState(null);
   const [trackingForm, setTrackingForm] = useState(initialTrackingForm);
+  const [expandedQuoteIds, setExpandedQuoteIds] = useState([]);
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -652,6 +653,12 @@ export function App() {
     setTrackingForm(initialTrackingForm);
   }
 
+  function toggleQuoteDetails(id) {
+    setExpandedQuoteIds((current) =>
+      current.includes(id) ? current.filter((quoteId) => quoteId !== id) : [...current, id],
+    );
+  }
+
   if (!authChecked || isLoading) {
     return (
       <main className="app-shell center-shell">
@@ -747,10 +754,12 @@ export function App() {
           onSubmit={handleSubmit}
           onUpdateForm={updateForm}
           openCloseModal={openCloseModal}
+          expandedQuoteIds={expandedQuoteIds}
           searchTerm={searchTerm}
           setActiveTab={setActiveTab}
           setActiveView={setActiveView}
           setSearchTerm={setSearchTerm}
+          onToggleQuoteDetails={toggleQuoteDetails}
           visibleQuotes={visibleQuotes}
         />
       ) : (
@@ -799,10 +808,12 @@ function QuotesWorkspace({
   onSubmit,
   onUpdateForm,
   openCloseModal,
+  expandedQuoteIds,
   searchTerm,
   setActiveTab,
   setActiveView,
   setSearchTerm,
+  onToggleQuoteDetails,
   visibleQuotes,
 }) {
   return (
@@ -948,14 +959,22 @@ function QuotesWorkspace({
                 const due = isFollowUpDue(quote, now);
                 const unchanged = isStatusUnchanged(quote, now);
                 const showCloseDetails = isClosed(quote) && quote.closeDetails;
+                const detailsExpanded = expandedQuoteIds.includes(quote.id);
 
                 return (
                   <React.Fragment key={quote.id}>
-                    <tr className={`quote-row ${statusMeta.color}`}>
+                    <tr
+                      className={`quote-row ${statusMeta.color} ${showCloseDetails ? 'expandable' : ''}`}
+                      onClick={() => showCloseDetails && onToggleQuoteDetails(quote.id)}
+                    >
                       <td>
                         <div className="status-cell">
                           <i className={`dot ${statusMeta.color}`} />
-                          <select value={quote.status} onChange={(event) => onChangeStatus(quote.id, event.target.value)}>
+                          <select
+                            value={quote.status}
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={(event) => onChangeStatus(quote.id, event.target.value)}
+                          >
                             {statuses.map((status) => (
                               <option key={status.value} value={status.value}>
                                 {status.label}
@@ -994,7 +1013,10 @@ function QuotesWorkspace({
                               type="button"
                               title="Editar dados do pedido"
                               aria-label="Editar dados do pedido"
-                              onClick={() => openCloseModal(quote)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openCloseModal(quote);
+                              }}
                             >
                               <Pencil size={17} />
                             </button>
@@ -1004,14 +1026,17 @@ function QuotesWorkspace({
                             type="button"
                             title="Remover cotação"
                             aria-label="Remover cotação"
-                            onClick={() => onRemoveQuote(quote.id)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onRemoveQuote(quote.id);
+                            }}
                           >
                             <Trash2 size={17} />
                           </button>
                         </div>
                       </td>
                     </tr>
-                    {showCloseDetails && (
+                    {showCloseDetails && detailsExpanded && (
                       <tr className="closed-details-row">
                         <td colSpan="8">
                           <div className="closed-details">

@@ -457,6 +457,14 @@ td {
   background: #fbfcfe;
 }
 
+.quote-row.expandable {
+  cursor: pointer;
+}
+
+.quote-row.expandable:hover td {
+  background: #f8fbfc;
+}
+
 .strong-text {
   font-weight: 800;
 }
