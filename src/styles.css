@@ -70,16 +70,17 @@ h1 {
 }
 
 .header-logo {
-  height: 76px;
-  max-width: min(420px, 62vw);
+  height: 118px;
+  max-width: min(560px, 70vw);
   object-position: left center;
 }
 
 .login-logo {
-  height: 90px;
-  margin-top: 4px;
-  max-width: 100%;
-  object-position: left center;
+  height: 170px;
+  margin: 4px auto 8px;
+  max-width: min(560px, 100%);
+  object-position: center;
+  width: 100%;
 }
 
 h2 {
