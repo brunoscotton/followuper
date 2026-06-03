@@ -207,6 +207,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState('abertas');
   const [activeTrackingTab, setActiveTrackingTab] = useState('Em andamento');
   const [searchTerm, setSearchTerm] = useState('');
+  const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [errors, setErrors] = useState({});
   const [closeModal, setCloseModal] = useState(null);
   const [closeDetails, setCloseDetails] = useState(initialCloseDetails);
@@ -353,8 +354,28 @@ export function App() {
   }, [activeTab, now, quotes, searchTerm]);
 
   const visibleTrackingEntries = useMemo(
-    () => trackingEntries.filter((entry) => entry.status === activeTrackingTab),
-    [activeTrackingTab, trackingEntries],
+    () => {
+      const query = normalize(trackingSearchTerm);
+
+      return trackingEntries
+        .filter((entry) => entry.status === activeTrackingTab)
+        .filter((entry) => {
+          if (!query) return true;
+
+          return [
+            entry.quoteNumber,
+            entry.clientName,
+            entry.orderNumber,
+            entry.carrier,
+            entry.trackingCode,
+            entry.deliverySituation,
+            entry.expectedDeliveryDate,
+            entry.notes,
+            entry.status,
+          ].some((value) => normalize(value || '').includes(query));
+        });
+    },
+    [activeTrackingTab, trackingEntries, trackingSearchTerm],
   );
 
   function updateForm(field, value) {
@@ -770,6 +791,8 @@ export function App() {
           onEdit={openTrackingModal}
           setActiveTrackingTab={setActiveTrackingTab}
           setActiveView={setActiveView}
+          searchTerm={trackingSearchTerm}
+          setSearchTerm={setTrackingSearchTerm}
         />
       )}
 
@@ -1078,7 +1101,16 @@ function QuotesWorkspace({
   );
 }
 
-function TrackingWorkspace({ activeTrackingTab, entries, metrics, onEdit, setActiveTrackingTab, setActiveView }) {
+function TrackingWorkspace({
+  activeTrackingTab,
+  entries,
+  metrics,
+  onEdit,
+  searchTerm,
+  setActiveTrackingTab,
+  setActiveView,
+  setSearchTerm,
+}) {
   return (
     <section className="tracking-panel">
       <div className="panel-toolbar">
@@ -1086,10 +1118,20 @@ function TrackingWorkspace({ activeTrackingTab, entries, metrics, onEdit, setAct
           <Truck size={20} />
           <h2>Rastreios</h2>
         </div>
-        <button className="secondary-button compact" type="button" onClick={() => setActiveView('quotes')}>
-          <FileText size={16} />
-          Cotações
-        </button>
+        <div className="panel-actions">
+          <label className="search-box">
+            <Search size={18} />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Buscar por cliente, pedido ou rastreio"
+            />
+          </label>
+          <button className="secondary-button compact" type="button" onClick={() => setActiveView('quotes')}>
+            <FileText size={16} />
+            Cotações
+          </button>
+        </div>
       </div>
 
       <div className="tabs tracking-tabs" role="tablist" aria-label="Status dos rastreios">
