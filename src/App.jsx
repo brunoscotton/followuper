@@ -954,7 +954,7 @@ export function App() {
       <section className="topbar">
         <div>
           <p className="eyebrow">Dashboard comercial</p>
-          <img className="app-logo header-logo" src="/followuper-logo.png" alt="FollowUper" />
+          <img className="app-logo header-logo" src="/followuper-logo-cropped.png" alt="FollowUper" />
         </div>
         <div className="top-stack">
           <div className="session-actions">
@@ -1885,7 +1885,7 @@ function LoginScreen({ error, onLogin }) {
         </div>
         <div>
           <p className="eyebrow">Acesso restrito</p>
-          <img className="app-logo login-logo" src="/followuper-logo.png" alt="FollowUper" />
+          <img className="app-logo login-logo" src="/followuper-logo-cropped.png" alt="FollowUper" />
         </div>
 
         {error && <div className="app-alert">{error}</div>}

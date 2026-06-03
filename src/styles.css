@@ -76,9 +76,10 @@ h1 {
 }
 
 .login-logo {
-  height: 230px;
-  margin: 0 auto 10px;
-  max-width: min(620px, 100%);
+  height: auto;
+  margin: 0 auto 4px;
+  max-height: 230px;
+  max-width: min(600px, 100%);
   object-position: center;
   width: 100%;
 }
@@ -876,10 +877,10 @@ td {
 
 .login-panel {
   display: grid;
-  gap: 16px;
-  max-width: 520px;
-  padding: 24px;
-  width: min(520px, 100%);
+  gap: 14px;
+  max-width: 640px;
+  padding: 30px;
+  width: min(640px, 100%);
 }
 
 .login-panel .app-alert {
