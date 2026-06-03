@@ -405,6 +405,49 @@ td {
   background: #ffe4e6;
 }
 
+.icon-button.neutral {
+  background: #eef7f6;
+  border-color: #b7deda;
+  color: #0f766e;
+}
+
+.icon-button.neutral:hover {
+  background: #dff1ef;
+}
+
+.row-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.closed-details-row td {
+  background: #fbfcfe;
+  border-bottom-color: #d9e0e7;
+  padding: 0 12px 12px 41px;
+}
+
+.closed-details {
+  border-left: 3px solid #ef4444;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  padding: 12px 14px;
+}
+
+.closed-details span {
+  color: #334252;
+  display: grid;
+  gap: 2px;
+}
+
+.closed-details b {
+  color: #667587;
+  font-size: 0.72rem;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .empty-state {
   align-items: center;
   color: #657587;
@@ -420,6 +463,77 @@ td {
 
 .empty-state p {
   margin: 0;
+}
+
+.modal-backdrop {
+  align-items: center;
+  background: rgba(23, 33, 43, 0.42);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 18px;
+  position: fixed;
+  z-index: 20;
+}
+
+.close-modal {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(23, 33, 43, 0.28);
+  display: grid;
+  gap: 14px;
+  max-height: calc(100vh - 36px);
+  max-width: 620px;
+  overflow: auto;
+  padding: 18px;
+  width: min(620px, 100%);
+}
+
+.modal-header {
+  align-items: start;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.modal-close {
+  align-items: center;
+  background: #f7f9fb;
+  border: 1px solid #d3dce5;
+  border-radius: 7px;
+  color: #354353;
+  display: inline-flex;
+  height: 36px;
+  justify-content: center;
+  width: 36px;
+}
+
+.modal-close:hover {
+  background: #eef2f6;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.secondary-button {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #c8d2dc;
+  border-radius: 8px;
+  color: #354353;
+  display: inline-flex;
+  font-weight: 800;
+  justify-content: center;
+  min-height: 46px;
+  padding: 10px 14px;
+}
+
+.secondary-button:hover {
+  background: #f7f9fb;
 }
 
 @media (max-width: 1100px) {
@@ -464,5 +578,17 @@ td {
   .form-pair,
   .tabs {
     grid-template-columns: 1fr;
+  }
+
+  .closed-details {
+    grid-template-columns: 1fr;
+  }
+
+  .closed-details-row td {
+    padding-left: 18px;
+  }
+
+  .modal-actions {
+    flex-direction: column-reverse;
   }
 }

@@ -6,9 +6,11 @@ import {
   CircleDot,
   Clock3,
   FileText,
+  Pencil,
   Plus,
   Search,
   Trash2,
+  X,
 } from 'lucide-react';
 import React from 'react';
 import { useEffect, useMemo, useState } from 'react';
@@ -26,9 +28,17 @@ const statuses = [
 const tabs = [
   { value: 'abertas', label: 'Cotações em aberto' },
   { value: 'followup', label: 'Cotações para Follow-up' },
-  { value: 'fechadas', label: 'Cotações fechadas' },
+  { value: 'fechadas', label: 'Cotações finalizadas' },
   { value: 'todas', label: 'Visualizar todas' },
 ];
+
+const initialCloseDetails = {
+  orderNumber: '',
+  agreedPaymentTerms: '',
+  freight: '',
+  tracking: '',
+  totalValue: '',
+};
 
 const initialForm = {
   quoteNumber: '',
@@ -98,6 +108,9 @@ export function App() {
   const [activeTab, setActiveTab] = useState('abertas');
   const [searchTerm, setSearchTerm] = useState('');
   const [errors, setErrors] = useState({});
+  const [closeModal, setCloseModal] = useState(null);
+  const [closeDetails, setCloseDetails] = useState(initialCloseDetails);
+  const [closeErrors, setCloseErrors] = useState({});
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
@@ -183,7 +196,39 @@ export function App() {
     setActiveTab('abertas');
   }
 
+  function openCloseModal(quote) {
+    setCloseModal({ quoteId: quote.id, quoteNumber: quote.quoteNumber, clientName: quote.clientName });
+    setCloseDetails(quote.closeDetails || initialCloseDetails);
+    setCloseErrors({});
+  }
+
+  function updateCloseDetails(field, value) {
+    setCloseDetails((current) => ({ ...current, [field]: value }));
+    setCloseErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  function validateCloseDetails() {
+    const nextErrors = {};
+
+    if (!closeDetails.orderNumber.trim()) nextErrors.orderNumber = 'Informe o número do pedido.';
+    if (!closeDetails.agreedPaymentTerms.trim()) {
+      nextErrors.agreedPaymentTerms = 'Informe a condição acordada.';
+    }
+    if (!closeDetails.freight.trim()) nextErrors.freight = 'Informe o frete.';
+    if (!closeDetails.tracking.trim()) nextErrors.tracking = 'Informe o rastreio.';
+    if (!closeDetails.totalValue.trim()) nextErrors.totalValue = 'Informe o valor total.';
+
+    setCloseErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
+
   function changeStatus(id, status) {
+    const quote = quotes.find((item) => item.id === id);
+    if (status === 'fechada' && quote) {
+      openCloseModal(quote);
+      return;
+    }
+
     setQuotes((current) =>
       current.map((quote) =>
         quote.id === id
@@ -195,6 +240,42 @@ export function App() {
           : quote,
       ),
     );
+  }
+
+  function confirmCloseQuote(event) {
+    event.preventDefault();
+    if (!closeModal || !validateCloseDetails()) return;
+
+    const closedAt = new Date().toISOString();
+    setQuotes((current) =>
+      current.map((quote) =>
+        quote.id === closeModal.quoteId
+          ? {
+              ...quote,
+              status: 'fechada',
+              statusUpdatedAt: closedAt,
+              closeDetails: {
+                orderNumber: closeDetails.orderNumber.trim(),
+                agreedPaymentTerms: closeDetails.agreedPaymentTerms.trim(),
+                freight: closeDetails.freight.trim(),
+                tracking: closeDetails.tracking.trim(),
+                totalValue: closeDetails.totalValue.trim(),
+                closedAt,
+              },
+            }
+          : quote,
+      ),
+    );
+    setCloseModal(null);
+    setCloseDetails(initialCloseDetails);
+    setCloseErrors({});
+    setActiveTab('fechadas');
+  }
+
+  function cancelCloseModal() {
+    setCloseModal(null);
+    setCloseDetails(initialCloseDetails);
+    setCloseErrors({});
   }
 
   function removeQuote(id) {
@@ -359,46 +440,90 @@ export function App() {
                   const dueAt = addDays(quote.createdAt, quote.followUpDays);
                   const due = isFollowUpDue(quote, now);
                   const unchanged = isStatusUnchanged(quote, now);
+                  const showCloseDetails = isClosed(quote) && quote.closeDetails;
 
                   return (
-                    <tr className={`quote-row ${statusMeta.color}`} key={quote.id}>
-                      <td>
-                        <div className="status-cell">
-                          <i className={`dot ${statusMeta.color}`} />
-                          <select value={quote.status} onChange={(event) => changeStatus(quote.id, event.target.value)}>
-                            {statuses.map((status) => (
-                              <option key={status.value} value={status.value}>
-                                {status.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </td>
-                      <td className="strong-text">{quote.quoteNumber}</td>
-                      <td>{quote.clientName}</td>
-                      <td>{quote.paymentTerms || '—'}</td>
-                      <td>{formatDate(`${quote.quoteDate}T12:00:00`)}</td>
-                      <td>{quote.seller}</td>
-                      <td>
-                        <div className="due-cell">
-                          {due ? <CalendarClock size={16} /> : <Clock3 size={16} />}
-                          <span>{formatDateTime(dueAt)}</span>
-                          {due && <b>Follow-up</b>}
-                          {unchanged && <b className="neutral">Sem alteração</b>}
-                        </div>
-                      </td>
-                      <td>
-                        <button
-                          className="icon-button"
-                          type="button"
-                          title="Remover cotação"
-                          aria-label="Remover cotação"
-                          onClick={() => removeQuote(quote.id)}
-                        >
-                          <Trash2 size={17} />
-                        </button>
-                      </td>
-                    </tr>
+                    <React.Fragment key={quote.id}>
+                      <tr className={`quote-row ${statusMeta.color}`}>
+                        <td>
+                          <div className="status-cell">
+                            <i className={`dot ${statusMeta.color}`} />
+                            <select value={quote.status} onChange={(event) => changeStatus(quote.id, event.target.value)}>
+                              {statuses.map((status) => (
+                                <option key={status.value} value={status.value}>
+                                  {status.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </td>
+                        <td className="strong-text">{quote.quoteNumber}</td>
+                        <td>{quote.clientName}</td>
+                        <td>{quote.paymentTerms || '—'}</td>
+                        <td>{formatDate(`${quote.quoteDate}T12:00:00`)}</td>
+                        <td>{quote.seller}</td>
+                        <td>
+                          <div className="due-cell">
+                            {due ? <CalendarClock size={16} /> : <Clock3 size={16} />}
+                            <span>{formatDateTime(dueAt)}</span>
+                            {due && <b>Follow-up</b>}
+                            {unchanged && <b className="neutral">Sem alteração</b>}
+                          </div>
+                        </td>
+                        <td>
+                          <div className="row-actions">
+                            {showCloseDetails && (
+                              <button
+                                className="icon-button neutral"
+                                type="button"
+                                title="Editar dados do pedido"
+                                aria-label="Editar dados do pedido"
+                                onClick={() => openCloseModal(quote)}
+                              >
+                                <Pencil size={17} />
+                              </button>
+                            )}
+                            <button
+                              className="icon-button"
+                              type="button"
+                              title="Remover cotação"
+                              aria-label="Remover cotação"
+                              onClick={() => removeQuote(quote.id)}
+                            >
+                              <Trash2 size={17} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {showCloseDetails && (
+                        <tr className="closed-details-row">
+                          <td colSpan="8">
+                            <div className="closed-details">
+                              <span>
+                                <b>Nº pedido</b>
+                                {quote.closeDetails.orderNumber}
+                              </span>
+                              <span>
+                                <b>Pagamento acordado</b>
+                                {quote.closeDetails.agreedPaymentTerms}
+                              </span>
+                              <span>
+                                <b>Frete</b>
+                                {quote.closeDetails.freight}
+                              </span>
+                              <span>
+                                <b>Rastreio</b>
+                                {quote.closeDetails.tracking}
+                              </span>
+                              <span>
+                                <b>Valor total</b>
+                                {quote.closeDetails.totalValue}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -413,6 +538,85 @@ export function App() {
           </div>
         </section>
       </section>
+
+      {closeModal && (
+        <div className="modal-backdrop" role="presentation">
+          <form className="close-modal" onSubmit={confirmCloseQuote} noValidate>
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Cotação finalizada</p>
+                <h2>
+                  {closeModal.quoteNumber} · {closeModal.clientName}
+                </h2>
+              </div>
+              <button className="modal-close" type="button" aria-label="Fechar janela" onClick={cancelCloseModal}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <label>
+              Nº do pedido
+              <input
+                value={closeDetails.orderNumber}
+                onChange={(event) => updateCloseDetails('orderNumber', event.target.value)}
+                placeholder="Ex: 58014"
+              />
+              {closeErrors.orderNumber && <small>{closeErrors.orderNumber}</small>}
+            </label>
+
+            <label>
+              Condição de pagamento acordada
+              <input
+                value={closeDetails.agreedPaymentTerms}
+                onChange={(event) => updateCloseDetails('agreedPaymentTerms', event.target.value)}
+                placeholder="Ex: 28 dias"
+              />
+              {closeErrors.agreedPaymentTerms && <small>{closeErrors.agreedPaymentTerms}</small>}
+            </label>
+
+            <div className="form-pair">
+              <label>
+                Frete
+                <input
+                  value={closeDetails.freight}
+                  onChange={(event) => updateCloseDetails('freight', event.target.value)}
+                  placeholder="Ex: CIF"
+                />
+                {closeErrors.freight && <small>{closeErrors.freight}</small>}
+              </label>
+
+              <label>
+                Rastreio
+                <input
+                  value={closeDetails.tracking}
+                  onChange={(event) => updateCloseDetails('tracking', event.target.value)}
+                  placeholder="Ex: BR123456"
+                />
+                {closeErrors.tracking && <small>{closeErrors.tracking}</small>}
+              </label>
+            </div>
+
+            <label>
+              Valor Total
+              <input
+                value={closeDetails.totalValue}
+                onChange={(event) => updateCloseDetails('totalValue', event.target.value)}
+                placeholder="Ex: R$ 12.500,00"
+              />
+              {closeErrors.totalValue && <small>{closeErrors.totalValue}</small>}
+            </label>
+
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={cancelCloseModal}>
+                Cancelar
+              </button>
+              <button className="primary-button" type="submit">
+                OK
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </main>
   );
 }
