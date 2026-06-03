@@ -106,6 +106,15 @@ const initialForm = {
   followUpDays: 1,
 };
 
+const initialQuoteEditForm = {
+  quoteNumber: '',
+  clientName: '',
+  paymentTerms: '',
+  quoteDate: getTodayInputValue(),
+  seller: 'Elton',
+  followUpDays: 1,
+};
+
 const initialTrackingForm = {
   trackingCode: '',
   deliverySituation: 'etiqueta',
@@ -212,6 +221,9 @@ export function App() {
   const [closeModal, setCloseModal] = useState(null);
   const [closeDetails, setCloseDetails] = useState(initialCloseDetails);
   const [closeErrors, setCloseErrors] = useState({});
+  const [quoteEditModal, setQuoteEditModal] = useState(null);
+  const [quoteEditForm, setQuoteEditForm] = useState(initialQuoteEditForm);
+  const [quoteEditErrors, setQuoteEditErrors] = useState({});
   const [trackingModal, setTrackingModal] = useState(null);
   const [trackingForm, setTrackingForm] = useState(initialTrackingForm);
   const [expandedQuoteIds, setExpandedQuoteIds] = useState([]);
@@ -553,6 +565,76 @@ export function App() {
     setCloseErrors({});
   }
 
+  function openQuoteEditModal(quote) {
+    setQuoteEditModal(quote);
+    setQuoteEditForm({
+      quoteNumber: quote.quoteNumber,
+      clientName: quote.clientName,
+      paymentTerms: quote.paymentTerms || '',
+      quoteDate: quote.quoteDate,
+      seller: quote.seller,
+      followUpDays: quote.followUpDays,
+    });
+    setQuoteEditErrors({});
+  }
+
+  function updateQuoteEditForm(field, value) {
+    setQuoteEditForm((current) => ({ ...current, [field]: value }));
+    setQuoteEditErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  function validateQuoteEditForm() {
+    const nextErrors = {};
+
+    if (!quoteEditForm.quoteNumber.trim()) nextErrors.quoteNumber = 'Informe o número da cotação.';
+    if (!quoteEditForm.clientName.trim()) nextErrors.clientName = 'Informe o nome do cliente.';
+    if (!quoteEditForm.quoteDate) nextErrors.quoteDate = 'Informe a data da cotação.';
+    if (!quoteEditForm.seller) nextErrors.seller = 'Selecione o vendedor.';
+    if (!quoteEditForm.followUpDays || Number(quoteEditForm.followUpDays) < 1) {
+      nextErrors.followUpDays = 'Use pelo menos 1 dia.';
+    }
+
+    setQuoteEditErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
+
+  async function saveQuoteEditForm(event) {
+    event.preventDefault();
+    if (!quoteEditModal || !validateQuoteEditForm()) return;
+
+    const previousQuotes = quotes;
+    const changes = {
+      quoteNumber: quoteEditForm.quoteNumber.trim(),
+      clientName: quoteEditForm.clientName.trim(),
+      paymentTerms: quoteEditForm.paymentTerms.trim(),
+      quoteDate: quoteEditForm.quoteDate,
+      seller: quoteEditForm.seller,
+      followUpDays: Number(quoteEditForm.followUpDays),
+    };
+
+    setQuotes((current) =>
+      current.map((quote) => (quote.id === quoteEditModal.id ? { ...quote, ...changes } : quote)),
+    );
+
+    try {
+      const savedQuote = await updateQuote(quoteEditModal.id, changes);
+      setQuotes((current) => current.map((quote) => (quote.id === quoteEditModal.id ? savedQuote : quote)));
+      setQuoteEditModal(null);
+      setQuoteEditForm(initialQuoteEditForm);
+      setQuoteEditErrors({});
+      setAppError('');
+    } catch (error) {
+      setQuotes(previousQuotes);
+      setAppError(error.message || 'Não foi possível editar a cotação.');
+    }
+  }
+
+  function cancelQuoteEditModal() {
+    setQuoteEditModal(null);
+    setQuoteEditForm(initialQuoteEditForm);
+    setQuoteEditErrors({});
+  }
+
   async function ensureTrackingEntry(quote, details) {
     const existingEntry = trackingEntries.find((entry) => entry.quoteId === quote.id);
     const nowIso = new Date().toISOString();
@@ -771,6 +853,7 @@ export function App() {
           metrics={metrics}
           now={now}
           onChangeStatus={changeStatus}
+          onEditQuote={openQuoteEditModal}
           onRemoveQuote={removeQuote}
           onSubmit={handleSubmit}
           onUpdateForm={updateForm}
@@ -807,6 +890,16 @@ export function App() {
         />
       )}
 
+      {quoteEditModal && (
+        <QuoteEditModal
+          errors={quoteEditErrors}
+          form={quoteEditForm}
+          onCancel={cancelQuoteEditModal}
+          onSubmit={saveQuoteEditForm}
+          onUpdate={updateQuoteEditForm}
+        />
+      )}
+
       {trackingModal && (
         <TrackingEditModal
           form={trackingForm}
@@ -827,6 +920,7 @@ function QuotesWorkspace({
   metrics,
   now,
   onChangeStatus,
+  onEditQuote,
   onRemoveQuote,
   onSubmit,
   onUpdateForm,
@@ -983,6 +1077,7 @@ function QuotesWorkspace({
                 const unchanged = isStatusUnchanged(quote, now);
                 const showCloseDetails = isClosed(quote) && quote.closeDetails;
                 const detailsExpanded = expandedQuoteIds.includes(quote.id);
+                const canEditQuote = !isClosed(quote);
 
                 return (
                   <React.Fragment key={quote.id}>
@@ -1030,6 +1125,20 @@ function QuotesWorkspace({
                       </td>
                       <td>
                         <div className="row-actions">
+                          {canEditQuote && (
+                            <button
+                              className="icon-button neutral"
+                              type="button"
+                              title="Editar cotação"
+                              aria-label="Editar cotação"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onEditQuote(quote);
+                              }}
+                            >
+                              <Pencil size={17} />
+                            </button>
+                          )}
                           {showCloseDetails && (
                             <button
                               className="icon-button neutral"
@@ -1286,6 +1395,93 @@ function CloseQuoteModal({ closeDetails, closeErrors, closeModal, onCancel, onSu
           </button>
           <button className="primary-button" type="submit">
             OK
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function QuoteEditModal({ errors, form, onCancel, onSubmit, onUpdate }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="close-modal" onSubmit={onSubmit} noValidate>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Editar cotação</p>
+            <h2>{form.quoteNumber || 'Cotação'}</h2>
+          </div>
+          <button className="modal-close" type="button" aria-label="Fechar janela" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <label>
+          Nº cotação
+          <input
+            value={form.quoteNumber}
+            onChange={(event) => onUpdate('quoteNumber', event.target.value)}
+            placeholder="Ex: 10482"
+          />
+          {errors.quoteNumber && <small>{errors.quoteNumber}</small>}
+        </label>
+
+        <label>
+          Nome do cliente
+          <input
+            value={form.clientName}
+            onChange={(event) => onUpdate('clientName', event.target.value)}
+            placeholder="Ex: ACME Ltda."
+          />
+          {errors.clientName && <small>{errors.clientName}</small>}
+        </label>
+
+        <label>
+          Condição de pagamento
+          <input
+            value={form.paymentTerms}
+            onChange={(event) => onUpdate('paymentTerms', event.target.value)}
+            placeholder="Opcional"
+          />
+        </label>
+
+        <div className="form-pair">
+          <label>
+            Data de cotação
+            <input type="date" value={form.quoteDate} onChange={(event) => onUpdate('quoteDate', event.target.value)} />
+            {errors.quoteDate && <small>{errors.quoteDate}</small>}
+          </label>
+
+          <label>
+            Follow-up em dias
+            <input
+              type="number"
+              min="1"
+              value={form.followUpDays}
+              onChange={(event) => onUpdate('followUpDays', event.target.value)}
+            />
+            {errors.followUpDays && <small>{errors.followUpDays}</small>}
+          </label>
+        </div>
+
+        <label>
+          Vendedor
+          <select value={form.seller} onChange={(event) => onUpdate('seller', event.target.value)}>
+            {sellers.map((seller) => (
+              <option key={seller} value={seller}>
+                {seller}
+              </option>
+            ))}
+          </select>
+          {errors.seller && <small>{errors.seller}</small>}
+        </label>
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button className="primary-button" type="submit">
+            Salvar
           </button>
         </div>
       </form>
