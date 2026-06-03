@@ -75,6 +75,47 @@ h2 {
   justify-content: flex-end;
 }
 
+.top-stack {
+  align-items: flex-end;
+  display: grid;
+  gap: 10px;
+}
+
+.session-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.data-badge,
+.logout-button {
+  align-items: center;
+  border-radius: 8px;
+  display: inline-flex;
+  font-size: 0.86rem;
+  font-weight: 800;
+  gap: 7px;
+  min-height: 36px;
+  padding: 7px 10px;
+}
+
+.data-badge {
+  background: #e8f5f3;
+  border: 1px solid #b7deda;
+  color: #0f4f4a;
+}
+
+.logout-button {
+  background: #ffffff;
+  border: 1px solid #c8d2dc;
+  color: #354353;
+}
+
+.logout-button:hover {
+  background: #f7f9fb;
+}
+
 .alert-tab {
   align-items: center;
   background: #fff7db;
@@ -99,6 +140,17 @@ h2 {
   grid-template-columns: minmax(300px, 370px) minmax(0, 1fr);
   margin: 0 auto;
   max-width: 1440px;
+}
+
+.app-alert {
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+  color: #9f1239;
+  font-weight: 800;
+  margin: 0 auto 16px;
+  max-width: 1440px;
+  padding: 10px 12px;
 }
 
 .quote-form,
@@ -536,6 +588,68 @@ td {
   background: #f7f9fb;
 }
 
+.center-shell,
+.login-shell {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+}
+
+.loading-panel,
+.login-panel {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(31, 48, 65, 0.08);
+}
+
+.loading-panel {
+  align-items: center;
+  color: #354353;
+  display: flex;
+  font-weight: 800;
+  gap: 10px;
+  padding: 22px;
+}
+
+.loading-panel p {
+  margin: 0;
+}
+
+.login-shell {
+  min-height: 100vh;
+  padding: 18px;
+}
+
+.login-panel {
+  display: grid;
+  gap: 16px;
+  max-width: 420px;
+  padding: 24px;
+  width: min(420px, 100%);
+}
+
+.login-panel .app-alert {
+  margin: 0;
+}
+
+.login-mark {
+  align-items: center;
+  background: #e8f5f3;
+  border: 1px solid #b7deda;
+  border-radius: 8px;
+  color: #0f766e;
+  display: inline-flex;
+  height: 54px;
+  justify-content: center;
+  width: 54px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
 @media (max-width: 1100px) {
   .workspace-grid {
     grid-template-columns: 1fr;
@@ -560,6 +674,11 @@ td {
   .panel-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .top-stack,
+  .session-actions {
+    align-items: stretch;
   }
 
   .top-actions,

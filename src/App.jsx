@@ -5,17 +5,28 @@ import {
   CheckCircle2,
   CircleDot,
   Clock3,
+  Database,
   FileText,
+  LogIn,
+  LogOut,
   Pencil,
   Plus,
   Search,
+  ShieldCheck,
   Trash2,
   X,
 } from 'lucide-react';
 import React from 'react';
 import { useEffect, useMemo, useState } from 'react';
-
-const STORAGE_KEY = 'followuper.quotes.v1';
+import { getCurrentSession, onAuthChange, signIn, signOut } from './services/authRepository';
+import {
+  createQuote,
+  deleteQuote,
+  loadQuotes as loadStoredQuotes,
+  persistenceMode,
+  updateQuote,
+} from './services/quotesRepository';
+import { isSupabaseConfigured } from './services/supabaseClient';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 
@@ -77,14 +88,6 @@ function normalize(text) {
   return text.toString().trim().toLowerCase();
 }
 
-function loadQuotes() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
 function getStatusMeta(status) {
   return statuses.find((item) => item.value === status) || statuses[0];
 }
@@ -103,7 +106,7 @@ function isStatusUnchanged(quote, now) {
 }
 
 export function App() {
-  const [quotes, setQuotes] = useState(loadQuotes);
+  const [quotes, setQuotes] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [activeTab, setActiveTab] = useState('abertas');
   const [searchTerm, setSearchTerm] = useState('');
@@ -111,11 +114,78 @@ export function App() {
   const [closeModal, setCloseModal] = useState(null);
   const [closeDetails, setCloseDetails] = useState(initialCloseDetails);
   const [closeErrors, setCloseErrors] = useState({});
+  const [user, setUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [appError, setAppError] = useState('');
+  const [dataStatus, setDataStatus] = useState(persistenceMode === 'supabase' ? 'Supabase' : 'Local');
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(quotes));
-  }, [quotes]);
+    let active = true;
+
+    if (!isSupabaseConfigured) {
+      setAuthChecked(true);
+      return () => {
+        active = false;
+      };
+    }
+
+    getCurrentSession()
+      .then(({ user: currentUser }) => {
+        if (!active) return;
+        setUser(currentUser);
+        setAuthChecked(true);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setAppError(error.message || 'Nao foi possivel verificar o login.');
+        setAuthChecked(true);
+      });
+
+    const unsubscribe = onAuthChange(({ user: currentUser }) => {
+      setUser(currentUser);
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!authChecked) return () => {};
+
+    if (isSupabaseConfigured && !user) {
+      setQuotes([]);
+      setIsLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    setIsLoading(true);
+    loadStoredQuotes()
+      .then(({ quotes: loadedQuotes, mode, migratedCount }) => {
+        if (!active) return;
+        setQuotes(loadedQuotes);
+        setDataStatus(migratedCount ? `${mode === 'supabase' ? 'Supabase' : 'Local'} · ${migratedCount} importadas` : mode === 'supabase' ? 'Supabase' : 'Local');
+        setAppError('');
+      })
+      .catch((error) => {
+        if (!active) return;
+        setAppError(error.message || 'Nao foi possivel carregar as cotacoes.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [authChecked, user]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
@@ -173,7 +243,30 @@ export function App() {
     return Object.keys(nextErrors).length === 0;
   }
 
-  function handleSubmit(event) {
+  async function handleLogin(email, password) {
+    setAppError('');
+
+    try {
+      const { user: signedUser } = await signIn(email, password);
+      setUser(signedUser);
+    } catch (error) {
+      setAppError(error.message || 'Nao foi possivel entrar.');
+    }
+  }
+
+  async function handleSignOut() {
+    setAppError('');
+
+    try {
+      await signOut();
+      setUser(null);
+      setQuotes([]);
+    } catch (error) {
+      setAppError(error.message || 'Nao foi possivel sair.');
+    }
+  }
+
+  async function handleSubmit(event) {
     event.preventDefault();
     if (!validateForm()) return;
 
@@ -191,9 +284,19 @@ export function App() {
       statusUpdatedAt: createdAt,
     };
 
+    const previousQuotes = quotes;
     setQuotes((current) => [nextQuote, ...current]);
-    setForm({ ...initialForm, quoteDate: getTodayInputValue() });
-    setActiveTab('abertas');
+
+    try {
+      const savedQuote = await createQuote(nextQuote);
+      setQuotes((current) => current.map((quote) => (quote.id === nextQuote.id ? savedQuote : quote)));
+      setForm({ ...initialForm, quoteDate: getTodayInputValue() });
+      setActiveTab('abertas');
+      setAppError('');
+    } catch (error) {
+      setQuotes(previousQuotes);
+      setAppError(error.message || 'Nao foi possivel salvar a cotacao.');
+    }
   }
 
   function openCloseModal(quote) {
@@ -222,54 +325,64 @@ export function App() {
     return Object.keys(nextErrors).length === 0;
   }
 
-  function changeStatus(id, status) {
+  async function changeStatus(id, status) {
     const quote = quotes.find((item) => item.id === id);
     if (status === 'fechada' && quote) {
       openCloseModal(quote);
       return;
     }
 
-    setQuotes((current) =>
-      current.map((quote) =>
-        quote.id === id
-          ? {
-              ...quote,
-              status,
-              statusUpdatedAt: new Date().toISOString(),
-            }
-          : quote,
-      ),
-    );
+    const previousQuotes = quotes;
+    const statusUpdatedAt = new Date().toISOString();
+    const changes = { status, statusUpdatedAt };
+
+    setQuotes((current) => current.map((quote) => (quote.id === id ? { ...quote, ...changes } : quote)));
+
+    try {
+      const savedQuote = await updateQuote(id, changes);
+      setQuotes((current) => current.map((quote) => (quote.id === id ? savedQuote : quote)));
+      setAppError('');
+    } catch (error) {
+      setQuotes(previousQuotes);
+      setAppError(error.message || 'Nao foi possivel atualizar o status.');
+    }
   }
 
-  function confirmCloseQuote(event) {
+  async function confirmCloseQuote(event) {
     event.preventDefault();
     if (!closeModal || !validateCloseDetails()) return;
 
     const closedAt = new Date().toISOString();
+    const previousQuotes = quotes;
+    const changes = {
+      status: 'fechada',
+      statusUpdatedAt: closedAt,
+      closeDetails: {
+        orderNumber: closeDetails.orderNumber.trim(),
+        agreedPaymentTerms: closeDetails.agreedPaymentTerms.trim(),
+        freight: closeDetails.freight.trim(),
+        tracking: closeDetails.tracking.trim(),
+        totalValue: closeDetails.totalValue.trim(),
+        closedAt,
+      },
+    };
+
     setQuotes((current) =>
-      current.map((quote) =>
-        quote.id === closeModal.quoteId
-          ? {
-              ...quote,
-              status: 'fechada',
-              statusUpdatedAt: closedAt,
-              closeDetails: {
-                orderNumber: closeDetails.orderNumber.trim(),
-                agreedPaymentTerms: closeDetails.agreedPaymentTerms.trim(),
-                freight: closeDetails.freight.trim(),
-                tracking: closeDetails.tracking.trim(),
-                totalValue: closeDetails.totalValue.trim(),
-                closedAt,
-              },
-            }
-          : quote,
-      ),
+      current.map((quote) => (quote.id === closeModal.quoteId ? { ...quote, ...changes } : quote)),
     );
-    setCloseModal(null);
-    setCloseDetails(initialCloseDetails);
-    setCloseErrors({});
-    setActiveTab('fechadas');
+
+    try {
+      const savedQuote = await updateQuote(closeModal.quoteId, changes);
+      setQuotes((current) => current.map((quote) => (quote.id === closeModal.quoteId ? savedQuote : quote)));
+      setCloseModal(null);
+      setCloseDetails(initialCloseDetails);
+      setCloseErrors({});
+      setActiveTab('fechadas');
+      setAppError('');
+    } catch (error) {
+      setQuotes(previousQuotes);
+      setAppError(error.message || 'Nao foi possivel finalizar a cotacao.');
+    }
   }
 
   function cancelCloseModal() {
@@ -278,8 +391,32 @@ export function App() {
     setCloseErrors({});
   }
 
-  function removeQuote(id) {
+  async function removeQuote(id) {
+    const previousQuotes = quotes;
     setQuotes((current) => current.filter((quote) => quote.id !== id));
+
+    try {
+      await deleteQuote(id);
+      setAppError('');
+    } catch (error) {
+      setQuotes(previousQuotes);
+      setAppError(error.message || 'Nao foi possivel remover a cotacao.');
+    }
+  }
+
+  if (!authChecked || isLoading) {
+    return (
+      <main className="app-shell center-shell">
+        <div className="loading-panel">
+          <Database size={28} />
+          <p>Carregando Followuper...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (isSupabaseConfigured && !user) {
+    return <LoginScreen error={appError} onLogin={handleLogin} />;
   }
 
   return (
@@ -289,17 +426,33 @@ export function App() {
           <p className="eyebrow">Dashboard comercial</p>
           <h1>Followuper</h1>
         </div>
-        <div className="top-actions" aria-live="polite">
-          <button className="alert-tab" type="button" onClick={() => setActiveTab('followup')}>
-            <Bell size={18} />
-            <span>({metrics.followUpDue}) Cotações precisam de Follow-up</span>
-          </button>
-          <button className="alert-tab muted" type="button" onClick={() => setActiveTab('abertas')}>
-            <AlertTriangle size={18} />
-            <span>({metrics.unchangedStatus}) Cotações sem alteração de status</span>
-          </button>
+        <div className="top-stack">
+          <div className="session-actions">
+            <span className="data-badge">
+              <Database size={15} />
+              {dataStatus}
+            </span>
+            {isSupabaseConfigured && (
+              <button className="logout-button" type="button" onClick={handleSignOut}>
+                <LogOut size={16} />
+                Sair
+              </button>
+            )}
+          </div>
+          <div className="top-actions" aria-live="polite">
+            <button className="alert-tab" type="button" onClick={() => setActiveTab('followup')}>
+              <Bell size={18} />
+              <span>({metrics.followUpDue}) Cotações precisam de Follow-up</span>
+            </button>
+            <button className="alert-tab muted" type="button" onClick={() => setActiveTab('abertas')}>
+              <AlertTriangle size={18} />
+              <span>({metrics.unchangedStatus}) Cotações sem alteração de status</span>
+            </button>
+          </div>
         </div>
       </section>
+
+      {appError && <div className="app-alert">{appError}</div>}
 
       <section className="workspace-grid">
         <form className="quote-form" onSubmit={handleSubmit} noValidate>
@@ -617,6 +770,64 @@ export function App() {
           </form>
         </div>
       )}
+    </main>
+  );
+}
+
+function LoginScreen({ error, onLogin }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setIsSubmitting(true);
+    await onLogin(email, password);
+    setIsSubmitting(false);
+  }
+
+  return (
+    <main className="login-shell">
+      <form className="login-panel" onSubmit={handleSubmit}>
+        <div className="login-mark">
+          <ShieldCheck size={32} />
+        </div>
+        <div>
+          <p className="eyebrow">Acesso restrito</p>
+          <h1>Followuper</h1>
+        </div>
+
+        {error && <div className="app-alert">{error}</div>}
+
+        <label>
+          E-mail
+          <input
+            autoComplete="email"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="usuario@empresa.com"
+            required
+          />
+        </label>
+
+        <label>
+          Senha
+          <input
+            autoComplete="current-password"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="Sua senha"
+            required
+          />
+        </label>
+
+        <button className="primary-button" type="submit" disabled={isSubmitting}>
+          <LogIn size={18} />
+          {isSubmitting ? 'Entrando...' : 'Entrar'}
+        </button>
+      </form>
     </main>
   );
 }
