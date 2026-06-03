@@ -12,14 +12,52 @@ create table if not exists public.quotes (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.tracking_entries (
+  id uuid primary key,
+  quote_id uuid references public.quotes(id) on delete cascade,
+  quote_number text not null,
+  client_name text not null,
+  order_number text,
+  carrier text,
+  tracking_code text,
+  delivery_situation text not null default 'etiqueta' check (
+    delivery_situation in (
+      'Entregue',
+      'Disponível para Retirada',
+      'Não encontrado na Base dados',
+      'Manifestação',
+      'NÃO ENTREGUE',
+      'Em correção de rota',
+      'Correio não atendido',
+      'Em transferencia',
+      'Preparando para entrega',
+      'saiu para entrega',
+      'Postado após limite de horário',
+      'etiqueta'
+    )
+  ),
+  expected_delivery_date date,
+  notes text,
+  status text not null default 'Em andamento' check (status in ('Em andamento', 'Finalizado')),
+  finalized_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.quotes replica identity full;
+alter table public.tracking_entries replica identity full;
 
 alter table public.quotes enable row level security;
+alter table public.tracking_entries enable row level security;
 
 drop policy if exists "Authenticated users can read quotes" on public.quotes;
 drop policy if exists "Authenticated users can insert quotes" on public.quotes;
 drop policy if exists "Authenticated users can update quotes" on public.quotes;
 drop policy if exists "Authenticated users can delete quotes" on public.quotes;
+drop policy if exists "Authenticated users can read tracking entries" on public.tracking_entries;
+drop policy if exists "Authenticated users can insert tracking entries" on public.tracking_entries;
+drop policy if exists "Authenticated users can update tracking entries" on public.tracking_entries;
+drop policy if exists "Authenticated users can delete tracking entries" on public.tracking_entries;
 
 create policy "Authenticated users can read quotes"
   on public.quotes
@@ -46,6 +84,31 @@ create policy "Authenticated users can delete quotes"
   to authenticated
   using (true);
 
+create policy "Authenticated users can read tracking entries"
+  on public.tracking_entries
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert tracking entries"
+  on public.tracking_entries
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update tracking entries"
+  on public.tracking_entries
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete tracking entries"
+  on public.tracking_entries
+  for delete
+  to authenticated
+  using (true);
+
 do $$
 begin
   if not exists (
@@ -56,5 +119,15 @@ begin
       and tablename = 'quotes'
   ) then
     alter publication supabase_realtime add table public.quotes;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'tracking_entries'
+  ) then
+    alter publication supabase_realtime add table public.tracking_entries;
   end if;
 end $$;

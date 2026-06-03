@@ -21,7 +21,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -89,7 +90,8 @@ h2 {
 }
 
 .data-badge,
-.logout-button {
+.logout-button,
+.view-button {
   align-items: center;
   border-radius: 8px;
   display: inline-flex;
@@ -112,8 +114,21 @@ h2 {
   color: #354353;
 }
 
+.view-button {
+  background: #ffffff;
+  border: 1px solid #c8d2dc;
+  color: #354353;
+}
+
+.view-button.active,
+.view-button:hover,
 .logout-button:hover {
   background: #f7f9fb;
+}
+
+.view-button.active {
+  border-color: #0f766e;
+  color: #0f766e;
 }
 
 .alert-tab {
@@ -132,6 +147,12 @@ h2 {
   background: #f6f8fa;
   border-color: #cfd7df;
   color: #354353;
+}
+
+.alert-tab.freight {
+  background: #eef7ff;
+  border-color: #93c5fd;
+  color: #1d4e89;
 }
 
 .workspace-grid {
@@ -192,7 +213,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   background: #fbfcfe;
   border: 1px solid #c8d2dc;
   border-radius: 7px;
@@ -203,8 +225,14 @@ select {
   width: 100%;
 }
 
+textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: #0f766e;
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.15);
 }
@@ -218,6 +246,10 @@ small {
   display: grid;
   gap: 12px;
   grid-template-columns: 1fr 130px;
+}
+
+.form-pair.wide {
+  grid-template-columns: 1fr 190px;
 }
 
 .primary-button {
@@ -244,6 +276,20 @@ small {
   gap: 16px;
   justify-content: space-between;
   margin-bottom: 14px;
+}
+
+.panel-actions {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.secondary-button.compact {
+  gap: 7px;
+  min-height: 42px;
+  padding: 8px 10px;
 }
 
 .search-box {
@@ -483,7 +529,7 @@ td {
   border-left: 3px solid #ef4444;
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
   padding: 12px 14px;
 }
 
@@ -515,6 +561,127 @@ td {
 
 .empty-state p {
   margin: 0;
+}
+
+.tracking-panel {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(31, 48, 65, 0.08);
+  margin: 0 auto;
+  max-width: 1440px;
+  padding: 18px;
+}
+
+.tracking-tabs {
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+}
+
+.tracking-legend {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.tracking-table {
+  min-width: 1320px;
+}
+
+.tracking-row.green {
+  border-left: 5px solid #22c55e;
+}
+
+.tracking-row.red {
+  border-left: 5px solid #ef4444;
+}
+
+.tracking-row.purple {
+  border-left: 5px solid #a855f7;
+}
+
+.tracking-row.yellow {
+  border-left: 5px solid #facc15;
+}
+
+.tracking-row.pink {
+  border-left: 5px solid #f472b6;
+}
+
+.tracking-row.blue {
+  border-left: 5px solid #3b82f6;
+}
+
+.situation {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+
+.situation.green {
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+
+.situation.red {
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.situation.purple {
+  background: #f3e8ff;
+  border: 1px solid #d8b4fe;
+  color: #6b21a8;
+}
+
+.situation.yellow {
+  background: #fef9c3;
+  border: 1px solid #fde68a;
+  color: #854d0e;
+}
+
+.situation.pink {
+  background: #fce7f3;
+  border: 1px solid #f9a8d4;
+  color: #9d174d;
+}
+
+.situation.blue {
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  color: #1e40af;
+}
+
+.tracking-code {
+  color: #17212b;
+  font-weight: 800;
+}
+
+.tracking-code.missing {
+  color: #be123c;
+}
+
+.notes-cell {
+  max-width: 260px;
+  white-space: pre-wrap;
+}
+
+.tracking-modal {
+  max-width: 720px;
+}
+
+.finalized-preview {
+  background: #f6f8fa;
+  border: 1px solid #d3dce5;
+  border-radius: 8px;
+  color: #354353;
+  padding: 10px 12px;
 }
 
 .modal-backdrop {
@@ -695,8 +862,14 @@ button:disabled {
 
   .quote-form,
   .form-pair,
+  .form-pair.wide,
   .tabs {
     grid-template-columns: 1fr;
+  }
+
+  .panel-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .closed-details {

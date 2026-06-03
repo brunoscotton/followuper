@@ -22,6 +22,11 @@ Com Supabase configurado, o app exige login e salva tudo no banco.
 
 Sempre que `supabase/schema.sql` mudar, execute o arquivo novamente no SQL Editor. Ele e idempotente e tambem habilita realtime para inclusoes, alteracoes e exclusoes.
 
+O schema cria duas tabelas:
+
+- `quotes`: cotações e dados de fechamento.
+- `tracking_entries`: rastreios gerados automaticamente quando uma cotação e finalizada.
+
 ## Variáveis de ambiente
 
 Crie um `.env.local` para desenvolvimento:
