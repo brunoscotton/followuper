@@ -247,6 +247,7 @@ export function App() {
   const [activeTrackingTab, setActiveTrackingTab] = useState('Em andamento');
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
+  const [selectedSellers, setSelectedSellers] = useState([]);
   const [errors, setErrors] = useState({});
   const [closeModal, setCloseModal] = useState(null);
   const [closeDetails, setCloseDetails] = useState(initialCloseDetails);
@@ -392,12 +393,13 @@ export function App() {
         if (activeTab === 'arquivadas') return isArchived(quote);
         return true;
       })
+      .filter((quote) => selectedSellers.length === 0 || selectedSellers.includes(quote.seller))
       .filter((quote) => {
         if (!query) return true;
         return normalize(quote.clientName).includes(query) || normalize(quote.quoteNumber).includes(query);
       })
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  }, [activeTab, now, quotes, searchTerm]);
+  }, [activeTab, now, quotes, searchTerm, selectedSellers]);
 
   const visibleTrackingEntries = useMemo(
     () => {
@@ -817,6 +819,12 @@ export function App() {
     });
   }
 
+  function toggleSellerFilter(seller) {
+    setSelectedSellers((current) =>
+      current.includes(seller) ? current.filter((selectedSeller) => selectedSeller !== seller) : [...current, seller],
+    );
+  }
+
   function updateTrackingForm(field, value) {
     setTrackingForm((current) => ({ ...current, [field]: value }));
     setTrackingFormErrors((current) => ({ ...current, [field]: '' }));
@@ -1034,9 +1042,11 @@ export function App() {
           openCloseModal={openCloseModal}
           expandedQuoteIds={expandedQuoteIds}
           searchTerm={searchTerm}
+          selectedSellers={selectedSellers}
           setActiveTab={setActiveTab}
           setActiveView={setActiveView}
           setSearchTerm={setSearchTerm}
+          onToggleSellerFilter={toggleSellerFilter}
           onToggleQuoteDetails={toggleQuoteDetails}
           visibleQuotes={visibleQuotes}
         />
@@ -1118,9 +1128,11 @@ function QuotesWorkspace({
   openCloseModal,
   expandedQuoteIds,
   searchTerm,
+  selectedSellers,
   setActiveTab,
   setActiveView,
   setSearchTerm,
+  onToggleSellerFilter,
   onToggleQuoteDetails,
   visibleQuotes,
 }) {
@@ -1262,6 +1274,18 @@ function QuotesWorkspace({
           <span>
             <i className="dot red" /> Fechada
           </span>
+          <div className="seller-filter" aria-label="Filtro por vendedor">
+            {sellers.map((seller) => (
+              <label className="checkbox-label compact-checkbox" key={seller}>
+                <input
+                  type="checkbox"
+                  checked={selectedSellers.includes(seller)}
+                  onChange={() => onToggleSellerFilter(seller)}
+                />
+                {seller}
+              </label>
+            ))}
+          </div>
         </div>
 
         <div className="table-wrap">

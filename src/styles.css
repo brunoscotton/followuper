@@ -423,6 +423,26 @@ small {
   gap: 7px;
 }
 
+.seller-filter {
+  align-items: center;
+  border-left: 1px solid #d9e0e7;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-left: 14px;
+}
+
+.compact-checkbox {
+  color: #354353;
+  font-size: 0.84rem;
+  font-weight: 800;
+  gap: 6px;
+}
+
+.compact-checkbox input {
+  accent-color: #0f766e;
+}
+
 .dot {
   border-radius: 999px;
   display: inline-block;
