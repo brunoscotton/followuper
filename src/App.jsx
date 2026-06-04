@@ -12,6 +12,7 @@ import {
   PackageSearch,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   ShieldCheck,
   Trash2,
@@ -31,6 +32,7 @@ import {
   updateQuote,
 } from './services/quotesRepository';
 import { isSupabaseConfigured } from './services/supabaseClient';
+import { isCorreiosTrackingCandidate, requestCorreiosTrackingUpdate } from './services/correiosTrackingService';
 import {
   cacheTrackingEntries,
   createTrackingEntry,
@@ -122,6 +124,7 @@ const initialQuoteEditForm = {
 
 const initialTrackingForm = {
   clientName: '',
+  carrier: '',
   trackingCode: '',
   invoiceNumber: '',
   deliverySituation: 'etiqueta',
@@ -248,6 +251,7 @@ export function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
+  const [isUpdatingCorreios, setIsUpdatingCorreios] = useState(false);
   const [errors, setErrors] = useState({});
   const [closeModal, setCloseModal] = useState(null);
   const [closeDetails, setCloseDetails] = useState(initialCloseDetails);
@@ -425,6 +429,11 @@ export function App() {
         });
     },
     [activeTrackingTab, trackingEntries, trackingSearchTerm],
+  );
+
+  const correiosTrackingCandidates = useMemo(
+    () => trackingEntries.filter(isCorreiosTrackingCandidate),
+    [trackingEntries],
   );
 
   function updateForm(field, value) {
@@ -810,6 +819,7 @@ export function App() {
   function openTrackingModal(entry) {
     setTrackingModal(entry);
     setTrackingForm({
+      carrier: entry.carrier || '',
       trackingCode: entry.trackingCode || '',
       invoiceNumber: entry.invoiceNumber || '',
       deliverySituation: entry.deliverySituation || 'etiqueta',
@@ -834,6 +844,7 @@ export function App() {
     const nextErrors = {};
 
     if (!trackingForm.clientName.trim()) nextErrors.clientName = 'Informe o nome.';
+    if (!trackingForm.carrier.trim()) nextErrors.carrier = 'Informe a transportadora.';
 
     setTrackingFormErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
@@ -845,12 +856,14 @@ export function App() {
 
     const previousEntries = trackingEntries;
     const changes = {
+      carrier: trackingForm.carrier.trim(),
       trackingCode: trackingForm.trackingCode.trim(),
       invoiceNumber: trackingForm.invoiceNumber.trim(),
       deliverySituation: trackingForm.deliverySituation,
       expectedDeliveryDate: trackingForm.expectedDeliveryDate,
       notes: trackingForm.notes.trim(),
       status: trackingForm.status,
+      correiosUpdateFailed: false,
     };
 
     if (changes.status === 'Finalizado' && trackingModal.status !== 'Finalizado') {
@@ -907,7 +920,7 @@ export function App() {
       clientName: trackingForm.clientName.trim(),
       orderNumber: '',
       invoiceNumber: trackingForm.invoiceNumber.trim(),
-      carrier: '',
+      carrier: trackingForm.carrier.trim(),
       trackingCode: trackingForm.trackingCode.trim(),
       deliverySituation: trackingForm.deliverySituation,
       expectedDeliveryDate: trackingForm.expectedDeliveryDate,
@@ -933,6 +946,49 @@ export function App() {
     } catch (error) {
       setTrackingEntries(previousEntries);
       setAppError(error.message || 'Não foi possível adicionar o rastreio avulso.');
+    }
+  }
+
+  async function updateCorreiosStatuses() {
+    const candidates = correiosTrackingCandidates;
+    if (candidates.length === 0 || isUpdatingCorreios) return;
+
+    setIsUpdatingCorreios(true);
+
+    try {
+      const results = await requestCorreiosTrackingUpdate(candidates);
+      const resultsById = new Map(results.map((result) => [result.id, result]));
+      let updatedCount = 0;
+      let failedCount = 0;
+
+      for (const entry of candidates) {
+        const result = resultsById.get(entry.id);
+        if (!result?.updated) {
+          failedCount += 1;
+          const savedEntry = await updateTrackingEntry(entry.id, { correiosUpdateFailed: true });
+          setTrackingEntries((current) =>
+            sortTrackingEntries(current.map((currentEntry) => (currentEntry.id === savedEntry.id ? savedEntry : currentEntry))),
+          );
+          continue;
+        }
+
+        updatedCount += 1;
+        const changes = {
+          deliverySituation: result.deliverySituation,
+          expectedDeliveryDate: result.expectedDeliveryDate || entry.expectedDeliveryDate,
+          correiosUpdateFailed: false,
+        };
+        const savedEntry = await updateTrackingEntry(entry.id, changes);
+        setTrackingEntries((current) =>
+          sortTrackingEntries(current.map((currentEntry) => (currentEntry.id === savedEntry.id ? savedEntry : currentEntry))),
+        );
+      }
+
+      setAppError(`Correios: ${updatedCount} rastreio(s) atualizado(s), ${failedCount} sem retorno.`);
+    } catch (error) {
+      setAppError(error.message || 'Nao foi possivel atualizar os rastreios dos Correios.');
+    } finally {
+      setIsUpdatingCorreios(false);
     }
   }
 
@@ -1055,9 +1111,12 @@ export function App() {
           activeTrackingTab={activeTrackingTab}
           entries={visibleTrackingEntries}
           metrics={trackingMetrics}
+          correiosCandidateCount={correiosTrackingCandidates.length}
+          isUpdatingCorreios={isUpdatingCorreios}
           onEdit={openTrackingModal}
           onRemove={removeTrackingEntry}
           onAddStandalone={openStandaloneTrackingModal}
+          onUpdateCorreiosStatuses={updateCorreiosStatuses}
           setActiveTrackingTab={setActiveTrackingTab}
           setActiveView={setActiveView}
           searchTerm={trackingSearchTerm}
@@ -1469,11 +1528,14 @@ function QuotesWorkspace({
 
 function TrackingWorkspace({
   activeTrackingTab,
+  correiosCandidateCount,
   entries,
+  isUpdatingCorreios,
   metrics,
   onAddStandalone,
   onEdit,
   onRemove,
+  onUpdateCorreiosStatuses,
   searchTerm,
   setActiveTrackingTab,
   setActiveView,
@@ -1490,6 +1552,20 @@ function TrackingWorkspace({
           <button className="secondary-button compact" type="button" onClick={onAddStandalone}>
             <Plus size={16} />
             Adicionar rastreio avulso
+          </button>
+          <button
+            className="secondary-button compact"
+            type="button"
+            disabled={correiosCandidateCount === 0 || isUpdatingCorreios}
+            title={
+              correiosCandidateCount === 0
+                ? 'Nenhum rastreio dos Correios encontrado'
+                : `${correiosCandidateCount} rastreio(s) dos Correios encontrado(s)`
+            }
+            onClick={onUpdateCorreiosStatuses}
+          >
+            <RefreshCw size={16} />
+            {isUpdatingCorreios ? 'Atualizando...' : 'Atualizar Status Correio'}
           </button>
           <label className="search-box">
             <Search size={18} />
@@ -1564,7 +1640,18 @@ function TrackingWorkspace({
                     </span>
                   </td>
                   <td>
-                    {hasTrackingCode ? <span className={`situation ${colorClass}`}>{entry.deliverySituation}</span> : '—'}
+                    {hasTrackingCode ? (
+                      <span className="situation-cell">
+                        <span className={`situation ${colorClass}`}>{entry.deliverySituation}</span>
+                        {entry.correiosUpdateFailed && (
+                          <span className="update-failed-indicator" title="Rastreio Correios sem retorno na ultima atualizacao">
+                            !
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
                   </td>
                   <td>{formatDateWithWeekday(entry.expectedDeliveryDate)}</td>
                   <td className="notes-cell">{entry.notes || '—'}</td>
@@ -1808,6 +1895,16 @@ function TrackingEditModal({ entry, errors = {}, form, isStandalone = false, onC
             {errors.clientName && <small>{errors.clientName}</small>}
           </label>
         )}
+
+        <label>
+          Transportadora
+          <input
+            value={form.carrier}
+            onChange={(event) => onUpdate('carrier', event.target.value)}
+            placeholder="Ex: Correios"
+          />
+          {errors.carrier && <small>{errors.carrier}</small>}
+        </label>
 
         <label>
           Cod. Rastreio

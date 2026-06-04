@@ -39,3 +39,29 @@ VITE_SUPABASE_ANON_KEY=sua-chave-anon-public
 ```
 
 No Vercel, cadastre as mesmas variáveis em Project Settings > Environment Variables.
+
+## Correios
+
+O botao `Atualizar Status Correio` usa uma rota serverless em `/api/correios/update-tracking`. Configure as variaveis abaixo no Vercel para consultar a API Rastro sem expor credenciais no navegador:
+
+```bash
+CORREIOS_USERNAME=seu_usuario_cws
+CORREIOS_ACCESS_CODE=sua_chave_de_acesso_cws
+CORREIOS_POST_CARD=seu_cartao_de_postagem
+```
+
+Opcionalmente, para testes com token ja emitido:
+
+```bash
+CORREIOS_API_TOKEN=token_bearer_dos_correios
+```
+
+Endpoints padrao usados pela integracao:
+
+```bash
+CORREIOS_BASE_URL=https://api.correios.com.br
+CORREIOS_TOKEN_ENDPOINT=https://api.correios.com.br/token/v1/autentica/cartaopostagem
+CORREIOS_RASTRO_ENDPOINT=https://api.correios.com.br/srorastro/v1/objetos
+```
+
+Se o contrato usar endpoint diferente no CWS, cadastre `CORREIOS_TOKEN_ENDPOINT` e `CORREIOS_RASTRO_ENDPOINT` conforme o Swagger liberado pelos Correios.

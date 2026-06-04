@@ -729,6 +729,27 @@ td {
   white-space: nowrap;
 }
 
+.situation-cell {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.update-failed-indicator {
+  align-items: center;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  color: #b91c1c;
+  display: inline-flex;
+  font-size: 0.78rem;
+  font-weight: 900;
+  height: 20px;
+  justify-content: center;
+  line-height: 1;
+  width: 20px;
+}
+
 .situation.green {
   background: #dcfce7;
   border: 1px solid #86efac;

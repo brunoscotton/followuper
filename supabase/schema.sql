@@ -25,6 +25,7 @@ create table if not exists public.tracking_entries (
   invoice_number text,
   carrier text,
   tracking_code text,
+  correios_update_failed boolean not null default false,
   delivery_situation text not null default 'etiqueta' check (
     delivery_situation in (
       'Entregue',
@@ -54,6 +55,7 @@ alter table public.quotes add column if not exists follow_up_unit text not null 
 alter table public.quotes add column if not exists follow_up_started_at timestamptz;
 alter table public.quotes add column if not exists archived_at timestamptz;
 alter table public.tracking_entries add column if not exists invoice_number text;
+alter table public.tracking_entries add column if not exists correios_update_failed boolean not null default false;
 
 alter table public.quotes drop constraint if exists quotes_follow_up_amount_check;
 alter table public.quotes add constraint quotes_follow_up_amount_check check (follow_up_amount > 0);

@@ -28,6 +28,7 @@ function toTrackingEntry(row) {
     invoiceNumber: row.invoice_number || '',
     carrier: row.carrier || '',
     trackingCode: row.tracking_code || '',
+    correiosUpdateFailed: Boolean(row.correios_update_failed),
     deliverySituation: row.delivery_situation || 'etiqueta',
     expectedDeliveryDate: row.expected_delivery_date || '',
     notes: row.notes || '',
@@ -49,6 +50,7 @@ function toRow(entry) {
   if ('invoiceNumber' in entry) row.invoice_number = entry.invoiceNumber || null;
   if ('carrier' in entry) row.carrier = entry.carrier || null;
   if ('trackingCode' in entry) row.tracking_code = entry.trackingCode || null;
+  if ('correiosUpdateFailed' in entry) row.correios_update_failed = entry.correiosUpdateFailed || false;
   if ('deliverySituation' in entry) row.delivery_situation = entry.deliverySituation;
   if ('expectedDeliveryDate' in entry) row.expected_delivery_date = entry.expectedDeliveryDate || null;
   if ('notes' in entry) row.notes = entry.notes || null;
