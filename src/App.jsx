@@ -1435,7 +1435,7 @@ function QuotesWorkspace({
                                     onRestartFollowUp(quote.id);
                                   }}
                                 >
-                                  Follow-up vencido - Reiniciar
+                                  Reiniciar
                                 </button>
                               ) : (
                                 <span>{formatDateTime(dueAt)}</span>
