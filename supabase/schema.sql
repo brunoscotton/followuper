@@ -51,6 +51,16 @@ create table if not exists public.tracking_entries (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.info_blocks (
+  id uuid primary key,
+  block_type text not null default 'text' check (block_type in ('text', 'title', 'bullet', 'toggle', 'divider')),
+  content text,
+  position numeric not null default 0,
+  is_open boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.quotes add column if not exists follow_up_amount numeric not null default 1;
 alter table public.quotes add column if not exists follow_up_unit text not null default 'days';
 alter table public.quotes add column if not exists follow_up_started_at timestamptz;
@@ -74,9 +84,11 @@ where follow_up_started_at is null
 
 alter table public.quotes replica identity full;
 alter table public.tracking_entries replica identity full;
+alter table public.info_blocks replica identity full;
 
 alter table public.quotes enable row level security;
 alter table public.tracking_entries enable row level security;
+alter table public.info_blocks enable row level security;
 
 drop policy if exists "Authenticated users can read quotes" on public.quotes;
 drop policy if exists "Authenticated users can insert quotes" on public.quotes;
@@ -86,6 +98,10 @@ drop policy if exists "Authenticated users can read tracking entries" on public.
 drop policy if exists "Authenticated users can insert tracking entries" on public.tracking_entries;
 drop policy if exists "Authenticated users can update tracking entries" on public.tracking_entries;
 drop policy if exists "Authenticated users can delete tracking entries" on public.tracking_entries;
+drop policy if exists "Authenticated users can read info blocks" on public.info_blocks;
+drop policy if exists "Authenticated users can insert info blocks" on public.info_blocks;
+drop policy if exists "Authenticated users can update info blocks" on public.info_blocks;
+drop policy if exists "Authenticated users can delete info blocks" on public.info_blocks;
 
 create policy "Authenticated users can read quotes"
   on public.quotes
@@ -137,6 +153,31 @@ create policy "Authenticated users can delete tracking entries"
   to authenticated
   using (true);
 
+create policy "Authenticated users can read info blocks"
+  on public.info_blocks
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert info blocks"
+  on public.info_blocks
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update info blocks"
+  on public.info_blocks
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete info blocks"
+  on public.info_blocks
+  for delete
+  to authenticated
+  using (true);
+
 do $$
 begin
   if not exists (
@@ -157,5 +198,15 @@ begin
       and tablename = 'tracking_entries'
   ) then
     alter publication supabase_realtime add table public.tracking_entries;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'info_blocks'
+  ) then
+    alter publication supabase_realtime add table public.info_blocks;
   end if;
 end $$;

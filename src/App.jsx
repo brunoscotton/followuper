@@ -1,14 +1,19 @@
 import {
   AlertTriangle,
   Bell,
+  BookOpenText,
   CalendarClock,
   CheckCircle2,
+  ChevronRight,
   CircleDot,
   Clock3,
   Database,
   FileText,
+  Heading1,
+  List,
   LogIn,
   LogOut,
+  Minus,
   PackageSearch,
   Pencil,
   Plus,
@@ -17,6 +22,7 @@ import {
   ShieldCheck,
   Trash2,
   Truck,
+  Type,
   X,
 } from 'lucide-react';
 import React from 'react';
@@ -41,6 +47,15 @@ import {
   subscribeToTrackingChanges,
   updateTrackingEntry,
 } from './services/trackingRepository';
+import {
+  cacheInfoBlocks,
+  createInfoBlock,
+  deleteInfoBlock,
+  loadInfoBlocks,
+  sortInfoBlocks,
+  subscribeToInfoBlockChanges,
+  updateInfoBlock,
+} from './services/infoBlocksRepository';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 
@@ -61,6 +76,14 @@ const tabs = [
 const trackingTabs = [
   { value: 'Em andamento', label: 'Em andamento' },
   { value: 'Finalizado', label: 'Finalizado' },
+];
+
+const infoBlockTypes = [
+  { value: 'text', label: 'Texto', icon: Type, placeholder: 'Digite algo...' },
+  { value: 'title', label: 'Título', icon: Heading1, placeholder: 'Título' },
+  { value: 'bullet', label: 'Lista com marcadores', icon: List, placeholder: 'Item da lista' },
+  { value: 'toggle', label: 'Lista de alternantes', icon: ChevronRight, placeholder: 'Título do alternante' },
+  { value: 'divider', label: 'Barra de quebra de página', icon: Minus, placeholder: '' },
 ];
 
 const deliverySituations = [
@@ -247,6 +270,7 @@ function syncCollection(current, eventType, item, oldId, sorter, cache) {
 export function App() {
   const [quotes, setQuotes] = useState([]);
   const [trackingEntries, setTrackingEntries] = useState([]);
+  const [infoBlocks, setInfoBlocks] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [activeView, setActiveView] = useState('quotes');
   const [activeTab, setActiveTab] = useState('abertas');
@@ -315,6 +339,7 @@ export function App() {
     if (isSupabaseConfigured && !user) {
       setQuotes([]);
       setTrackingEntries([]);
+      setInfoBlocks([]);
       setIsLoading(false);
       return () => {
         active = false;
@@ -322,11 +347,12 @@ export function App() {
     }
 
     setIsLoading(true);
-    Promise.all([loadStoredQuotes(), loadTrackingEntries()])
-      .then(([quoteResult, trackingResult]) => {
+    Promise.all([loadStoredQuotes(), loadTrackingEntries(), loadInfoBlocks()])
+      .then(([quoteResult, trackingResult, infoResult]) => {
         if (!active) return;
         setQuotes(quoteResult.quotes);
         setTrackingEntries(trackingResult.entries);
+        setInfoBlocks(infoResult.blocks);
         setDataStatus(quoteResult.mode === 'supabase' ? 'Supabase · tempo real' : 'Local');
         setAppError('');
 
@@ -339,10 +365,14 @@ export function App() {
               syncCollection(current, eventType, entry, oldId, sortTrackingEntries, cacheTrackingEntries),
             );
           });
+          const unsubscribeInfoBlocks = subscribeToInfoBlockChanges(({ eventType, block, oldId }) => {
+            setInfoBlocks((current) => syncCollection(current, eventType, block, oldId, sortInfoBlocks, cacheInfoBlocks));
+          });
 
           unsubscribeRealtime = () => {
             unsubscribeQuotes();
             unsubscribeTracking();
+            unsubscribeInfoBlocks();
           };
         }
       })
@@ -439,6 +469,61 @@ export function App() {
     [trackingEntries],
   );
 
+  async function addInfoBlock(type) {
+    const nowIso = new Date().toISOString();
+    const block = {
+      id: crypto.randomUUID(),
+      type,
+      content: '',
+      position: infoBlocks.length ? Math.max(...infoBlocks.map((item) => item.position || 0)) + 1 : 1,
+      isOpen: true,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    const previousBlocks = infoBlocks;
+
+    setInfoBlocks((current) => sortInfoBlocks([...current, block]));
+
+    try {
+      const savedBlock = await createInfoBlock(block);
+      setInfoBlocks((current) => sortInfoBlocks(current.map((item) => (item.id === block.id ? savedBlock : item))));
+      setAppError('');
+    } catch (error) {
+      setInfoBlocks(previousBlocks);
+      setAppError(error.message || 'Nao foi possivel adicionar o bloco.');
+    }
+  }
+
+  function changeInfoBlock(id, changes) {
+    setInfoBlocks((current) => sortInfoBlocks(current.map((block) => (block.id === id ? { ...block, ...changes } : block))));
+  }
+
+  async function saveInfoBlock(id, changes) {
+    const previousBlocks = infoBlocks;
+
+    try {
+      const savedBlock = await updateInfoBlock(id, changes);
+      setInfoBlocks((current) => sortInfoBlocks(current.map((block) => (block.id === id ? savedBlock : block))));
+      setAppError('');
+    } catch (error) {
+      setInfoBlocks(previousBlocks);
+      setAppError(error.message || 'Nao foi possivel salvar o bloco.');
+    }
+  }
+
+  async function removeInfoBlock(id) {
+    const previousBlocks = infoBlocks;
+    setInfoBlocks((current) => current.filter((block) => block.id !== id));
+
+    try {
+      await deleteInfoBlock(id);
+      setAppError('');
+    } catch (error) {
+      setInfoBlocks(previousBlocks);
+      setAppError(error.message || 'Nao foi possivel remover o bloco.');
+    }
+  }
+
   function updateForm(field, value) {
     setForm((current) => {
       if (field === 'followUpUsesTime') {
@@ -484,6 +569,7 @@ export function App() {
       setUser(null);
       setQuotes([]);
       setTrackingEntries([]);
+      setInfoBlocks([]);
     } catch (error) {
       setAppError(error.message || 'Não foi possível sair.');
     }
@@ -1034,6 +1120,14 @@ export function App() {
               {dataStatus}
             </span>
             <button
+              className={activeView === 'info' ? 'view-button active' : 'view-button'}
+              type="button"
+              onClick={() => setActiveView('info')}
+            >
+              <BookOpenText size={16} />
+              Painel de informações
+            </button>
+            <button
               className={activeView === 'tracking' ? 'view-button active' : 'view-button'}
               type="button"
               onClick={() => setActiveView('tracking')}
@@ -1113,7 +1207,7 @@ export function App() {
           onToggleQuoteDetails={toggleQuoteDetails}
           visibleQuotes={visibleQuotes}
         />
-      ) : (
+      ) : activeView === 'tracking' ? (
         <TrackingWorkspace
           activeTrackingTab={activeTrackingTab}
           entries={visibleTrackingEntries}
@@ -1128,6 +1222,15 @@ export function App() {
           setActiveView={setActiveView}
           searchTerm={trackingSearchTerm}
           setSearchTerm={setTrackingSearchTerm}
+        />
+      ) : (
+        <InfoPanel
+          blocks={infoBlocks}
+          onAddBlock={addInfoBlock}
+          onChangeBlock={changeInfoBlock}
+          onRemoveBlock={removeInfoBlock}
+          onSaveBlock={saveInfoBlock}
+          setActiveView={setActiveView}
         />
       )}
 
@@ -1175,6 +1278,178 @@ export function App() {
         />
       )}
     </main>
+  );
+}
+
+function splitToggleContent(content = '') {
+  const [title = '', ...body] = content.split('\n');
+  return { title, body: body.join('\n') };
+}
+
+function joinToggleContent(title, body) {
+  return `${title || ''}${body ? `\n${body}` : ''}`;
+}
+
+function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onSaveBlock, setActiveView }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  function handleAddBlock(type) {
+    onAddBlock(type);
+    setMenuOpen(false);
+  }
+
+  return (
+    <section className="info-panel">
+      <div className="panel-toolbar info-toolbar">
+        <div className="section-title">
+          <BookOpenText size={20} />
+          <h2>Painel de informações</h2>
+        </div>
+        <button className="secondary-button compact" type="button" onClick={() => setActiveView('quotes')}>
+          <FileText size={16} />
+          Cotações
+        </button>
+      </div>
+
+      <div className="info-document">
+        <div className="info-add-row">
+          <button className="info-add-button" type="button" onClick={() => setMenuOpen((current) => !current)}>
+            <Plus size={18} />
+          </button>
+          {menuOpen && (
+            <div className="info-block-menu">
+              {infoBlockTypes.map((blockType) => {
+                const Icon = blockType.icon;
+                return (
+                  <button key={blockType.value} type="button" onClick={() => handleAddBlock(blockType.value)}>
+                    <Icon size={17} />
+                    {blockType.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {blocks.length === 0 ? (
+          <div className="info-empty-state">
+            <BookOpenText size={30} />
+            <p>Adicione o primeiro bloco pelo botão +.</p>
+          </div>
+        ) : (
+          <div className="info-block-list">
+            {blocks.map((block) => (
+              <InfoBlock
+                block={block}
+                key={block.id}
+                onChangeBlock={onChangeBlock}
+                onRemoveBlock={onRemoveBlock}
+                onSaveBlock={onSaveBlock}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
+  const blockType = infoBlockTypes.find((item) => item.value === block.type) || infoBlockTypes[0];
+  const Icon = blockType.icon;
+  const toggleContent = block.type === 'toggle' ? splitToggleContent(block.content) : null;
+
+  function updateContent(content) {
+    onChangeBlock(block.id, { content });
+  }
+
+  function saveContent(content = block.content) {
+    onSaveBlock(block.id, { content });
+  }
+
+  if (block.type === 'divider') {
+    return (
+      <div className="info-block info-divider-block">
+        <div className="info-block-handle">
+          <Minus size={16} />
+        </div>
+        <hr />
+        <button className="info-delete-button" type="button" aria-label="Remover bloco" onClick={() => onRemoveBlock(block.id)}>
+          <Trash2 size={15} />
+        </button>
+      </div>
+    );
+  }
+
+  if (block.type === 'toggle') {
+    return (
+      <div className="info-block">
+        <button
+          className={block.isOpen ? 'toggle-control open' : 'toggle-control'}
+          type="button"
+          aria-label={block.isOpen ? 'Recolher alternante' : 'Expandir alternante'}
+          onClick={() => {
+            const nextOpen = !block.isOpen;
+            onChangeBlock(block.id, { isOpen: nextOpen });
+            onSaveBlock(block.id, { isOpen: nextOpen });
+          }}
+        >
+          <ChevronRight size={17} />
+        </button>
+        <div className="info-block-content">
+          <input
+            className="info-toggle-title"
+            value={toggleContent.title}
+            onBlur={() => saveContent(joinToggleContent(toggleContent.title, toggleContent.body))}
+            onChange={(event) => updateContent(joinToggleContent(event.target.value, toggleContent.body))}
+            placeholder={blockType.placeholder}
+          />
+          {block.isOpen && (
+            <textarea
+              className="info-block-input"
+              value={toggleContent.body}
+              onBlur={() => saveContent(joinToggleContent(toggleContent.title, toggleContent.body))}
+              onChange={(event) => updateContent(joinToggleContent(toggleContent.title, event.target.value))}
+              placeholder="Conteúdo do alternante"
+              rows="3"
+            />
+          )}
+        </div>
+        <button className="info-delete-button" type="button" aria-label="Remover bloco" onClick={() => onRemoveBlock(block.id)}>
+          <Trash2 size={15} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`info-block ${block.type === 'title' ? 'title-block' : ''} ${block.type === 'bullet' ? 'bullet-block' : ''}`}>
+      <div className="info-block-handle">
+        <Icon size={16} />
+      </div>
+      {block.type === 'bullet' && <span className="bullet-marker">•</span>}
+      {block.type === 'title' ? (
+        <input
+          className="info-title-input"
+          value={block.content}
+          onBlur={() => saveContent()}
+          onChange={(event) => updateContent(event.target.value)}
+          placeholder={blockType.placeholder}
+        />
+      ) : (
+        <textarea
+          className="info-block-input"
+          value={block.content}
+          onBlur={() => saveContent()}
+          onChange={(event) => updateContent(event.target.value)}
+          placeholder={blockType.placeholder}
+          rows={block.type === 'bullet' ? '1' : '2'}
+        />
+      )}
+      <button className="info-delete-button" type="button" aria-label="Remover bloco" onClick={() => onRemoveBlock(block.id)}>
+        <Trash2 size={15} />
+      </button>
+    </div>
   );
 }
 
