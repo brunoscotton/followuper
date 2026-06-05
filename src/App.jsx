@@ -98,6 +98,7 @@ const initialCloseDetails = {
   agreedPaymentTerms: '',
   carrier: '',
   totalValue: '',
+  notes: '',
 };
 
 const initialForm = {
@@ -106,6 +107,7 @@ const initialForm = {
   paymentTerms: '',
   quoteDate: getTodayInputValue(),
   seller: 'Elton',
+  notes: '',
   followUpAmount: 1,
   followUpUnit: 'days',
   followUpUsesTime: false,
@@ -117,6 +119,7 @@ const initialQuoteEditForm = {
   paymentTerms: '',
   quoteDate: getTodayInputValue(),
   seller: 'Elton',
+  notes: '',
   followUpAmount: 1,
   followUpUnit: 'days',
   followUpUsesTime: false,
@@ -498,6 +501,7 @@ export function App() {
       paymentTerms: form.paymentTerms.trim(),
       quoteDate: form.quoteDate,
       seller: form.seller,
+      notes: form.notes.trim(),
       followUpDays: form.followUpUnit === 'days' ? Number(form.followUpAmount) : 1,
       followUpAmount: Number(form.followUpAmount),
       followUpUnit: form.followUpUnit,
@@ -590,6 +594,7 @@ export function App() {
         agreedPaymentTerms: closeDetails.agreedPaymentTerms.trim(),
         carrier: closeDetails.carrier.trim(),
         totalValue: closeDetails.totalValue.trim(),
+        notes: closeDetails.notes.trim(),
         closedAt,
       },
     };
@@ -629,6 +634,7 @@ export function App() {
       paymentTerms: quote.paymentTerms || '',
       quoteDate: quote.quoteDate,
       seller: quote.seller,
+      notes: quote.notes || '',
       followUpAmount: quote.followUpAmount || quote.followUpDays || 1,
       followUpUnit: quote.followUpUnit || 'days',
       followUpUsesTime: (quote.followUpUnit || 'days') !== 'days',
@@ -673,6 +679,7 @@ export function App() {
       paymentTerms: quoteEditForm.paymentTerms.trim(),
       quoteDate: quoteEditForm.quoteDate,
       seller: quoteEditForm.seller,
+      notes: quoteEditForm.notes.trim(),
       followUpDays: quoteEditForm.followUpUnit === 'days' ? Number(quoteEditForm.followUpAmount) : 1,
       followUpAmount: Number(quoteEditForm.followUpAmount),
       followUpUnit: quoteEditForm.followUpUnit,
@@ -1281,6 +1288,16 @@ function QuotesWorkspace({
           {errors.seller && <small>{errors.seller}</small>}
         </label>
 
+        <label>
+          Obs.
+          <textarea
+            value={form.notes}
+            onChange={(event) => onUpdateForm('notes', event.target.value)}
+            placeholder="Observações da cotação"
+            rows="4"
+          />
+        </label>
+
         <button className="primary-button" type="submit">
           <Plus size={18} />
           Adicionar cotação
@@ -1503,6 +1520,14 @@ function QuotesWorkspace({
                             <span>
                               <b>Valor total</b>
                               {quote.closeDetails.totalValue}
+                            </span>
+                            <span>
+                              <b>Obs. cotação</b>
+                              {quote.notes || '—'}
+                            </span>
+                            <span>
+                              <b>Obs. pedido</b>
+                              {quote.closeDetails.notes || '—'}
                             </span>
                           </div>
                         </td>
@@ -1752,6 +1777,16 @@ function CloseQuoteModal({ closeDetails, closeErrors, closeModal, onCancel, onSu
           {closeErrors.totalValue && <small>{closeErrors.totalValue}</small>}
         </label>
 
+        <label>
+          Obs.
+          <textarea
+            value={closeDetails.notes}
+            onChange={(event) => onUpdate('notes', event.target.value)}
+            placeholder="Observações do pedido fechado"
+            rows="4"
+          />
+        </label>
+
         <div className="modal-actions">
           <button className="secondary-button" type="button" onClick={onCancel}>
             Cancelar
@@ -1855,6 +1890,16 @@ function QuoteEditModal({ errors, form, onCancel, onSubmit, onUpdate }) {
             ))}
           </select>
           {errors.seller && <small>{errors.seller}</small>}
+        </label>
+
+        <label>
+          Obs.
+          <textarea
+            value={form.notes}
+            onChange={(event) => onUpdate('notes', event.target.value)}
+            placeholder="Observações da cotação"
+            rows="4"
+          />
         </label>
 
         <div className="modal-actions">

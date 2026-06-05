@@ -5,6 +5,7 @@ create table if not exists public.quotes (
   payment_terms text,
   quote_date date not null,
   seller text not null check (seller in ('Elton', 'Bruno', 'Stephanie')),
+  notes text,
   follow_up_days integer not null default 1 check (follow_up_days >= 1),
   follow_up_amount numeric not null default 1 check (follow_up_amount > 0),
   follow_up_unit text not null default 'days' check (follow_up_unit in ('days', 'hours', 'minutes')),
@@ -54,6 +55,7 @@ alter table public.quotes add column if not exists follow_up_amount numeric not 
 alter table public.quotes add column if not exists follow_up_unit text not null default 'days';
 alter table public.quotes add column if not exists follow_up_started_at timestamptz;
 alter table public.quotes add column if not exists archived_at timestamptz;
+alter table public.quotes add column if not exists notes text;
 alter table public.tracking_entries add column if not exists invoice_number text;
 alter table public.tracking_entries add column if not exists correios_update_failed boolean not null default false;
 
