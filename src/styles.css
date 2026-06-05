@@ -626,6 +626,21 @@ td {
   background: #9f1239;
 }
 
+.obs-button {
+  background: #eef7f6;
+  border: 1px solid #b7deda;
+  border-radius: 7px;
+  color: #0f766e;
+  font-size: 0.82rem;
+  font-weight: 900;
+  min-height: 36px;
+  padding: 7px 10px;
+}
+
+.obs-button:hover {
+  background: #dff1ef;
+}
+
 .closed-details-row td {
   background: #fbfcfe;
   border-bottom-color: #d9e0e7;
@@ -651,6 +666,12 @@ td {
   font-size: 0.72rem;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.quote-notes-details {
+  border-left-color: #0f766e;
+  grid-template-columns: 1fr;
+  white-space: pre-wrap;
 }
 
 .empty-state {

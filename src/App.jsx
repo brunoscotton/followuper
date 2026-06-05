@@ -1385,6 +1385,7 @@ function QuotesWorkspace({
                 const due = isFollowUpDue(quote, now);
                 const unchanged = isStatusUnchanged(quote, now);
                 const showCloseDetails = isClosed(quote) && quote.closeDetails;
+                const hasQuoteNotes = Boolean(quote.notes?.trim());
                 const detailsExpanded = expandedQuoteIds.includes(quote.id);
                 const canEditQuote = !isClosed(quote);
 
@@ -1460,6 +1461,20 @@ function QuotesWorkspace({
                               <Pencil size={17} />
                             </button>
                           )}
+                          {canEditQuote && hasQuoteNotes && (
+                            <button
+                              className="obs-button"
+                              type="button"
+                              title="Ver observação da cotação"
+                              aria-label="Ver observação da cotação"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onToggleQuoteDetails(quote.id);
+                              }}
+                            >
+                              Obs.
+                            </button>
+                          )}
                           {due && (
                             <button
                               className="archive-button"
@@ -1484,6 +1499,20 @@ function QuotesWorkspace({
                               }}
                             >
                               <Pencil size={17} />
+                            </button>
+                          )}
+                          {showCloseDetails && hasQuoteNotes && (
+                            <button
+                              className="obs-button"
+                              type="button"
+                              title="Ver observação da cotação"
+                              aria-label="Ver observação da cotação"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onToggleQuoteDetails(quote.id);
+                              }}
+                            >
+                              Obs.
                             </button>
                           )}
                           <button
@@ -1528,6 +1557,18 @@ function QuotesWorkspace({
                             <span>
                               <b>Obs. pedido</b>
                               {quote.closeDetails.notes || '—'}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {!showCloseDetails && hasQuoteNotes && detailsExpanded && (
+                      <tr className="closed-details-row quote-notes-row">
+                        <td colSpan="8">
+                          <div className="closed-details quote-notes-details">
+                            <span>
+                              <b>Obs. cotação</b>
+                              {quote.notes}
                             </span>
                           </div>
                         </td>
