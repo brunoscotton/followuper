@@ -245,6 +245,27 @@ h2 {
   position: relative;
 }
 
+.info-add-row.inline {
+  margin: -3px 0;
+  min-height: 24px;
+  opacity: 0.45;
+}
+
+.info-add-row.inline:hover,
+.info-add-row.inline:focus-within {
+  opacity: 1;
+}
+
+.info-add-row.inline .info-add-button {
+  height: 26px;
+  width: 26px;
+}
+
+.info-add-row.inline .info-add-button svg {
+  height: 15px;
+  width: 15px;
+}
+
 .info-add-button {
   align-items: center;
   background: #eef7f6;
@@ -324,6 +345,13 @@ h2 {
 
 .info-block.bullet-block {
   grid-template-columns: 24px 16px minmax(0, 1fr) 32px;
+}
+
+.info-block.info-image-block,
+.info-block.info-link-block,
+.info-block.info-table-block,
+.info-block.info-sidebar-block {
+  grid-template-columns: 24px minmax(0, 1fr) 32px;
 }
 
 .info-block-handle,
@@ -413,6 +441,81 @@ h2 {
 .info-delete-button:hover {
   background: #fff1f2;
   color: #be123c;
+}
+
+.info-inline-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.info-image-preview {
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  display: block;
+  max-height: 360px;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.info-image-placeholder {
+  align-items: center;
+  background: #f6f8fa;
+  border: 1px dashed #c8d2dc;
+  border-radius: 8px;
+  color: #657587;
+  display: flex;
+  font-weight: 800;
+  justify-content: center;
+  min-height: 150px;
+}
+
+.info-link-preview {
+  align-items: center;
+  color: #0f5fb8;
+  display: inline-flex;
+  font-weight: 800;
+  text-decoration: underline;
+  width: fit-content;
+}
+
+.info-edit-table-wrap {
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.info-edit-table {
+  min-width: 0;
+  width: 100%;
+}
+
+.info-edit-table th,
+.info-edit-table td {
+  padding: 0;
+}
+
+.info-edit-table th input,
+.info-edit-table td input {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 38px;
+}
+
+.info-edit-table th input {
+  font-weight: 900;
+}
+
+.info-sidebar-box {
+  background: #f6fbfa;
+  border-left: 4px solid #0f766e;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
 }
 
 .info-divider-block {

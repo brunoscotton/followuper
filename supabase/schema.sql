@@ -53,13 +53,18 @@ create table if not exists public.tracking_entries (
 
 create table if not exists public.info_blocks (
   id uuid primary key,
-  block_type text not null default 'text' check (block_type in ('text', 'title', 'bullet', 'toggle', 'divider')),
+  block_type text not null default 'text' check (block_type in ('text', 'title', 'bullet', 'toggle', 'divider', 'image', 'table', 'link', 'sidebar')),
   content text,
   position numeric not null default 0,
   is_open boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.info_blocks drop constraint if exists info_blocks_block_type_check;
+alter table public.info_blocks
+  add constraint info_blocks_block_type_check
+  check (block_type in ('text', 'title', 'bullet', 'toggle', 'divider', 'image', 'table', 'link', 'sidebar'));
 
 alter table public.quotes add column if not exists follow_up_amount numeric not null default 1;
 alter table public.quotes add column if not exists follow_up_unit text not null default 'days';

@@ -10,23 +10,27 @@ import {
   Database,
   FileText,
   Heading1,
+  Image as ImageIcon,
   List,
+  Link as LinkIcon,
   LogIn,
   LogOut,
   Minus,
   PackageSearch,
+  PanelLeft,
   Pencil,
   Plus,
   RefreshCw,
   Search,
   ShieldCheck,
+  Table2,
   Trash2,
   Truck,
   Type,
   X,
 } from 'lucide-react';
 import React from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrentSession, onAuthChange, signIn, signOut } from './services/authRepository';
 import {
   cacheQuotes,
@@ -84,6 +88,10 @@ const infoBlockTypes = [
   { value: 'bullet', label: 'Lista com marcadores', icon: List, placeholder: 'Item da lista' },
   { value: 'toggle', label: 'Lista de alternantes', icon: ChevronRight, placeholder: 'Título do alternante' },
   { value: 'divider', label: 'Barra de quebra de página', icon: Minus, placeholder: '' },
+  { value: 'image', label: 'Importar imagem', icon: ImageIcon, placeholder: '' },
+  { value: 'table', label: 'Tabela', icon: Table2, placeholder: '' },
+  { value: 'link', label: 'Link', icon: LinkIcon, placeholder: 'https://exemplo.com' },
+  { value: 'sidebar', label: 'Barra lateral', icon: PanelLeft, placeholder: 'Título da barra lateral' },
 ];
 
 const deliverySituations = [
@@ -469,13 +477,14 @@ export function App() {
     [trackingEntries],
   );
 
-  async function addInfoBlock(type) {
+  async function addInfoBlock(type, options = {}) {
     const nowIso = new Date().toISOString();
+    const { afterBlockId = null, content = getDefaultInfoBlockContent(type) } = options;
     const block = {
       id: crypto.randomUUID(),
       type,
-      content: '',
-      position: infoBlocks.length ? Math.max(...infoBlocks.map((item) => item.position || 0)) + 1 : 1,
+      content,
+      position: getNextInfoBlockPosition(infoBlocks, afterBlockId),
       isOpen: true,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -1120,6 +1129,14 @@ export function App() {
               {dataStatus}
             </span>
             <button
+              className={activeView === 'quotes' ? 'view-button active' : 'view-button'}
+              type="button"
+              onClick={() => setActiveView('quotes')}
+            >
+              <FileText size={16} />
+              Cotações
+            </button>
+            <button
               className={activeView === 'info' ? 'view-button active' : 'view-button'}
               type="button"
               onClick={() => setActiveView('info')}
@@ -1290,12 +1307,121 @@ function joinToggleContent(title, body) {
   return `${title || ''}${body ? `\n${body}` : ''}`;
 }
 
-function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onSaveBlock, setActiveView }) {
-  const [menuOpen, setMenuOpen] = useState(false);
+function safeParseInfoContent(content, fallback) {
+  try {
+    return content ? { ...fallback, ...JSON.parse(content) } : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
-  function handleAddBlock(type) {
-    onAddBlock(type);
-    setMenuOpen(false);
+function getDefaultInfoBlockContent(type) {
+  if (type === 'image') return JSON.stringify({ src: '', name: '', caption: '' });
+  if (type === 'link') return JSON.stringify({ url: '', label: '' });
+  if (type === 'table') return JSON.stringify({ headers: ['Coluna 1', 'Coluna 2'], rows: [['', '']] });
+  if (type === 'sidebar') return JSON.stringify({ title: '', body: '' });
+  return '';
+}
+
+function getNextInfoBlockPosition(blocks, afterBlockId) {
+  const sortedBlocks = sortInfoBlocks(blocks);
+
+  if (!afterBlockId) {
+    return sortedBlocks.length ? Math.max(...sortedBlocks.map((block) => block.position || 0)) + 1 : 1;
+  }
+
+  const blockIndex = sortedBlocks.findIndex((block) => block.id === afterBlockId);
+  if (blockIndex === -1) return getNextInfoBlockPosition(blocks, null);
+
+  const currentPosition = sortedBlocks[blockIndex].position || blockIndex + 1;
+  const nextPosition = sortedBlocks[blockIndex + 1]?.position;
+  return nextPosition ? (currentPosition + nextPosition) / 2 : currentPosition + 1;
+}
+
+function readImageFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function buildImageBlockContent(file, src) {
+  return JSON.stringify({ src, name: file.name, caption: '' });
+}
+
+function normalizeInfoLink(url) {
+  const trimmedUrl = (url || '').trim();
+  if (!trimmedUrl) return '';
+  return /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
+}
+
+function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onSaveBlock, setActiveView }) {
+  const [menuTarget, setMenuTarget] = useState(null);
+  const [pendingImageTarget, setPendingImageTarget] = useState(null);
+  const pendingImageTargetRef = useRef(null);
+  const imageInputRef = useRef(null);
+
+  function getAfterBlockId(targetId) {
+    return targetId && targetId !== 'top' ? targetId : null;
+  }
+
+  function handleAddBlock(type, targetId = menuTarget || 'top') {
+    if (type === 'image') {
+      setPendingImageTarget(targetId);
+      pendingImageTargetRef.current = targetId;
+      imageInputRef.current?.click();
+      return;
+    }
+
+    onAddBlock(type, { afterBlockId: getAfterBlockId(targetId) });
+    setMenuTarget(null);
+  }
+
+  async function handleImageFileChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const src = await readImageFileAsDataUrl(file);
+    onAddBlock('image', {
+      afterBlockId: getAfterBlockId(pendingImageTargetRef.current || pendingImageTarget),
+      content: buildImageBlockContent(file, src),
+    });
+    setMenuTarget(null);
+    setPendingImageTarget(null);
+    pendingImageTargetRef.current = null;
+    event.target.value = '';
+  }
+
+  function renderAddControl(targetId, isInline = false) {
+    const isOpen = menuTarget === targetId;
+
+    return (
+      <div className={isInline ? 'info-add-row inline' : 'info-add-row'}>
+        <button
+          className="info-add-button"
+          type="button"
+          aria-label="Adicionar bloco"
+          onClick={() => setMenuTarget((current) => (current === targetId ? null : targetId))}
+        >
+          <Plus size={18} />
+        </button>
+        {isOpen && (
+          <div className="info-block-menu">
+            {infoBlockTypes.map((blockType) => {
+              const Icon = blockType.icon;
+              return (
+                <button key={blockType.value} type="button" onClick={() => handleAddBlock(blockType.value, targetId)}>
+                  <Icon size={17} />
+                  {blockType.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -1312,24 +1438,8 @@ function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onSaveBlo
       </div>
 
       <div className="info-document">
-        <div className="info-add-row">
-          <button className="info-add-button" type="button" onClick={() => setMenuOpen((current) => !current)}>
-            <Plus size={18} />
-          </button>
-          {menuOpen && (
-            <div className="info-block-menu">
-              {infoBlockTypes.map((blockType) => {
-                const Icon = blockType.icon;
-                return (
-                  <button key={blockType.value} type="button" onClick={() => handleAddBlock(blockType.value)}>
-                    <Icon size={17} />
-                    {blockType.label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        {renderAddControl('top')}
+        <input ref={imageInputRef} accept="image/*" hidden type="file" onChange={handleImageFileChange} />
 
         {blocks.length === 0 ? (
           <div className="info-empty-state">
@@ -1339,13 +1449,10 @@ function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onSaveBlo
         ) : (
           <div className="info-block-list">
             {blocks.map((block) => (
-              <InfoBlock
-                block={block}
-                key={block.id}
-                onChangeBlock={onChangeBlock}
-                onRemoveBlock={onRemoveBlock}
-                onSaveBlock={onSaveBlock}
-              />
+              <React.Fragment key={block.id}>
+                <InfoBlock block={block} onChangeBlock={onChangeBlock} onRemoveBlock={onRemoveBlock} onSaveBlock={onSaveBlock} />
+                {renderAddControl(block.id, true)}
+              </React.Fragment>
             ))}
           </div>
         )}
@@ -1358,6 +1465,11 @@ function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
   const blockType = infoBlockTypes.find((item) => item.value === block.type) || infoBlockTypes[0];
   const Icon = blockType.icon;
   const toggleContent = block.type === 'toggle' ? splitToggleContent(block.content) : null;
+  const imageContent = block.type === 'image' ? safeParseInfoContent(block.content, { src: '', name: '', caption: '' }) : null;
+  const linkContent = block.type === 'link' ? safeParseInfoContent(block.content, { url: '', label: '' }) : null;
+  const tableContent =
+    block.type === 'table' ? safeParseInfoContent(block.content, { headers: ['Coluna 1', 'Coluna 2'], rows: [['', '']] }) : null;
+  const sidebarContent = block.type === 'sidebar' ? safeParseInfoContent(block.content, { title: '', body: '' }) : null;
 
   function updateContent(content) {
     onChangeBlock(block.id, { content });
@@ -1365,6 +1477,50 @@ function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
 
   function saveContent(content = block.content) {
     onSaveBlock(block.id, { content });
+  }
+
+  function updateJsonContent(nextContent) {
+    const content = JSON.stringify(nextContent);
+    updateContent(content);
+    return content;
+  }
+
+  function saveJsonContent(nextContent) {
+    onSaveBlock(block.id, { content: JSON.stringify(nextContent) });
+  }
+
+  async function replaceImage(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const src = await readImageFileAsDataUrl(file);
+    const content = buildImageBlockContent(file, src);
+    updateContent(content);
+    saveContent(content);
+    event.target.value = '';
+  }
+
+  function updateTableHeader(index, value) {
+    const headers = [...tableContent.headers];
+    headers[index] = value;
+    updateJsonContent({ ...tableContent, headers });
+  }
+
+  function updateTableCell(rowIndex, columnIndex, value) {
+    const rows = tableContent.rows.map((row) => [...row]);
+    rows[rowIndex][columnIndex] = value;
+    updateJsonContent({ ...tableContent, rows });
+  }
+
+  function addTableRow() {
+    const rows = [...tableContent.rows, tableContent.headers.map(() => '')];
+    saveJsonContent({ ...tableContent, rows });
+  }
+
+  function addTableColumn() {
+    const headers = [...tableContent.headers, `Coluna ${tableContent.headers.length + 1}`];
+    const rows = tableContent.rows.map((row) => [...row, '']);
+    saveJsonContent({ ...tableContent, headers, rows });
   }
 
   if (block.type === 'divider') {
@@ -1414,6 +1570,163 @@ function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
               rows="3"
             />
           )}
+        </div>
+        <button className="info-delete-button" type="button" aria-label="Remover bloco" onClick={() => onRemoveBlock(block.id)}>
+          <Trash2 size={15} />
+        </button>
+      </div>
+    );
+  }
+
+  if (block.type === 'image') {
+    return (
+      <div className="info-block info-image-block">
+        <div className="info-block-handle">
+          <ImageIcon size={16} />
+        </div>
+        <div className="info-block-content">
+          {imageContent.src ? (
+            <img className="info-image-preview" src={imageContent.src} alt={imageContent.caption || imageContent.name || 'Imagem'} />
+          ) : (
+            <div className="info-image-placeholder">Nenhuma imagem selecionada</div>
+          )}
+          <div className="info-inline-actions">
+            <label className="secondary-button compact">
+              <ImageIcon size={15} />
+              Trocar imagem
+              <input accept="image/*" hidden type="file" onChange={replaceImage} />
+            </label>
+          </div>
+          <input
+            className="info-block-input"
+            value={imageContent.caption}
+            onBlur={() => saveJsonContent(imageContent)}
+            onChange={(event) => updateJsonContent({ ...imageContent, caption: event.target.value })}
+            placeholder="Legenda da imagem"
+          />
+        </div>
+        <button className="info-delete-button" type="button" aria-label="Remover bloco" onClick={() => onRemoveBlock(block.id)}>
+          <Trash2 size={15} />
+        </button>
+      </div>
+    );
+  }
+
+  if (block.type === 'link') {
+    const href = normalizeInfoLink(linkContent.url);
+
+    return (
+      <div className="info-block info-link-block">
+        <div className="info-block-handle">
+          <LinkIcon size={16} />
+        </div>
+        <div className="info-block-content">
+          <input
+            className="info-toggle-title"
+            value={linkContent.label}
+            onBlur={() => saveJsonContent(linkContent)}
+            onChange={(event) => updateJsonContent({ ...linkContent, label: event.target.value })}
+            placeholder="Texto do link"
+          />
+          <input
+            className="info-block-input"
+            value={linkContent.url}
+            onBlur={() => saveJsonContent(linkContent)}
+            onChange={(event) => updateJsonContent({ ...linkContent, url: event.target.value })}
+            placeholder={blockType.placeholder}
+          />
+          {href && (
+            <a className="info-link-preview" href={href} rel="noreferrer" target="_blank">
+              {linkContent.label || href}
+            </a>
+          )}
+        </div>
+        <button className="info-delete-button" type="button" aria-label="Remover bloco" onClick={() => onRemoveBlock(block.id)}>
+          <Trash2 size={15} />
+        </button>
+      </div>
+    );
+  }
+
+  if (block.type === 'table') {
+    return (
+      <div className="info-block info-table-block">
+        <div className="info-block-handle">
+          <Table2 size={16} />
+        </div>
+        <div className="info-block-content">
+          <div className="info-edit-table-wrap">
+            <table className="info-edit-table">
+              <thead>
+                <tr>
+                  {tableContent.headers.map((header, index) => (
+                    <th key={`header-${index}`}>
+                      <input
+                        value={header}
+                        onBlur={() => saveJsonContent(tableContent)}
+                        onChange={(event) => updateTableHeader(index, event.target.value)}
+                      />
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {tableContent.rows.map((row, rowIndex) => (
+                  <tr key={`row-${rowIndex}`}>
+                    {tableContent.headers.map((_, columnIndex) => (
+                      <td key={`cell-${rowIndex}-${columnIndex}`}>
+                        <input
+                          value={row[columnIndex] || ''}
+                          onBlur={() => saveJsonContent(tableContent)}
+                          onChange={(event) => updateTableCell(rowIndex, columnIndex, event.target.value)}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="info-inline-actions">
+            <button className="secondary-button compact" type="button" onClick={addTableRow}>
+              <Plus size={15} />
+              Linha
+            </button>
+            <button className="secondary-button compact" type="button" onClick={addTableColumn}>
+              <Plus size={15} />
+              Coluna
+            </button>
+          </div>
+        </div>
+        <button className="info-delete-button" type="button" aria-label="Remover bloco" onClick={() => onRemoveBlock(block.id)}>
+          <Trash2 size={15} />
+        </button>
+      </div>
+    );
+  }
+
+  if (block.type === 'sidebar') {
+    return (
+      <div className="info-block info-sidebar-block">
+        <div className="info-block-handle">
+          <PanelLeft size={16} />
+        </div>
+        <div className="info-sidebar-box">
+          <input
+            className="info-toggle-title"
+            value={sidebarContent.title}
+            onBlur={() => saveJsonContent(sidebarContent)}
+            onChange={(event) => updateJsonContent({ ...sidebarContent, title: event.target.value })}
+            placeholder={blockType.placeholder}
+          />
+          <textarea
+            className="info-block-input"
+            value={sidebarContent.body}
+            onBlur={() => saveJsonContent(sidebarContent)}
+            onChange={(event) => updateJsonContent({ ...sidebarContent, body: event.target.value })}
+            placeholder="Conteúdo da barra lateral"
+            rows="4"
+          />
         </div>
         <button className="info-delete-button" type="button" aria-label="Remover bloco" onClick={() => onRemoveBlock(block.id)}>
           <Trash2 size={15} />
