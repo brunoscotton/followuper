@@ -1365,7 +1365,7 @@ function QuotesWorkspace({
         </div>
 
         <div className="table-wrap">
-          <table>
+          <table className="quote-table">
             <thead>
               <tr>
                 <th>Status</th>

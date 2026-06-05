@@ -476,6 +476,20 @@ table {
   width: 100%;
 }
 
+.quote-table {
+  min-width: 900px;
+}
+
+.quote-table th:nth-child(7),
+.quote-table td:nth-child(7) {
+  width: 168px;
+}
+
+.quote-table th:nth-child(8),
+.quote-table td:nth-child(8) {
+  width: 170px;
+}
+
 th,
 td {
   border-bottom: 1px solid #e6ebf0;
@@ -548,7 +562,7 @@ td {
   color: #546374;
   flex-wrap: wrap;
   gap: 6px;
-  min-width: 220px;
+  min-width: 145px;
 }
 
 .due-cell b {
