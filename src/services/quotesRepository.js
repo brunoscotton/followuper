@@ -32,6 +32,7 @@ function toQuote(row) {
     quoteDate: row.quote_date,
     seller: row.seller,
     notes: row.notes || '',
+    isInterest: row.is_interest === true,
     followUpDays: row.follow_up_days || (followUpUnit === 'days' ? followUpAmount : 1),
     followUpAmount,
     followUpUnit,
@@ -54,6 +55,7 @@ function toRow(quote) {
   if ('quoteDate' in quote) row.quote_date = quote.quoteDate;
   if ('seller' in quote) row.seller = quote.seller;
   if ('notes' in quote) row.notes = quote.notes || null;
+  if ('isInterest' in quote) row.is_interest = quote.isInterest === true;
   if ('followUpDays' in quote) row.follow_up_days = quote.followUpDays;
   if ('followUpAmount' in quote) row.follow_up_amount = quote.followUpAmount;
   if ('followUpUnit' in quote) row.follow_up_unit = quote.followUpUnit;

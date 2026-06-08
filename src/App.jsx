@@ -23,6 +23,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Star,
   Table2,
   Trash2,
   Truck,
@@ -139,6 +140,7 @@ const initialForm = {
   quoteDate: getTodayInputValue(),
   seller: 'Elton',
   notes: '',
+  isInterest: false,
   followUpAmount: 1,
   followUpUnit: 'days',
   followUpUsesTime: false,
@@ -151,6 +153,7 @@ const initialQuoteEditForm = {
   quoteDate: getTodayInputValue(),
   seller: 'Elton',
   notes: '',
+  isInterest: false,
   followUpAmount: 1,
   followUpUnit: 'days',
   followUpUsesTime: false,
@@ -597,6 +600,7 @@ export function App() {
       quoteDate: form.quoteDate,
       seller: form.seller,
       notes: form.notes.trim(),
+      isInterest: form.isInterest,
       followUpDays: form.followUpUnit === 'days' ? Number(form.followUpAmount) : 1,
       followUpAmount: Number(form.followUpAmount),
       followUpUnit: form.followUpUnit,
@@ -730,6 +734,7 @@ export function App() {
       quoteDate: quote.quoteDate,
       seller: quote.seller,
       notes: quote.notes || '',
+      isInterest: quote.isInterest === true,
       followUpAmount: quote.followUpAmount || quote.followUpDays || 1,
       followUpUnit: quote.followUpUnit || 'days',
       followUpUsesTime: (quote.followUpUnit || 'days') !== 'days',
@@ -775,6 +780,7 @@ export function App() {
       quoteDate: quoteEditForm.quoteDate,
       seller: quoteEditForm.seller,
       notes: quoteEditForm.notes.trim(),
+      isInterest: quoteEditForm.isInterest,
       followUpDays: quoteEditForm.followUpUnit === 'days' ? Number(quoteEditForm.followUpAmount) : 1,
       followUpAmount: Number(quoteEditForm.followUpAmount),
       followUpUnit: quoteEditForm.followUpUnit,
@@ -1876,6 +1882,15 @@ function QuotesWorkspace({
           {errors.seller && <small>{errors.seller}</small>}
         </label>
 
+        <label className="checkbox-label interest-checkbox">
+          <input
+            type="checkbox"
+            checked={form.isInterest}
+            onChange={(event) => onUpdateForm('isInterest', event.target.checked)}
+          />
+          Cotação de interesse
+        </label>
+
         <label>
           Obs.
           <textarea
@@ -1999,7 +2014,14 @@ function QuotesWorkspace({
                           </select>
                         </div>
                       </td>
-                      <td className="strong-text">{quote.quoteNumber}</td>
+                      <td className="strong-text">
+                        <span className="quote-number-cell">
+                          {quote.isInterest && (
+                            <Star className="interest-star" size={16} aria-label="Cotação de interesse" fill="currentColor" />
+                          )}
+                          {quote.quoteNumber}
+                        </span>
+                      </td>
                       <td>{quote.clientName}</td>
                       <td>{quote.paymentTerms || '—'}</td>
                       <td>{formatDate(`${quote.quoteDate}T12:00:00`)}</td>
@@ -2519,6 +2541,15 @@ function QuoteEditModal({ errors, form, onCancel, onSubmit, onUpdate }) {
             ))}
           </select>
           {errors.seller && <small>{errors.seller}</small>}
+        </label>
+
+        <label className="checkbox-label interest-checkbox">
+          <input
+            type="checkbox"
+            checked={form.isInterest}
+            onChange={(event) => onUpdate('isInterest', event.target.checked)}
+          />
+          Cotação de interesse
         </label>
 
         <label>

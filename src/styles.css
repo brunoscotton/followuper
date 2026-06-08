@@ -599,6 +599,12 @@ small {
   width: auto;
 }
 
+.interest-checkbox {
+  align-items: center;
+  color: #344557;
+  font-weight: 800;
+}
+
 .inline-field-pair {
   display: grid;
   gap: 8px;
@@ -735,6 +741,19 @@ small {
 .legend span,
 .status-cell {
   gap: 7px;
+}
+
+.quote-number-cell {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.interest-star {
+  color: #f5b301;
+  filter: drop-shadow(0 1px 1px rgba(86, 62, 0, 0.25));
+  flex: 0 0 auto;
 }
 
 .seller-filter {
