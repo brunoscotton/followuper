@@ -123,6 +123,54 @@ h2 {
   justify-content: flex-end;
 }
 
+.menu-dropdown-wrap {
+  position: relative;
+}
+
+.top-dropdown-menu {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  box-shadow: 0 18px 36px rgba(31, 48, 65, 0.14);
+  display: grid;
+  gap: 4px;
+  min-width: 230px;
+  padding: 8px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 8;
+}
+
+.top-dropdown-menu.compact {
+  min-width: 150px;
+}
+
+.top-dropdown-menu button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: #283746;
+  display: inline-flex;
+  font-weight: 800;
+  gap: 9px;
+  justify-content: flex-start;
+  min-height: 36px;
+  padding: 8px;
+  text-align: left;
+}
+
+.top-dropdown-menu button:hover {
+  background: #f3f7f9;
+}
+
+.top-dropdown-menu hr {
+  border: 0;
+  border-top: 1px solid #e6ebf0;
+  margin: 4px 0;
+}
+
 .data-badge,
 .logout-button,
 .view-button {
@@ -732,6 +780,13 @@ small {
   min-width: 28px;
   padding: 1px 8px;
   text-align: center;
+}
+
+.simple-filters {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(150px, 0.7fr);
+  margin-bottom: 12px;
 }
 
 .legend {
@@ -1374,6 +1429,7 @@ button:disabled {
   .form-pair,
   .form-pair.wide,
   .inline-field-pair,
+  .simple-filters,
   .tabs {
     grid-template-columns: 1fr;
   }

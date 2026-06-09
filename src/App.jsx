@@ -15,6 +15,7 @@ import {
   Link as LinkIcon,
   LogIn,
   LogOut,
+  Menu as MenuIcon,
   Minus,
   PackageSearch,
   PanelLeft,
@@ -63,6 +64,7 @@ import {
 } from './services/infoBlocksRepository';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
+const LAYOUT_STORAGE_KEY = 'followuper.layoutMode.v1';
 
 const statuses = [
   { value: 'sem-resposta', label: 'Sem resposta', color: 'yellow' },
@@ -76,6 +78,14 @@ const tabs = [
   { value: 'fechadas', label: 'Cotações finalizadas' },
   { value: 'arquivadas', label: 'Arquivadas' },
   { value: 'todas', label: 'Visualizar todas' },
+];
+
+const simpleTabs = [
+  { value: 'abertas', label: 'Cotações em aberto' },
+  { value: 'fechadas', label: 'Cotações finalizadas' },
+  { value: 'todas', label: 'Visualizar todas' },
+  { value: 'arquivadas', label: 'Arquivadas' },
+  { value: 'followup', label: 'Cotações para Follow-up' },
 ];
 
 const trackingTabs = [
@@ -172,6 +182,14 @@ const initialTrackingForm = {
 
 function getTodayInputValue() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function getStoredLayoutMode() {
+  try {
+    return localStorage.getItem(LAYOUT_STORAGE_KEY) === 'simple' ? 'simple' : 'complete';
+  } catch {
+    return 'complete';
+  }
 }
 
 function addDays(dateValue, days) {
@@ -286,6 +304,9 @@ export function App() {
   const [activeView, setActiveView] = useState('quotes');
   const [activeTab, setActiveTab] = useState('abertas');
   const [activeTrackingTab, setActiveTrackingTab] = useState('Em andamento');
+  const [layoutMode, setLayoutMode] = useState(getStoredLayoutMode);
+  const [mainMenuOpen, setMainMenuOpen] = useState(false);
+  const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
@@ -943,6 +964,10 @@ export function App() {
     );
   }
 
+  function changeSellerFilter(value) {
+    setSelectedSellers(value ? [value] : []);
+  }
+
   function updateTrackingForm(field, value) {
     setTrackingForm((current) => {
       if (field === 'deliverySituation' && value === 'Entregue') {
@@ -1115,6 +1140,25 @@ export function App() {
     );
   }
 
+  function changeLayoutMode(mode) {
+    setLayoutMode(mode);
+    setLayoutMenuOpen(false);
+    setMainMenuOpen(false);
+    if (mode === 'simple') setActiveTab('abertas');
+
+    try {
+      localStorage.setItem(LAYOUT_STORAGE_KEY, mode);
+    } catch {
+      // Layout preference is optional; the app can run without localStorage.
+    }
+  }
+
+  function navigateFromMenu(view) {
+    setActiveView(view);
+    setMainMenuOpen(false);
+    setLayoutMenuOpen(false);
+  }
+
   if (!authChecked || isLoading) {
     return (
       <main className="app-shell center-shell">
@@ -1140,77 +1184,134 @@ export function App() {
           </button>
         </div>
         <div className="top-stack">
-          <div className="session-actions">
-            <span className="data-badge">
-              <Database size={15} />
-              {dataStatus}
-            </span>
-            <button
-              className={activeView === 'quotes' ? 'view-button active' : 'view-button'}
-              type="button"
-              onClick={() => setActiveView('quotes')}
-            >
-              <FileText size={16} />
-              Cotações
-            </button>
-            <button
-              className={activeView === 'info' ? 'view-button active' : 'view-button'}
-              type="button"
-              onClick={() => setActiveView('info')}
-            >
-              <BookOpenText size={16} />
-              Painel de informações
-            </button>
-            <button
-              className={activeView === 'tracking' ? 'view-button active' : 'view-button'}
-              type="button"
-              onClick={() => setActiveView('tracking')}
-            >
-              <Truck size={16} />
-              Rastreio
-            </button>
-            {isSupabaseConfigured && (
-              <button className="logout-button" type="button" onClick={handleSignOut}>
-                <LogOut size={16} />
-                Sair
-              </button>
-            )}
-          </div>
-          <div className="top-actions" aria-live="polite">
-            <button
-              className="alert-tab"
-              type="button"
-              onClick={() => {
-                setActiveView('quotes');
-                setActiveTab('followup');
-              }}
-            >
-              <Bell size={18} />
-              <span>({metrics.followUpDue}) Cotações precisam de Follow-up</span>
-            </button>
-            <button
-              className="alert-tab muted"
-              type="button"
-              onClick={() => {
-                setActiveView('quotes');
-                setActiveTab('abertas');
-              }}
-            >
-              <AlertTriangle size={18} />
-              <span>({metrics.unchangedStatus}) Cotações sem alteração de status</span>
-            </button>
-            <button
-              className="alert-tab freight"
-              type="button"
-              onClick={() => {
-                setActiveView('tracking');
-                setActiveTrackingTab('Em andamento');
-              }}
-            >
-              <PackageSearch size={18} />
-              <span>({trackingMetrics.withoutCode}) fretes sem rastreio</span>
-            </button>
-          </div>
+          {layoutMode === 'simple' ? (
+            <div className="session-actions">
+              <div className="menu-dropdown-wrap">
+                <button className="view-button" type="button" onClick={() => setMainMenuOpen((current) => !current)}>
+                  <MenuIcon size={16} />
+                  Menu
+                </button>
+                {mainMenuOpen && (
+                  <div className="top-dropdown-menu">
+                    <button type="button" onClick={() => navigateFromMenu('quotes')}>
+                      <FileText size={16} />
+                      Cotações
+                    </button>
+                    <button type="button" onClick={() => navigateFromMenu('info')}>
+                      <BookOpenText size={16} />
+                      Painel de informações
+                    </button>
+                    <button type="button" onClick={() => navigateFromMenu('tracking')}>
+                      <Truck size={16} />
+                      Rastreio
+                    </button>
+                    <hr />
+                    <button type="button" onClick={() => changeLayoutMode('simple')}>
+                      Layout simples
+                    </button>
+                    <button type="button" onClick={() => changeLayoutMode('complete')}>
+                      Layout completa
+                    </button>
+                  </div>
+                )}
+              </div>
+              {isSupabaseConfigured && (
+                <button className="logout-button" type="button" onClick={handleSignOut}>
+                  <LogOut size={16} />
+                  Sair
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="session-actions">
+                <span className="data-badge">
+                  <Database size={15} />
+                  {dataStatus}
+                </span>
+                <button
+                  className={activeView === 'quotes' ? 'view-button active' : 'view-button'}
+                  type="button"
+                  onClick={() => setActiveView('quotes')}
+                >
+                  <FileText size={16} />
+                  Cotações
+                </button>
+                <button
+                  className={activeView === 'info' ? 'view-button active' : 'view-button'}
+                  type="button"
+                  onClick={() => setActiveView('info')}
+                >
+                  <BookOpenText size={16} />
+                  Painel de informações
+                </button>
+                <button
+                  className={activeView === 'tracking' ? 'view-button active' : 'view-button'}
+                  type="button"
+                  onClick={() => setActiveView('tracking')}
+                >
+                  <Truck size={16} />
+                  Rastreio
+                </button>
+                <div className="menu-dropdown-wrap">
+                  <button className="view-button" type="button" onClick={() => setLayoutMenuOpen((current) => !current)}>
+                    Layout
+                  </button>
+                  {layoutMenuOpen && (
+                    <div className="top-dropdown-menu compact">
+                      <button type="button" onClick={() => changeLayoutMode('simple')}>
+                        Simples
+                      </button>
+                      <button type="button" onClick={() => changeLayoutMode('complete')}>
+                        Completa
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {isSupabaseConfigured && (
+                  <button className="logout-button" type="button" onClick={handleSignOut}>
+                    <LogOut size={16} />
+                    Sair
+                  </button>
+                )}
+              </div>
+              <div className="top-actions" aria-live="polite">
+                <button
+                  className="alert-tab"
+                  type="button"
+                  onClick={() => {
+                    setActiveView('quotes');
+                    setActiveTab('followup');
+                  }}
+                >
+                  <Bell size={18} />
+                  <span>({metrics.followUpDue}) Cotações precisam de Follow-up</span>
+                </button>
+                <button
+                  className="alert-tab muted"
+                  type="button"
+                  onClick={() => {
+                    setActiveView('quotes');
+                    setActiveTab('abertas');
+                  }}
+                >
+                  <AlertTriangle size={18} />
+                  <span>({metrics.unchangedStatus}) Cotações sem alteração de status</span>
+                </button>
+                <button
+                  className="alert-tab freight"
+                  type="button"
+                  onClick={() => {
+                    setActiveView('tracking');
+                    setActiveTrackingTab('Em andamento');
+                  }}
+                >
+                  <PackageSearch size={18} />
+                  <span>({trackingMetrics.withoutCode}) fretes sem rastreio</span>
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </section>
 
@@ -1222,6 +1323,7 @@ export function App() {
           errors={errors}
           form={form}
           metrics={metrics}
+          isSimpleLayout={layoutMode === 'simple'}
           now={now}
           onArchiveQuote={archiveQuote}
           onChangeStatus={changeStatus}
@@ -1237,6 +1339,7 @@ export function App() {
           setActiveTab={setActiveTab}
           setActiveView={setActiveView}
           setSearchTerm={setSearchTerm}
+          onChangeSellerFilter={changeSellerFilter}
           onToggleSellerFilter={toggleSellerFilter}
           onToggleQuoteDetails={toggleQuoteDetails}
           visibleQuotes={visibleQuotes}
@@ -1787,6 +1890,7 @@ function QuotesWorkspace({
   activeTab,
   errors,
   form,
+  isSimpleLayout,
   metrics,
   now,
   onArchiveQuote,
@@ -1803,6 +1907,7 @@ function QuotesWorkspace({
   setActiveTab,
   setActiveView,
   setSearchTerm,
+  onChangeSellerFilter,
   onToggleSellerFilter,
   onToggleQuoteDetails,
   visibleQuotes,
@@ -1925,10 +2030,12 @@ function QuotesWorkspace({
             <h2>Cotações</h2>
           </div>
           <div className="panel-actions">
-            <button className="secondary-button compact" type="button" onClick={() => setActiveView('tracking')}>
-              <Truck size={16} />
-              Rastreio
-            </button>
+            {!isSimpleLayout && (
+              <button className="secondary-button compact" type="button" onClick={() => setActiveView('tracking')}>
+                <Truck size={16} />
+                Rastreio
+              </button>
+            )}
             <label className="search-box">
               <Search size={18} />
               <input
@@ -1940,43 +2047,71 @@ function QuotesWorkspace({
           </div>
         </div>
 
-        <div className="tabs" role="tablist" aria-label="Categorias de cotações">
-          {tabs.map((tab) => (
-            <button
-              className={activeTab === tab.value ? 'tab active' : 'tab'}
-              key={tab.value}
-              type="button"
-              onClick={() => setActiveTab(tab.value)}
-            >
-              {tab.label}
-              <strong>{metrics[tab.value]}</strong>
-            </button>
-          ))}
-        </div>
-
-        <div className="legend" aria-label="Legenda de status">
-          <span>
-            <i className="dot yellow" /> Sem resposta
-          </span>
-          <span>
-            <i className="dot orange" /> Em negociação
-          </span>
-          <span>
-            <i className="dot red" /> Fechada
-          </span>
-          <div className="seller-filter" aria-label="Filtro por vendedor">
-            {sellers.map((seller) => (
-              <label className="checkbox-label compact-checkbox" key={seller}>
-                <input
-                  type="checkbox"
-                  checked={selectedSellers.includes(seller)}
-                  onChange={() => onToggleSellerFilter(seller)}
-                />
-                {seller}
-              </label>
-            ))}
+        {isSimpleLayout ? (
+          <div className="simple-filters">
+            <label>
+              Categoria
+              <select value={activeTab} onChange={(event) => setActiveTab(event.target.value)}>
+                {simpleTabs.map((tab) => (
+                  <option key={tab.value} value={tab.value}>
+                    {tab.label} ({metrics[tab.value]})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Vendedor
+              <select value={selectedSellers[0] || ''} onChange={(event) => onChangeSellerFilter(event.target.value)}>
+                <option value="">Todos</option>
+                {sellers.map((seller) => (
+                  <option key={seller} value={seller}>
+                    {seller}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="tabs" role="tablist" aria-label="Categorias de cotações">
+              {tabs.map((tab) => (
+                <button
+                  className={activeTab === tab.value ? 'tab active' : 'tab'}
+                  key={tab.value}
+                  type="button"
+                  onClick={() => setActiveTab(tab.value)}
+                >
+                  {tab.label}
+                  <strong>{metrics[tab.value]}</strong>
+                </button>
+              ))}
+            </div>
+
+            <div className="legend" aria-label="Legenda de status">
+              <span>
+                <i className="dot yellow" /> Sem resposta
+              </span>
+              <span>
+                <i className="dot orange" /> Em negociação
+              </span>
+              <span>
+                <i className="dot red" /> Fechada
+              </span>
+              <div className="seller-filter" aria-label="Filtro por vendedor">
+                {sellers.map((seller) => (
+                  <label className="checkbox-label compact-checkbox" key={seller}>
+                    <input
+                      type="checkbox"
+                      checked={selectedSellers.includes(seller)}
+                      onChange={() => onToggleSellerFilter(seller)}
+                    />
+                    {seller}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
 
         <div className="table-wrap">
           <table className="quote-table">
@@ -2006,12 +2141,12 @@ function QuotesWorkspace({
                 return (
                   <React.Fragment key={quote.id}>
                     <tr
-                      className={`quote-row ${statusMeta.color} ${showCloseDetails ? 'expandable' : ''} ${due ? 'overdue' : ''}`}
+                      className={`quote-row ${isSimpleLayout ? '' : statusMeta.color} ${showCloseDetails ? 'expandable' : ''} ${due ? 'overdue' : ''}`}
                       onClick={() => showCloseDetails && onToggleQuoteDetails(quote.id)}
                     >
                       <td>
                         <div className="status-cell">
-                          <i className={`dot ${statusMeta.color}`} />
+                          {!isSimpleLayout && <i className={`dot ${statusMeta.color}`} />}
                           <select
                             value={quote.status}
                             onClick={(event) => event.stopPropagation()}
