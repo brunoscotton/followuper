@@ -158,6 +158,12 @@ const initialForm = {
   followUpUsesTime: false,
 };
 
+const initialGrandpaForm = {
+  quoteNumber: '',
+  clientName: '',
+  paymentTerms: '',
+};
+
 const initialQuoteEditForm = {
   quoteNumber: '',
   clientName: '',
@@ -188,7 +194,8 @@ function getTodayInputValue() {
 
 function getStoredLayoutMode() {
   try {
-    return localStorage.getItem(LAYOUT_STORAGE_KEY) === 'simple' ? 'simple' : 'complete';
+    const storedMode = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    return ['simple', 'vovo'].includes(storedMode) ? storedMode : 'complete';
   } catch {
     return 'complete';
   }
@@ -332,6 +339,18 @@ function normalize(text) {
   return text.toString().trim().toLowerCase();
 }
 
+function normalizeFinalClientName(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase();
+}
+
+function isFinalClientName(value) {
+  return normalizeFinalClientName(value) === 'CLIENTE FINAL';
+}
+
 function getStatusMeta(status) {
   return statuses.find((item) => item.value === status) || statuses[0];
 }
@@ -405,6 +424,8 @@ export function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
+  const [grandpaForm, setGrandpaForm] = useState(initialGrandpaForm);
+  const [grandpaErrors, setGrandpaErrors] = useState({});
   const [isUpdatingCorreios, setIsUpdatingCorreios] = useState(false);
   const [errors, setErrors] = useState({});
   const [closeModal, setCloseModal] = useState(null);
@@ -662,6 +683,63 @@ export function App() {
       return { ...current, [field]: value };
     });
     setErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  function updateGrandpaForm(field, value) {
+    setGrandpaForm((current) => ({ ...current, [field]: value }));
+    setGrandpaErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  async function submitGrandpaForm(event) {
+    event.preventDefault();
+
+    const nextErrors = {};
+    const quoteNumber = normalizeUploadQuoteNumber(grandpaForm.quoteNumber);
+    const clientName = grandpaForm.clientName.trim();
+    const paymentTerms = grandpaForm.paymentTerms.trim();
+
+    if (!quoteNumber) nextErrors.quoteNumber = 'Informe o numero do orcamento.';
+    if (!clientName) nextErrors.clientName = 'Informe o nome.';
+
+    setGrandpaErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    const quote = quotes.find((item) => normalizeUploadQuoteNumber(item.quoteNumber) === quoteNumber);
+    if (!quote) {
+      setAppError(`Orcamento ${quoteNumber} nao encontrado no FollowUper.`);
+      return;
+    }
+
+    const changes = {};
+    if (isFinalClientName(quote.clientName)) changes.clientName = clientName;
+    if (paymentTerms) {
+      changes.paymentTerms = paymentTerms;
+      if (quote.closeDetails) {
+        changes.closeDetails = {
+          ...quote.closeDetails,
+          agreedPaymentTerms: paymentTerms,
+        };
+      }
+    }
+
+    if (Object.keys(changes).length === 0) {
+      setAppError(`Orcamento ${quoteNumber} encontrado, mas nao havia dados para alterar.`);
+      return;
+    }
+
+    const previousQuotes = quotes;
+    setQuotes((current) => current.map((item) => (item.id === quote.id ? { ...item, ...changes } : item)));
+
+    try {
+      const savedQuote = await updateQuote(quote.id, changes);
+      setQuotes((current) => current.map((item) => (item.id === quote.id ? savedQuote : item)));
+      setGrandpaForm(initialGrandpaForm);
+      setGrandpaErrors({});
+      setAppError(`Orcamento ${quoteNumber} atualizado com sucesso.`);
+    } catch (error) {
+      setQuotes(previousQuotes);
+      setAppError(error.message || 'Nao foi possivel atualizar o orcamento.');
+    }
   }
 
   function validateForm() {
@@ -1320,7 +1398,8 @@ export function App() {
     setLayoutMode(mode);
     setLayoutMenuOpen(false);
     setMainMenuOpen(false);
-    if (mode === 'simple') setActiveTab('abertas');
+    if (mode !== 'complete') setActiveTab('abertas');
+    if (mode === 'vovo') setActiveView('quotes');
 
     try {
       localStorage.setItem(LAYOUT_STORAGE_KEY, mode);
@@ -1360,7 +1439,7 @@ export function App() {
           </button>
         </div>
         <div className="top-stack">
-          {layoutMode === 'simple' ? (
+          {layoutMode !== 'complete' ? (
             <div className="session-actions">
               <div className="menu-dropdown-wrap">
                 <button className="view-button" type="button" onClick={() => setMainMenuOpen((current) => !current)}>
@@ -1369,21 +1448,28 @@ export function App() {
                 </button>
                 {mainMenuOpen && (
                   <div className="top-dropdown-menu">
-                    <button type="button" onClick={() => navigateFromMenu('quotes')}>
-                      <FileText size={16} />
-                      Cotações
-                    </button>
-                    <button type="button" onClick={() => navigateFromMenu('info')}>
-                      <BookOpenText size={16} />
-                      Painel de informações
-                    </button>
-                    <button type="button" onClick={() => navigateFromMenu('tracking')}>
-                      <Truck size={16} />
-                      Rastreio
-                    </button>
-                    <hr />
+                    {layoutMode !== 'vovo' && (
+                      <>
+                        <button type="button" onClick={() => navigateFromMenu('quotes')}>
+                          <FileText size={16} />
+                          Cotações
+                        </button>
+                        <button type="button" onClick={() => navigateFromMenu('info')}>
+                          <BookOpenText size={16} />
+                          Painel de informações
+                        </button>
+                        <button type="button" onClick={() => navigateFromMenu('tracking')}>
+                          <Truck size={16} />
+                          Rastreio
+                        </button>
+                        <hr />
+                      </>
+                    )}
                     <button type="button" onClick={() => changeLayoutMode('simple')}>
                       Layout simples
+                    </button>
+                    <button type="button" onClick={() => changeLayoutMode('vovo')}>
+                      Layout vovô
                     </button>
                     <button type="button" onClick={() => changeLayoutMode('complete')}>
                       Layout completa
@@ -1447,6 +1533,9 @@ export function App() {
                       <button type="button" onClick={() => changeLayoutMode('simple')}>
                         Simples
                       </button>
+                      <button type="button" onClick={() => changeLayoutMode('vovo')}>
+                        Vovô
+                      </button>
                       <button type="button" onClick={() => changeLayoutMode('complete')}>
                         Completa
                       </button>
@@ -1503,7 +1592,14 @@ export function App() {
 
       {appError && <div className="app-alert">{appError}</div>}
 
-      {activeView === 'quotes' ? (
+      {layoutMode === 'vovo' ? (
+        <GrandpaWorkspace
+          errors={grandpaErrors}
+          form={grandpaForm}
+          onSubmit={submitGrandpaForm}
+          onUpdate={updateGrandpaForm}
+        />
+      ) : activeView === 'quotes' ? (
         <QuotesWorkspace
           activeTab={activeTab}
           errors={errors}
@@ -2069,6 +2165,53 @@ function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
         <Trash2 size={15} />
       </button>
     </div>
+  );
+}
+
+function GrandpaWorkspace({ errors, form, onSubmit, onUpdate }) {
+  return (
+    <section className="grandpa-panel">
+      <form className="grandpa-form" onSubmit={onSubmit} noValidate>
+        <div className="section-title grandpa-title">
+          <FileText size={24} />
+          <h2>Atualizar orçamento</h2>
+        </div>
+
+        <label>
+          Número do orçamento
+          <input
+            autoFocus
+            value={form.quoteNumber}
+            onChange={(event) => onUpdate('quoteNumber', event.target.value)}
+            placeholder="Ex: 228916"
+          />
+          {errors.quoteNumber && <small>{errors.quoteNumber}</small>}
+        </label>
+
+        <label>
+          Nome
+          <input
+            value={form.clientName}
+            onChange={(event) => onUpdate('clientName', event.target.value)}
+            placeholder="Nome do cliente"
+          />
+          {errors.clientName && <small>{errors.clientName}</small>}
+        </label>
+
+        <label>
+          Condição de pagamento
+          <input
+            value={form.paymentTerms}
+            onChange={(event) => onUpdate('paymentTerms', event.target.value)}
+            placeholder="Opcional"
+          />
+        </label>
+
+        <button className="primary-button grandpa-submit" type="submit">
+          Enviar
+        </button>
+      </form>
+    </section>
   );
 }
 
