@@ -69,6 +69,20 @@ h1 {
   object-fit: contain;
 }
 
+.logo-button {
+  background: transparent;
+  border: 0;
+  display: block;
+  padding: 0;
+  text-align: left;
+}
+
+.logo-button:focus-visible {
+  border-radius: 6px;
+  outline: 3px solid rgba(15, 118, 110, 0.25);
+  outline-offset: 4px;
+}
+
 .header-logo {
   height: 71px;
   max-width: min(336px, 70vw);

@@ -944,7 +944,13 @@ export function App() {
   }
 
   function updateTrackingForm(field, value) {
-    setTrackingForm((current) => ({ ...current, [field]: value }));
+    setTrackingForm((current) => {
+      if (field === 'deliverySituation' && value === 'Entregue') {
+        return { ...current, deliverySituation: value, status: 'Finalizado' };
+      }
+
+      return { ...current, [field]: value };
+    });
     setTrackingFormErrors((current) => ({ ...current, [field]: '' }));
   }
 
@@ -963,6 +969,7 @@ export function App() {
     if (!trackingModal) return;
 
     const previousEntries = trackingEntries;
+    const nextStatus = trackingForm.deliverySituation === 'Entregue' ? 'Finalizado' : trackingForm.status;
     const changes = {
       carrier: trackingForm.carrier.trim(),
       trackingCode: trackingForm.trackingCode.trim(),
@@ -970,7 +977,7 @@ export function App() {
       deliverySituation: trackingForm.deliverySituation,
       expectedDeliveryDate: trackingForm.expectedDeliveryDate,
       notes: trackingForm.notes.trim(),
-      status: trackingForm.status,
+      status: nextStatus,
       correiosUpdateFailed: false,
     };
 
@@ -994,7 +1001,6 @@ export function App() {
       setTrackingModal(null);
       setTrackingForm(initialTrackingForm);
       setTrackingFormErrors({});
-      setActiveTrackingTab(savedEntry.status);
       setAppError('');
     } catch (error) {
       setTrackingEntries(previousEntries);
@@ -1021,6 +1027,7 @@ export function App() {
 
     const previousEntries = trackingEntries;
     const nowIso = new Date().toISOString();
+    const nextStatus = trackingForm.deliverySituation === 'Entregue' ? 'Finalizado' : trackingForm.status;
     const nextEntry = {
       id: crypto.randomUUID(),
       quoteId: null,
@@ -1033,8 +1040,8 @@ export function App() {
       deliverySituation: trackingForm.deliverySituation,
       expectedDeliveryDate: trackingForm.expectedDeliveryDate,
       notes: trackingForm.notes.trim(),
-      status: trackingForm.status,
-      finalizedAt: trackingForm.status === 'Finalizado' ? nowIso : '',
+      status: nextStatus,
+      finalizedAt: nextStatus === 'Finalizado' ? nowIso : '',
       createdAt: nowIso,
       updatedAt: nowIso,
     };
@@ -1049,7 +1056,6 @@ export function App() {
       setStandaloneTrackingModal(false);
       setTrackingForm(initialTrackingForm);
       setTrackingFormErrors({});
-      setActiveTrackingTab(savedEntry.status);
       setAppError('');
     } catch (error) {
       setTrackingEntries(previousEntries);
@@ -1086,6 +1092,9 @@ export function App() {
           expectedDeliveryDate: result.expectedDeliveryDate || entry.expectedDeliveryDate,
           correiosUpdateFailed: false,
         };
+        if (result.deliverySituation === 'Entregue') {
+          changes.status = 'Finalizado';
+        }
         const savedEntry = await updateTrackingEntry(entry.id, changes);
         setTrackingEntries((current) =>
           sortTrackingEntries(current.map((currentEntry) => (currentEntry.id === savedEntry.id ? savedEntry : currentEntry))),
@@ -1126,7 +1135,9 @@ export function App() {
       <section className="topbar">
         <div>
           <p className="eyebrow">Dashboard comercial</p>
-          <img className="app-logo header-logo" src="/followuper-logo.png" alt="FollowUper" />
+          <button className="logo-button" type="button" aria-label="Voltar para cotações" onClick={() => setActiveView('quotes')}>
+            <img className="app-logo header-logo" src="/followuper-logo.png" alt="FollowUper" />
+          </button>
         </div>
         <div className="top-stack">
           <div className="session-actions">
