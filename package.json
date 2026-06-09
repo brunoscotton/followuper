@@ -12,7 +12,8 @@
     "@supabase/supabase-js": "^2.107.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "read-excel-file": "^9.1.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.0",

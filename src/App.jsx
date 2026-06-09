@@ -29,10 +29,12 @@ import {
   Trash2,
   Truck,
   Type,
+  Upload,
   X,
 } from 'lucide-react';
 import React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { readSheet } from 'read-excel-file/browser';
 import { getCurrentSession, onAuthChange, signIn, signOut } from './services/authRepository';
 import {
   cacheQuotes,
@@ -192,6 +194,98 @@ function getStoredLayoutMode() {
   }
 }
 
+function normalizeUploadHeader(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/gi, '')
+    .toLowerCase();
+}
+
+function normalizeUploadValue(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
+}
+
+function normalizeUploadQuoteNumber(value) {
+  return normalizeUploadValue(value).replace(/\.0$/, '').replace(/-\d{1,3}$/, '');
+}
+
+function normalizeUploadOrderNumber(value) {
+  const normalized = normalizeUploadValue(value).replace(/\.0$/, '');
+  return normalized;
+}
+
+function parseUploadCurrency(value) {
+  if (typeof value === 'number') return value;
+  const normalized = normalizeUploadValue(value)
+    .replace(/R\$/gi, '')
+    .replace(/\./g, '')
+    .replace(',', '.')
+    .trim();
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatUploadCurrency(value) {
+  return value.toLocaleString('pt-BR', { currency: 'BRL', minimumFractionDigits: 2, style: 'currency' });
+}
+
+function getSellerFromUploadCode(value) {
+  const code = normalizeUploadValue(value).replace(/\D/g, '').padStart(6, '0');
+  if (code === '000022') return 'Bruno';
+  if (code === '000036') return 'Elton';
+  return '';
+}
+
+async function parseQuotesUploadFile(file) {
+  const rows = await readSheet(file, 2);
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('numeroit') && headers.includes('vlrtotal');
+  });
+
+  if (headerIndex === -1) {
+    throw new Error('Nao encontrei o cabecalho na segunda aba da planilha.');
+  }
+
+  const headers = rows[headerIndex].map(normalizeUploadHeader);
+  const columnIndex = {
+    quoteNumber: headers.indexOf('numeroit'),
+    clientName: headers.indexOf('nome'),
+    totalValue: headers.indexOf('vlrtotal'),
+    seller: headers.indexOf('vendedor1'),
+    orderNumber: headers.indexOf('pedidovenda'),
+  };
+
+  if (Object.values(columnIndex).some((index) => index < 0)) {
+    throw new Error('A planilha precisa ter Numero It, Nome, Vlr.Total, Vendedor 1 e Pedido Venda.');
+  }
+
+  const grouped = new Map();
+
+  for (const row of rows.slice(headerIndex + 1)) {
+    const quoteNumber = normalizeUploadQuoteNumber(row[columnIndex.quoteNumber]);
+    if (!quoteNumber) continue;
+
+    const current = grouped.get(quoteNumber) || {
+      quoteNumber,
+      clientName: normalizeUploadValue(row[columnIndex.clientName]),
+      orderNumber: '',
+      seller: getSellerFromUploadCode(row[columnIndex.seller]),
+      totalValue: 0,
+    };
+
+    current.clientName = current.clientName || normalizeUploadValue(row[columnIndex.clientName]);
+    current.seller = current.seller || getSellerFromUploadCode(row[columnIndex.seller]);
+    current.orderNumber = current.orderNumber || normalizeUploadOrderNumber(row[columnIndex.orderNumber]);
+    current.totalValue = Math.round((current.totalValue + parseUploadCurrency(row[columnIndex.totalValue])) * 100) / 100;
+    grouped.set(quoteNumber, current);
+  }
+
+  return [...grouped.values()].filter((item) => item.clientName && item.seller);
+}
+
 function addDays(dateValue, days) {
   const date = new Date(dateValue);
   date.setDate(date.getDate() + Number(days || 0));
@@ -307,6 +401,7 @@ export function App() {
   const [layoutMode, setLayoutMode] = useState(getStoredLayoutMode);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
+  const [isUploadingQuotes, setIsUploadingQuotes] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
@@ -329,6 +424,7 @@ export function App() {
   const [appError, setAppError] = useState('');
   const [dataStatus, setDataStatus] = useState(persistenceMode === 'supabase' ? 'Supabase' : 'Local');
   const [now, setNow] = useState(new Date());
+  const uploadInputRef = useRef(null);
 
   useEffect(() => {
     let active = true;
@@ -644,6 +740,86 @@ export function App() {
     } catch (error) {
       setQuotes(previousQuotes);
       setAppError(error.message || 'Não foi possível salvar a cotação.');
+    }
+  }
+
+  async function handleQuotesUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setIsUploadingQuotes(true);
+
+    try {
+      const importedRows = await parseQuotesUploadFile(file);
+      if (importedRows.length === 0) {
+        throw new Error('Nenhum orçamento válido foi encontrado na segunda aba da planilha.');
+      }
+
+      const existingQuoteNumbers = new Set(quotes.map((quote) => normalizeUploadQuoteNumber(quote.quoteNumber)));
+      const newRows = importedRows.filter((row) => !existingQuoteNumbers.has(row.quoteNumber));
+
+      if (newRows.length === 0) {
+        setAppError('Upload concluído: todos os orçamentos da planilha já existem no FollowUper.');
+        return;
+      }
+
+      const savedQuotes = [];
+      let closedCount = 0;
+
+      for (const row of newRows) {
+        const createdAt = new Date().toISOString();
+        const isClosedUpload = Boolean(row.orderNumber);
+        const closeDetails = isClosedUpload
+          ? {
+              orderNumber: row.orderNumber,
+              agreedPaymentTerms: '',
+              carrier: '',
+              totalValue: formatUploadCurrency(row.totalValue),
+              notes: '',
+              closedAt: createdAt,
+            }
+          : undefined;
+        const nextQuote = {
+          id: crypto.randomUUID(),
+          quoteNumber: row.quoteNumber,
+          clientName: row.clientName,
+          paymentTerms: '',
+          quoteDate: getTodayInputValue(),
+          seller: row.seller,
+          notes: '',
+          isInterest: false,
+          followUpDays: 1,
+          followUpAmount: 1,
+          followUpUnit: 'days',
+          followUpStartedAt: createdAt,
+          status: isClosedUpload ? 'fechada' : 'sem-resposta',
+          createdAt,
+          statusUpdatedAt: createdAt,
+          archivedAt: '',
+          closeDetails,
+        };
+
+        const savedQuote = await createQuote(nextQuote);
+        savedQuotes.push(savedQuote);
+        existingQuoteNumbers.add(normalizeUploadQuoteNumber(savedQuote.quoteNumber));
+
+        if (isClosedUpload && savedQuote.closeDetails) {
+          closedCount += 1;
+          await ensureTrackingEntry(savedQuote, savedQuote.closeDetails);
+        }
+      }
+
+      setQuotes((current) => [...savedQuotes, ...current.filter((quote) => !savedQuotes.some((saved) => saved.id === quote.id))]);
+      setActiveView('quotes');
+      setActiveTab('abertas');
+      setAppError(
+        `Upload concluído: ${savedQuotes.length} orçamento(s) novo(s) importado(s), ${closedCount} finalizado(s), ${importedRows.length - newRows.length} ignorado(s).`,
+      );
+    } catch (error) {
+      setAppError(error.message || 'Não foi possível importar a planilha.');
+    } finally {
+      setIsUploadingQuotes(false);
     }
   }
 
@@ -1230,6 +1406,15 @@ export function App() {
                   {dataStatus}
                 </span>
                 <button
+                  className="view-button"
+                  type="button"
+                  disabled={isUploadingQuotes}
+                  onClick={() => uploadInputRef.current?.click()}
+                >
+                  <Upload size={16} />
+                  {isUploadingQuotes ? 'Importando...' : 'Upload'}
+                </button>
+                <button
                   className={activeView === 'quotes' ? 'view-button active' : 'view-button'}
                   type="button"
                   onClick={() => setActiveView('quotes')}
@@ -1314,6 +1499,7 @@ export function App() {
           )}
         </div>
       </section>
+      <input ref={uploadInputRef} accept=".xlsx" hidden type="file" onChange={handleQuotesUpload} />
 
       {appError && <div className="app-alert">{appError}</div>}
 
