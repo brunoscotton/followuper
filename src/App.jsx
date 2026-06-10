@@ -201,6 +201,7 @@ const initialForm = {
   quoteNumber: '',
   clientName: '',
   phone: '',
+  quoteValue: '',
   paymentTerms: '',
   quoteDate: getTodayInputValue(),
   seller: 'Elton',
@@ -222,6 +223,7 @@ const initialQuoteEditForm = {
   quoteNumber: '',
   clientName: '',
   phone: '',
+  quoteValue: '',
   paymentTerms: '',
   quoteDate: getTodayInputValue(),
   seller: 'Elton',
@@ -316,6 +318,17 @@ function parseUploadCurrency(value) {
 
 function formatUploadCurrency(value) {
   return value.toLocaleString('pt-BR', { currency: 'BRL', minimumFractionDigits: 2, style: 'currency' });
+}
+
+function parseQuoteValue(value) {
+  return parseUploadCurrency(value);
+}
+
+function getQuoteInterestStars(quote) {
+  const value = parseQuoteValue(quote.quoteValue);
+  if (value >= 10000) return 2;
+  if (value >= 5000) return 1;
+  return quote.isInterest ? 1 : 0;
 }
 
 function getSellerFromUploadCode(value) {
@@ -1299,6 +1312,7 @@ export function App() {
         quoteNumber,
         clientName: form.clientName.trim(),
         phone: form.phone.trim(),
+        quoteValue: form.quoteValue.trim(),
         paymentTerms: form.paymentTerms.trim(),
         quoteDate: form.quoteDate,
         seller: form.seller,
@@ -1339,6 +1353,7 @@ export function App() {
       quoteNumber,
       clientName: form.clientName.trim(),
       phone: form.phone.trim(),
+      quoteValue: form.quoteValue.trim(),
       paymentTerms: form.paymentTerms.trim(),
       quoteDate: form.quoteDate,
       seller: form.seller,
@@ -1396,12 +1411,13 @@ export function App() {
       for (const row of newRows) {
         const createdAt = new Date().toISOString();
         const isClosedUpload = Boolean(row.orderNumber);
+        const formattedTotalValue = formatUploadCurrency(row.totalValue);
         const closeDetails = isClosedUpload
           ? {
               orderNumber: row.orderNumber,
               agreedPaymentTerms: '',
               carrier: '',
-              totalValue: formatUploadCurrency(row.totalValue),
+              totalValue: formattedTotalValue,
               notes: '',
               closedAt: createdAt,
             }
@@ -1410,11 +1426,12 @@ export function App() {
           id: crypto.randomUUID(),
           quoteNumber: row.quoteNumber,
           clientName: row.clientName,
+          quoteValue: formattedTotalValue,
           paymentTerms: '',
           quoteDate: getTodayInputValue(),
           seller: row.seller,
           notes: '',
-          isInterest: false,
+          isInterest: row.totalValue >= 5000,
           followUpDays: 1,
           followUpAmount: 1,
           followUpUnit: 'days',
@@ -1511,6 +1528,7 @@ export function App() {
     const previousTrackingEntries = trackingEntries;
     const changes = {
       phone: closeDetails.phone.trim(),
+      quoteValue: closeDetails.totalValue.trim(),
       status: 'fechada',
       statusUpdatedAt: closedAt,
       closeDetails: {
@@ -1556,6 +1574,7 @@ export function App() {
       quoteNumber: quote.quoteNumber,
       clientName: quote.clientName,
       phone: quote.phone || '',
+      quoteValue: quote.quoteValue || '',
       paymentTerms: quote.paymentTerms || '',
       quoteDate: quote.quoteDate,
       seller: quote.seller,
@@ -1603,6 +1622,7 @@ export function App() {
       quoteNumber: quoteEditForm.quoteNumber.trim(),
       clientName: quoteEditForm.clientName.trim(),
       phone: quoteEditForm.phone.trim(),
+      quoteValue: quoteEditForm.quoteValue.trim(),
       paymentTerms: quoteEditForm.paymentTerms.trim(),
       quoteDate: quoteEditForm.quoteDate,
       seller: quoteEditForm.seller,
@@ -2919,6 +2939,15 @@ function QuotesWorkspace({
         </label>
 
         <label>
+          Valor
+          <input
+            value={form.quoteValue}
+            onChange={(event) => onUpdateForm('quoteValue', event.target.value)}
+            placeholder="Opcional"
+          />
+        </label>
+
+        <label>
           Condição de pagamento
           <input
             value={form.paymentTerms}
@@ -3115,6 +3144,7 @@ function QuotesWorkspace({
                 const hasQuoteNotes = Boolean(quote.notes?.trim());
                 const detailsExpanded = expandedQuoteIds.includes(quote.id);
                 const canEditQuote = !isClosed(quote);
+                const interestStars = getQuoteInterestStars(quote);
 
                 return (
                   <React.Fragment key={quote.id}>
@@ -3140,9 +3170,15 @@ function QuotesWorkspace({
                       </td>
                       <td className="strong-text">
                         <span className="quote-number-cell">
-                          {quote.isInterest && (
-                            <Star className="interest-star" size={16} aria-label="Cotação de interesse" fill="currentColor" />
-                          )}
+                          {Array.from({ length: interestStars }).map((_, index) => (
+                            <Star
+                              className="interest-star"
+                              key={`${quote.id}-star-${index}`}
+                              size={16}
+                              aria-label="Cotação de interesse"
+                              fill="currentColor"
+                            />
+                          ))}
                           {quote.quoteNumber}
                         </span>
                       </td>
@@ -3283,6 +3319,10 @@ function QuotesWorkspace({
                             <span>
                               <b>Valor total</b>
                               {quote.closeDetails.totalValue}
+                            </span>
+                            <span>
+                              <b>Valor cotação</b>
+                              {quote.quoteValue || '—'}
                             </span>
                             <span>
                               <b>Telefone</b>
@@ -4027,6 +4067,15 @@ function QuoteEditModal({ errors, form, onCancel, onSubmit, onUpdate }) {
           <input
             value={form.paymentTerms}
             onChange={(event) => onUpdate('paymentTerms', event.target.value)}
+            placeholder="Opcional"
+          />
+        </label>
+
+        <label>
+          Valor
+          <input
+            value={form.quoteValue}
+            onChange={(event) => onUpdate('quoteValue', event.target.value)}
             placeholder="Opcional"
           />
         </label>
