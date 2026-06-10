@@ -2,6 +2,7 @@ create table if not exists public.quotes (
   id uuid primary key,
   quote_number text not null,
   client_name text not null,
+  phone text,
   payment_terms text,
   quote_date date not null,
   seller text not null check (seller in ('Elton', 'Bruno', 'Stephanie')),
@@ -117,6 +118,7 @@ alter table public.quotes add column if not exists follow_up_started_at timestam
 alter table public.quotes add column if not exists archived_at timestamptz;
 alter table public.quotes add column if not exists notes text;
 alter table public.quotes add column if not exists is_interest boolean not null default false;
+alter table public.quotes add column if not exists phone text;
 alter table public.tracking_entries add column if not exists invoice_number text;
 alter table public.tracking_entries add column if not exists correios_update_failed boolean not null default false;
 

@@ -28,6 +28,7 @@ function toQuote(row) {
     id: row.id,
     quoteNumber: row.quote_number,
     clientName: row.client_name,
+    phone: row.phone || '',
     paymentTerms: row.payment_terms || '',
     quoteDate: row.quote_date,
     seller: row.seller,
@@ -51,6 +52,7 @@ function toRow(quote) {
   if ('id' in quote) row.id = quote.id;
   if ('quoteNumber' in quote) row.quote_number = quote.quoteNumber;
   if ('clientName' in quote) row.client_name = quote.clientName;
+  if ('phone' in quote) row.phone = quote.phone || null;
   if ('paymentTerms' in quote) row.payment_terms = quote.paymentTerms || null;
   if ('quoteDate' in quote) row.quote_date = quote.quoteDate;
   if ('seller' in quote) row.seller = quote.seller;

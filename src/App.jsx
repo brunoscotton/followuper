@@ -193,12 +193,14 @@ const initialCloseDetails = {
   agreedPaymentTerms: '',
   carrier: '',
   totalValue: '',
+  phone: '',
   notes: '',
 };
 
 const initialForm = {
   quoteNumber: '',
   clientName: '',
+  phone: '',
   paymentTerms: '',
   quoteDate: getTodayInputValue(),
   seller: 'Elton',
@@ -212,12 +214,14 @@ const initialForm = {
 const initialGrandpaForm = {
   quoteNumber: '',
   clientName: '',
+  phone: '',
   paymentTerms: '',
 };
 
 const initialQuoteEditForm = {
   quoteNumber: '',
   clientName: '',
+  phone: '',
   paymentTerms: '',
   quoteDate: getTodayInputValue(),
   seller: 'Elton',
@@ -1160,6 +1164,7 @@ export function App() {
     const nextErrors = {};
     const quoteNumber = normalizeUploadQuoteNumber(grandpaForm.quoteNumber);
     const clientName = grandpaForm.clientName.trim();
+    const phone = grandpaForm.phone.trim();
     const paymentTerms = grandpaForm.paymentTerms.trim();
 
     if (!quoteNumber) nextErrors.quoteNumber = 'Informe o numero do orcamento.';
@@ -1175,6 +1180,7 @@ export function App() {
         id: crypto.randomUUID(),
         quoteNumber,
         clientName,
+        phone,
         paymentTerms,
         quoteDate: getTodayInputValue(),
         seller: initialForm.seller,
@@ -1209,6 +1215,7 @@ export function App() {
 
     const changes = {};
     if (isFinalClientName(quote.clientName)) changes.clientName = clientName;
+    if (phone) changes.phone = phone;
     if (paymentTerms) {
       changes.paymentTerms = paymentTerms;
       if (quote.closeDetails) {
@@ -1291,6 +1298,7 @@ export function App() {
       const changes = {
         quoteNumber,
         clientName: form.clientName.trim(),
+        phone: form.phone.trim(),
         paymentTerms: form.paymentTerms.trim(),
         quoteDate: form.quoteDate,
         seller: form.seller,
@@ -1330,6 +1338,7 @@ export function App() {
       id: crypto.randomUUID(),
       quoteNumber,
       clientName: form.clientName.trim(),
+      phone: form.phone.trim(),
       paymentTerms: form.paymentTerms.trim(),
       quoteDate: form.quoteDate,
       seller: form.seller,
@@ -1446,6 +1455,7 @@ export function App() {
       ...initialCloseDetails,
       ...quote.closeDetails,
       carrier: quote.closeDetails?.carrier || quote.closeDetails?.freight || '',
+      phone: quote.phone || '',
     });
     setCloseErrors({});
   }
@@ -1500,6 +1510,7 @@ export function App() {
     const previousQuotes = quotes;
     const previousTrackingEntries = trackingEntries;
     const changes = {
+      phone: closeDetails.phone.trim(),
       status: 'fechada',
       statusUpdatedAt: closedAt,
       closeDetails: {
@@ -1544,6 +1555,7 @@ export function App() {
     setQuoteEditForm({
       quoteNumber: quote.quoteNumber,
       clientName: quote.clientName,
+      phone: quote.phone || '',
       paymentTerms: quote.paymentTerms || '',
       quoteDate: quote.quoteDate,
       seller: quote.seller,
@@ -1590,6 +1602,7 @@ export function App() {
     const changes = {
       quoteNumber: quoteEditForm.quoteNumber.trim(),
       clientName: quoteEditForm.clientName.trim(),
+      phone: quoteEditForm.phone.trim(),
       paymentTerms: quoteEditForm.paymentTerms.trim(),
       quoteDate: quoteEditForm.quoteDate,
       seller: quoteEditForm.seller,
@@ -2817,6 +2830,15 @@ function GrandpaWorkspace({ errors, form, onSubmit, onUpdate }) {
         </label>
 
         <label>
+          Telefone
+          <input
+            value={form.phone}
+            onChange={(event) => onUpdate('phone', event.target.value)}
+            placeholder="Telefone do cliente"
+          />
+        </label>
+
+        <label>
           Condição de pagamento
           <input
             value={form.paymentTerms}
@@ -2885,6 +2907,15 @@ function QuotesWorkspace({
             placeholder="Ex: ACME Ltda."
           />
           {errors.clientName && <small>{errors.clientName}</small>}
+        </label>
+
+        <label>
+          Telefone
+          <input
+            value={form.phone}
+            onChange={(event) => onUpdateForm('phone', event.target.value)}
+            placeholder="Telefone do cliente"
+          />
         </label>
 
         <label>
@@ -3254,6 +3285,10 @@ function QuotesWorkspace({
                               {quote.closeDetails.totalValue}
                             </span>
                             <span>
+                              <b>Telefone</b>
+                              {quote.phone || 'â€”'}
+                            </span>
+                            <span>
                               <b>Obs. cotação</b>
                               {quote.notes || '—'}
                             </span>
@@ -3596,7 +3631,7 @@ function RotaxStudentsTable({ activeSession, expandedStudentIds, onEdit, onRemov
                           {student.phone || '—'}
                         </span>
                         <span className="wide-detail">
-                          <b>Endereço</b>
+                          <b>Endereço/Cod. Cliente</b>
                           {student.address || '—'}
                         </span>
                         <span className="wide-detail">
@@ -3893,6 +3928,15 @@ function CloseQuoteModal({ closeDetails, closeErrors, closeModal, onCancel, onSu
         </label>
 
         <label>
+          Telefone
+          <input
+            value={closeDetails.phone}
+            onChange={(event) => onUpdate('phone', event.target.value)}
+            placeholder="Telefone do cliente"
+          />
+        </label>
+
+        <label>
           Transportadora
           <input
             value={closeDetails.carrier}
@@ -3967,6 +4011,15 @@ function QuoteEditModal({ errors, form, onCancel, onSubmit, onUpdate }) {
             placeholder="Ex: ACME Ltda."
           />
           {errors.clientName && <small>{errors.clientName}</small>}
+        </label>
+
+        <label>
+          Telefone
+          <input
+            value={form.phone}
+            onChange={(event) => onUpdate('phone', event.target.value)}
+            placeholder="Telefone do cliente"
+          />
         </label>
 
         <label>
@@ -4196,8 +4249,8 @@ function RotaxStudentModal({
             <input value={form.phone} onChange={(event) => onUpdate('phone', event.target.value)} placeholder="Contato do aluno" />
           </label>
           <label>
-            Endereço
-            <input value={form.address} onChange={(event) => onUpdate('address', event.target.value)} placeholder="Endereço" />
+            Endereço/Cod. Cliente
+            <input value={form.address} onChange={(event) => onUpdate('address', event.target.value)} placeholder="Endereço ou código do cliente" />
           </label>
         </div>
 
