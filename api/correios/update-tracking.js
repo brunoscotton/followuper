@@ -2,8 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const CORREIOS_BASE_URL = process.env.CORREIOS_BASE_URL || 'https://api.correios.com.br';
 const CORREIOS_RASTRO_ENDPOINT = process.env.CORREIOS_RASTRO_ENDPOINT || `${CORREIOS_BASE_URL}/srorastro/v1/objetos`;
-const CORREIOS_TOKEN_ENDPOINT =
-  process.env.CORREIOS_TOKEN_ENDPOINT || `${CORREIOS_BASE_URL}/token/v1/autentica/cartaopostagem`;
+const CORREIOS_AUTH_MODE = process.env.CORREIOS_AUTH_MODE || 'cartaopostagem';
 
 const deliveryMap = [
   { match: ['objeto entregue', 'entregue ao destinatario'], situation: 'Entregue' },
@@ -117,13 +116,15 @@ async function getCorreiosToken() {
   const username = process.env.CORREIOS_USERNAME;
   const accessCode = process.env.CORREIOS_ACCESS_CODE;
   const postCard = process.env.CORREIOS_POST_CARD;
+  const contract = process.env.CORREIOS_CONTRACT;
+  const dr = process.env.CORREIOS_DR;
 
   if (!username || !accessCode) {
     throw new Error('Credenciais dos Correios nao configuradas.');
   }
 
-  const body = postCard ? JSON.stringify({ numero: postCard }) : undefined;
-  const response = await fetch(CORREIOS_TOKEN_ENDPOINT, {
+  const { endpoint, body } = buildCorreiosTokenRequest({ contract, dr, postCard });
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -136,10 +137,46 @@ async function getCorreiosToken() {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok || !data.token) {
-    throw new Error(data.mensagem || data.message || 'Nao foi possivel gerar token dos Correios.');
+    const details = data.mensagem || data.message || data.erro || data.error || response.statusText;
+    throw new Error(`Nao foi possivel gerar token dos Correios (${response.status}). ${details || 'Verifique usuario, chave API, contrato/cartao e DR.'}`);
   }
 
   return data.token;
+}
+
+function buildCorreiosTokenRequest({ contract, dr, postCard }) {
+  const authMode = normalizeText(CORREIOS_AUTH_MODE);
+  const body = {};
+  let endpoint = process.env.CORREIOS_TOKEN_ENDPOINT;
+
+  if (!endpoint) {
+    if (authMode === 'contrato') {
+      endpoint = `${CORREIOS_BASE_URL}/token/v1/autentica/contrato`;
+    } else if (authMode === 'usuario' || authMode === 'user') {
+      endpoint = `${CORREIOS_BASE_URL}/token/v1/autentica`;
+    } else {
+      endpoint = `${CORREIOS_BASE_URL}/token/v1/autentica/cartaopostagem`;
+    }
+  }
+
+  if (authMode === 'contrato') {
+    if (!contract) throw new Error('Configure CORREIOS_CONTRACT para autenticar por contrato.');
+    body.numero = contract;
+  } else if (authMode !== 'usuario' && authMode !== 'user') {
+    if (!postCard) throw new Error('Configure CORREIOS_POST_CARD para autenticar por cartao de postagem.');
+    body.numero = postCard;
+    if (contract) body.contrato = contract;
+  }
+
+  if (dr) {
+    const parsedDr = Number(dr);
+    body.dr = Number.isFinite(parsedDr) ? parsedDr : dr;
+  }
+
+  return {
+    endpoint,
+    body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
+  };
 }
 
 async function fetchCorreiosTracking(trackingCode, token) {

@@ -49,6 +49,22 @@ O botao `Atualizar Status Correio` usa uma rota serverless em `/api/correios/upd
 CORREIOS_USERNAME=seu_usuario_cws
 CORREIOS_ACCESS_CODE=sua_chave_de_acesso_cws
 CORREIOS_POST_CARD=seu_cartao_de_postagem
+CORREIOS_CONTRACT=seu_numero_de_contrato
+CORREIOS_DR=sua_dr_ou_superintendencia
+```
+
+Por padrao, o sistema usa `CORREIOS_AUTH_MODE=cartaopostagem`, enviando o cartao de postagem e, se configurados, tambem contrato e DR. Se os Correios liberarem por contrato, use:
+
+```bash
+CORREIOS_AUTH_MODE=contrato
+CORREIOS_CONTRACT=seu_numero_de_contrato
+CORREIOS_DR=sua_dr_ou_superintendencia
+```
+
+Se a API Rastro estiver liberada diretamente para o usuario idCorreios, use:
+
+```bash
+CORREIOS_AUTH_MODE=usuario
 ```
 
 Opcionalmente, para testes com token ja emitido:
