@@ -690,6 +690,11 @@ export function App() {
     setGrandpaErrors((current) => ({ ...current, [field]: '' }));
   }
 
+  function findQuoteByQuoteNumber(value) {
+    const quoteNumber = normalizeUploadQuoteNumber(value);
+    return quotes.find((item) => normalizeUploadQuoteNumber(item.quoteNumber) === quoteNumber);
+  }
+
   async function submitGrandpaForm(event) {
     event.preventDefault();
 
@@ -704,9 +709,42 @@ export function App() {
     setGrandpaErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
 
-    const quote = quotes.find((item) => normalizeUploadQuoteNumber(item.quoteNumber) === quoteNumber);
+    const quote = findQuoteByQuoteNumber(quoteNumber);
     if (!quote) {
-      setAppError(`Orcamento ${quoteNumber} nao encontrado no FollowUper.`);
+      const createdAt = new Date().toISOString();
+      const nextQuote = {
+        id: crypto.randomUUID(),
+        quoteNumber,
+        clientName,
+        paymentTerms,
+        quoteDate: getTodayInputValue(),
+        seller: initialForm.seller,
+        notes: '',
+        isInterest: false,
+        followUpDays: 1,
+        followUpAmount: 1,
+        followUpUnit: 'days',
+        followUpStartedAt: createdAt,
+        status: 'sem-resposta',
+        createdAt,
+        statusUpdatedAt: createdAt,
+        archivedAt: '',
+      };
+
+      const previousQuotes = quotes;
+      setQuotes((current) => [nextQuote, ...current]);
+
+      try {
+        const savedQuote = await createQuote(nextQuote);
+        setQuotes((current) => current.map((item) => (item.id === nextQuote.id ? savedQuote : item)));
+        setGrandpaForm(initialGrandpaForm);
+        setGrandpaErrors({});
+        setActiveTab('abertas');
+        setAppError(`Orcamento ${quoteNumber} adicionado com sucesso.`);
+      } catch (error) {
+        setQuotes(previousQuotes);
+        setAppError(error.message || 'Nao foi possivel adicionar o orcamento.');
+      }
       return;
     }
 
@@ -787,9 +825,51 @@ export function App() {
     if (!validateForm()) return;
 
     const createdAt = new Date().toISOString();
+    const quoteNumber = normalizeUploadQuoteNumber(form.quoteNumber.trim());
+    const existingQuote = findQuoteByQuoteNumber(quoteNumber);
+
+    if (existingQuote) {
+      const changes = {
+        quoteNumber,
+        clientName: form.clientName.trim(),
+        paymentTerms: form.paymentTerms.trim(),
+        quoteDate: form.quoteDate,
+        seller: form.seller,
+        notes: form.notes.trim(),
+        isInterest: form.isInterest,
+        followUpDays: form.followUpUnit === 'days' ? Number(form.followUpAmount) : 1,
+        followUpAmount: Number(form.followUpAmount),
+        followUpUnit: form.followUpUnit,
+        followUpStartedAt: createdAt,
+      };
+
+      if (existingQuote.closeDetails) {
+        changes.closeDetails = {
+          ...existingQuote.closeDetails,
+          agreedPaymentTerms: form.paymentTerms.trim(),
+        };
+      }
+
+      const previousQuotes = quotes;
+      setQuotes((current) => current.map((quote) => (quote.id === existingQuote.id ? { ...quote, ...changes } : quote)));
+
+      try {
+        const savedQuote = await updateQuote(existingQuote.id, changes);
+        setQuotes((current) => current.map((quote) => (quote.id === existingQuote.id ? savedQuote : quote)));
+        setForm({ ...initialForm, quoteDate: getTodayInputValue() });
+        setActiveTab(savedQuote.status === 'fechada' ? 'fechadas' : 'abertas');
+        setAppError(`Cotacao ${quoteNumber} atualizada com sucesso.`);
+      } catch (error) {
+        setQuotes(previousQuotes);
+        setAppError(error.message || 'Nao foi possivel atualizar a cotacao.');
+      }
+
+      return;
+    }
+
     const nextQuote = {
       id: crypto.randomUUID(),
-      quoteNumber: form.quoteNumber.trim(),
+      quoteNumber,
       clientName: form.clientName.trim(),
       paymentTerms: form.paymentTerms.trim(),
       quoteDate: form.quoteDate,
