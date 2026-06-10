@@ -325,7 +325,7 @@ function parseQuoteValue(value) {
 }
 
 function getQuoteInterestStars(quote) {
-  const value = parseQuoteValue(quote.quoteValue);
+  const value = parseQuoteValue(quote.quoteValue || quote.closeDetails?.totalValue);
   if (value >= 10000) return 2;
   if (value >= 5000) return 1;
   return quote.isInterest ? 1 : 0;
@@ -1397,16 +1397,50 @@ export function App() {
         throw new Error('Nenhum orçamento válido foi encontrado na segunda aba da planilha.');
       }
 
-      const existingQuoteNumbers = new Set(quotes.map((quote) => normalizeUploadQuoteNumber(quote.quoteNumber)));
+      const existingQuotesByNumber = new Map(
+        quotes.map((quote) => [normalizeUploadQuoteNumber(quote.quoteNumber), quote]),
+      );
+      const existingQuoteNumbers = new Set(existingQuotesByNumber.keys());
+      const existingRows = importedRows.filter((row) => existingQuoteNumbers.has(row.quoteNumber));
       const newRows = importedRows.filter((row) => !existingQuoteNumbers.has(row.quoteNumber));
 
-      if (newRows.length === 0) {
+      if (newRows.length === 0 && existingRows.length === 0) {
         setAppError('Upload concluído: todos os orçamentos da planilha já existem no FollowUper.');
         return;
       }
 
       const savedQuotes = [];
+      const updatedQuotes = [];
       let closedCount = 0;
+
+      for (const row of existingRows) {
+        const existingQuote = existingQuotesByNumber.get(row.quoteNumber);
+        if (!existingQuote) continue;
+
+        const formattedTotalValue = formatUploadCurrency(row.totalValue);
+        const changes = {
+          quoteValue: formattedTotalValue,
+          isInterest: existingQuote.isInterest || row.totalValue >= 5000,
+        };
+
+        if (existingQuote.closeDetails) {
+          changes.closeDetails = {
+            ...existingQuote.closeDetails,
+            totalValue: existingQuote.closeDetails.totalValue || formattedTotalValue,
+          };
+        }
+
+        if (
+          existingQuote.quoteValue === changes.quoteValue &&
+          existingQuote.isInterest === changes.isInterest &&
+          existingQuote.closeDetails?.totalValue === changes.closeDetails?.totalValue
+        ) {
+          continue;
+        }
+
+        const savedQuote = await updateQuote(existingQuote.id, changes);
+        updatedQuotes.push(savedQuote);
+      }
 
       for (const row of newRows) {
         const createdAt = new Date().toISOString();
@@ -1453,11 +1487,17 @@ export function App() {
         }
       }
 
-      setQuotes((current) => [...savedQuotes, ...current.filter((quote) => !savedQuotes.some((saved) => saved.id === quote.id))]);
+      setQuotes((current) => {
+        const changedQuotes = [...savedQuotes, ...updatedQuotes];
+        return [
+          ...changedQuotes,
+          ...current.filter((quote) => !changedQuotes.some((saved) => saved.id === quote.id)),
+        ];
+      });
       setActiveView('quotes');
       setActiveTab('abertas');
       setAppError(
-        `Upload concluído: ${savedQuotes.length} orçamento(s) novo(s) importado(s), ${closedCount} finalizado(s), ${importedRows.length - newRows.length} ignorado(s).`,
+        `Upload concluído: ${savedQuotes.length} orçamento(s) novo(s), ${updatedQuotes.length} atualizado(s), ${closedCount} finalizado(s), ${existingRows.length - updatedQuotes.length} ignorado(s).`,
       );
     } catch (error) {
       setAppError(error.message || 'Não foi possível importar a planilha.');
