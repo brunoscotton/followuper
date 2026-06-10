@@ -137,7 +137,9 @@ async function getCorreiosToken() {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok || !data.token) {
-    const details = data.mensagem || data.message || data.erro || data.error || response.statusText;
+    const details = Array.isArray(data.msgs)
+      ? data.msgs.join(' ')
+      : data.mensagem || data.message || data.erro || data.error || response.statusText;
     throw new Error(`Nao foi possivel gerar token dos Correios (${response.status}). ${details || 'Verifique usuario, chave API, contrato/cartao e DR.'}`);
   }
 
