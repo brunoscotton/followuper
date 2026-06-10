@@ -9,6 +9,7 @@ import {
   Clock3,
   Database,
   FileText,
+  GraduationCap,
   Heading1,
   Image as ImageIcon,
   List,
@@ -64,6 +65,28 @@ import {
   subscribeToInfoBlockChanges,
   updateInfoBlock,
 } from './services/infoBlocksRepository';
+import {
+  cacheRotaxBlocks,
+  cacheRotaxContacts,
+  cacheRotaxSessions,
+  cacheRotaxStudents,
+  createRotaxBlock,
+  createRotaxContact,
+  createRotaxSession,
+  createRotaxStudent,
+  deleteRotaxBlock,
+  deleteRotaxContact,
+  deleteRotaxStudent,
+  loadRotaxTrainingData,
+  sortRotaxBlocks,
+  sortRotaxContacts,
+  sortRotaxSessions,
+  sortRotaxStudents,
+  subscribeToRotaxTrainingChanges,
+  updateRotaxBlock,
+  updateRotaxContact,
+  updateRotaxStudent,
+} from './services/rotaxTrainingRepository';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 const LAYOUT_STORAGE_KEY = 'followuper.layoutMode.v1';
@@ -94,6 +117,34 @@ const trackingTabs = [
   { value: 'Em andamento', label: 'Em andamento' },
   { value: 'Finalizado', label: 'Finalizado' },
 ];
+
+const rotaxInfoCategories = [
+  { value: 'internal', label: 'Informações Internas' },
+  { value: 'explanation', label: 'Explicativo do treinamento' },
+  { value: 'indications', label: 'Indicações' },
+];
+
+const rotaxTrainingTypes = [
+  'Service',
+  'Maintenance',
+  'Heavy',
+  'Renew Service',
+  'Renew maintenance',
+  'Renew 2 tempos',
+  'Is Installation',
+  'Is Troubleshooting',
+];
+
+const rotaxTypeColorClass = {
+  Service: 'green',
+  Maintenance: 'blue',
+  Heavy: 'red',
+  'Renew Service': 'yellow',
+  'Renew maintenance': 'purple',
+  'Renew 2 tempos': 'pink',
+  'Is Installation': 'teal',
+  'Is Troubleshooting': 'orange',
+};
 
 const infoBlockTypes = [
   { value: 'text', label: 'Texto', icon: Type, placeholder: 'Digite algo...' },
@@ -186,6 +237,31 @@ const initialTrackingForm = {
   expectedDeliveryDate: '',
   notes: '',
   status: 'Em andamento',
+};
+
+const initialRotaxSessionForm = {
+  trainingDate: getTodayInputValue(),
+};
+
+const initialRotaxStudentForm = {
+  trainingSessionId: '',
+  name: '',
+  email: '',
+  trainingTypes: [],
+  contractDone: false,
+  contractSigned: false,
+  quoteNumber: '',
+  orderNumber: '',
+  address: '',
+  phone: '',
+  notes: '',
+};
+
+const initialRotaxContactForm = {
+  name: '',
+  contact: '',
+  status: 'Em contato',
+  redirectSessionId: '',
 };
 
 function getTodayInputValue() {
@@ -413,10 +489,18 @@ export function App() {
   const [quotes, setQuotes] = useState([]);
   const [trackingEntries, setTrackingEntries] = useState([]);
   const [infoBlocks, setInfoBlocks] = useState([]);
+  const [rotaxBlocks, setRotaxBlocks] = useState([]);
+  const [rotaxSessions, setRotaxSessions] = useState([]);
+  const [rotaxStudents, setRotaxStudents] = useState([]);
+  const [rotaxContacts, setRotaxContacts] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [activeView, setActiveView] = useState('quotes');
   const [activeTab, setActiveTab] = useState('abertas');
   const [activeTrackingTab, setActiveTrackingTab] = useState('Em andamento');
+  const [activeRotaxTab, setActiveRotaxTab] = useState('students');
+  const [activeRotaxSessionId, setActiveRotaxSessionId] = useState('');
+  const [activeRotaxInfoCategory, setActiveRotaxInfoCategory] = useState('internal');
+  const [expandedRotaxStudentIds, setExpandedRotaxStudentIds] = useState([]);
   const [layoutMode, setLayoutMode] = useState(getStoredLayoutMode);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
@@ -438,6 +522,15 @@ export function App() {
   const [standaloneTrackingModal, setStandaloneTrackingModal] = useState(false);
   const [trackingForm, setTrackingForm] = useState(initialTrackingForm);
   const [trackingFormErrors, setTrackingFormErrors] = useState({});
+  const [rotaxSessionModalOpen, setRotaxSessionModalOpen] = useState(false);
+  const [rotaxSessionForm, setRotaxSessionForm] = useState(initialRotaxSessionForm);
+  const [rotaxSessionErrors, setRotaxSessionErrors] = useState({});
+  const [rotaxStudentModal, setRotaxStudentModal] = useState(null);
+  const [rotaxStudentForm, setRotaxStudentForm] = useState(initialRotaxStudentForm);
+  const [rotaxStudentErrors, setRotaxStudentErrors] = useState({});
+  const [rotaxContactModal, setRotaxContactModal] = useState(null);
+  const [rotaxContactForm, setRotaxContactForm] = useState(initialRotaxContactForm);
+  const [rotaxContactErrors, setRotaxContactErrors] = useState({});
   const [expandedQuoteIds, setExpandedQuoteIds] = useState([]);
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -489,6 +582,10 @@ export function App() {
       setQuotes([]);
       setTrackingEntries([]);
       setInfoBlocks([]);
+      setRotaxBlocks([]);
+      setRotaxSessions([]);
+      setRotaxStudents([]);
+      setRotaxContacts([]);
       setIsLoading(false);
       return () => {
         active = false;
@@ -496,12 +593,17 @@ export function App() {
     }
 
     setIsLoading(true);
-    Promise.all([loadStoredQuotes(), loadTrackingEntries(), loadInfoBlocks()])
-      .then(([quoteResult, trackingResult, infoResult]) => {
+    Promise.all([loadStoredQuotes(), loadTrackingEntries(), loadInfoBlocks(), loadRotaxTrainingData()])
+      .then(([quoteResult, trackingResult, infoResult, rotaxResult]) => {
         if (!active) return;
         setQuotes(quoteResult.quotes);
         setTrackingEntries(trackingResult.entries);
         setInfoBlocks(infoResult.blocks);
+        setRotaxBlocks(rotaxResult.blocks);
+        setRotaxSessions(rotaxResult.sessions);
+        setRotaxStudents(rotaxResult.students);
+        setRotaxContacts(rotaxResult.contacts);
+        setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
         setDataStatus(quoteResult.mode === 'supabase' ? 'Supabase · tempo real' : 'Local');
         setAppError('');
 
@@ -517,11 +619,32 @@ export function App() {
           const unsubscribeInfoBlocks = subscribeToInfoBlockChanges(({ eventType, block, oldId }) => {
             setInfoBlocks((current) => syncCollection(current, eventType, block, oldId, sortInfoBlocks, cacheInfoBlocks));
           });
+          const unsubscribeRotax = subscribeToRotaxTrainingChanges(({ eventType, key, item, oldId }) => {
+            if (key === 'block') {
+              setRotaxBlocks((current) => syncCollection(current, eventType, item, oldId, sortRotaxBlocks, cacheRotaxBlocks));
+            }
+            if (key === 'session') {
+              setRotaxSessions((current) =>
+                syncCollection(current, eventType, item, oldId, sortRotaxSessions, cacheRotaxSessions),
+              );
+            }
+            if (key === 'student') {
+              setRotaxStudents((current) =>
+                syncCollection(current, eventType, item, oldId, sortRotaxStudents, cacheRotaxStudents),
+              );
+            }
+            if (key === 'contact') {
+              setRotaxContacts((current) =>
+                syncCollection(current, eventType, item, oldId, sortRotaxContacts, cacheRotaxContacts),
+              );
+            }
+          });
 
           unsubscribeRealtime = () => {
             unsubscribeQuotes();
             unsubscribeTracking();
             unsubscribeInfoBlocks();
+            unsubscribeRotax();
           };
         }
       })
@@ -543,6 +666,17 @@ export function App() {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!rotaxSessions.length) {
+      setActiveRotaxSessionId('');
+      return;
+    }
+
+    if (!activeRotaxSessionId || !rotaxSessions.some((session) => session.id === activeRotaxSessionId)) {
+      setActiveRotaxSessionId(rotaxSessions[0].id);
+    }
+  }, [activeRotaxSessionId, rotaxSessions]);
 
   const metrics = useMemo(() => {
     const followUpDue = quotes.filter((quote) => isFollowUpDue(quote, now));
@@ -618,6 +752,24 @@ export function App() {
     [trackingEntries],
   );
 
+  const rotaxMetrics = useMemo(
+    () => ({
+      contacts: rotaxContacts.length,
+      students: rotaxStudents.length,
+    }),
+    [rotaxContacts, rotaxStudents],
+  );
+
+  const activeRotaxBlocks = useMemo(
+    () => rotaxBlocks.filter((block) => block.category === activeRotaxInfoCategory),
+    [activeRotaxInfoCategory, rotaxBlocks],
+  );
+
+  const visibleRotaxStudents = useMemo(() => {
+    if (!activeRotaxSessionId) return rotaxStudents;
+    return rotaxStudents.filter((student) => student.trainingSessionId === activeRotaxSessionId);
+  }, [activeRotaxSessionId, rotaxStudents]);
+
   async function addInfoBlock(type, options = {}) {
     const nowIso = new Date().toISOString();
     const { afterBlockId = null, content = getDefaultInfoBlockContent(type) } = options;
@@ -671,6 +823,313 @@ export function App() {
     } catch (error) {
       setInfoBlocks(previousBlocks);
       setAppError(error.message || 'Nao foi possivel remover o bloco.');
+    }
+  }
+
+  function getNextRotaxBlockPosition(category) {
+    const categoryBlocks = rotaxBlocks.filter((block) => block.category === category);
+    return categoryBlocks.length ? Math.max(...categoryBlocks.map((block) => block.position || 0)) + 1 : 1;
+  }
+
+  async function addRotaxBlock(category) {
+    const nowIso = new Date().toISOString();
+    const block = {
+      id: crypto.randomUUID(),
+      category,
+      title: 'Novo bloco',
+      body: '',
+      isOpen: true,
+      position: getNextRotaxBlockPosition(category),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    const previousBlocks = rotaxBlocks;
+    setRotaxBlocks((current) => sortRotaxBlocks([...current, block]));
+
+    try {
+      const savedBlock = await createRotaxBlock(block);
+      setRotaxBlocks((current) => sortRotaxBlocks(current.map((item) => (item.id === block.id ? savedBlock : item))));
+      setAppError('');
+    } catch (error) {
+      setRotaxBlocks(previousBlocks);
+      setAppError(error.message || 'Nao foi possivel adicionar o bloco do treinamento.');
+    }
+  }
+
+  function changeRotaxBlock(id, changes) {
+    setRotaxBlocks((current) => sortRotaxBlocks(current.map((block) => (block.id === id ? { ...block, ...changes } : block))));
+  }
+
+  async function saveRotaxBlock(id, changes) {
+    const previousBlocks = rotaxBlocks;
+
+    try {
+      const savedBlock = await updateRotaxBlock(id, changes);
+      setRotaxBlocks((current) => sortRotaxBlocks(current.map((block) => (block.id === id ? savedBlock : block))));
+      setAppError('');
+    } catch (error) {
+      setRotaxBlocks(previousBlocks);
+      setAppError(error.message || 'Nao foi possivel salvar o bloco do treinamento.');
+    }
+  }
+
+  async function removeRotaxBlock(id) {
+    const previousBlocks = rotaxBlocks;
+    setRotaxBlocks((current) => current.filter((block) => block.id !== id));
+
+    try {
+      await deleteRotaxBlock(id);
+      setAppError('');
+    } catch (error) {
+      setRotaxBlocks(previousBlocks);
+      setAppError(error.message || 'Nao foi possivel remover o bloco do treinamento.');
+    }
+  }
+
+  function openRotaxSessionModal() {
+    setRotaxSessionForm(initialRotaxSessionForm);
+    setRotaxSessionErrors({});
+    setRotaxSessionModalOpen(true);
+  }
+
+  async function submitRotaxSession(event) {
+    event.preventDefault();
+    const nextErrors = {};
+    if (!rotaxSessionForm.trainingDate) nextErrors.trainingDate = 'Informe a data do treinamento.';
+    if (rotaxSessions.some((session) => session.trainingDate === rotaxSessionForm.trainingDate)) {
+      nextErrors.trainingDate = 'Este treinamento ja existe.';
+    }
+
+    setRotaxSessionErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    const nowIso = new Date().toISOString();
+    const session = {
+      id: crypto.randomUUID(),
+      trainingDate: rotaxSessionForm.trainingDate,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    const previousSessions = rotaxSessions;
+    setRotaxSessions((current) => sortRotaxSessions([...current, session]));
+
+    try {
+      const savedSession = await createRotaxSession(session);
+      setRotaxSessions((current) => sortRotaxSessions(current.map((item) => (item.id === session.id ? savedSession : item))));
+      setActiveRotaxSessionId(savedSession.id);
+      setRotaxSessionModalOpen(false);
+      setRotaxSessionErrors({});
+      setAppError('');
+    } catch (error) {
+      setRotaxSessions(previousSessions);
+      setAppError(error.message || 'Nao foi possivel adicionar o treinamento.');
+    }
+  }
+
+  function openRotaxStudentModal(student = null, overrides = {}) {
+    setRotaxStudentModal(student || { id: null });
+    setRotaxStudentForm(
+      student
+        ? {
+            trainingSessionId: student.trainingSessionId || activeRotaxSessionId || '',
+            name: student.name || '',
+            email: student.email || '',
+            trainingTypes: student.trainingTypes || [],
+            contractDone: student.contractDone || false,
+            contractSigned: student.contractSigned || false,
+            quoteNumber: student.quoteNumber || '',
+            orderNumber: student.orderNumber || '',
+            address: student.address || '',
+            phone: student.phone || '',
+            notes: student.notes || '',
+          }
+        : {
+            ...initialRotaxStudentForm,
+            trainingSessionId: activeRotaxSessionId || rotaxSessions[0]?.id || '',
+            ...overrides,
+          },
+    );
+    setRotaxStudentErrors({});
+  }
+
+  function updateRotaxStudentForm(field, value) {
+    setRotaxStudentForm((current) => ({ ...current, [field]: value }));
+    setRotaxStudentErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  function toggleRotaxTrainingType(type) {
+    setRotaxStudentForm((current) => {
+      const selected = current.trainingTypes.includes(type);
+      return {
+        ...current,
+        trainingTypes: selected
+          ? current.trainingTypes.filter((item) => item !== type)
+          : [...current.trainingTypes, type],
+      };
+    });
+  }
+
+  async function submitRotaxStudent(event) {
+    event.preventDefault();
+    const nextErrors = {};
+    if (!rotaxStudentForm.trainingSessionId) nextErrors.trainingSessionId = 'Selecione a data do treinamento.';
+    if (!rotaxStudentForm.name.trim()) nextErrors.name = 'Informe o nome.';
+
+    setRotaxStudentErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    const changes = {
+      trainingSessionId: rotaxStudentForm.trainingSessionId,
+      name: rotaxStudentForm.name.trim(),
+      email: rotaxStudentForm.email.trim(),
+      trainingTypes: rotaxStudentForm.trainingTypes,
+      contractDone: rotaxStudentForm.contractDone,
+      contractSigned: rotaxStudentForm.contractSigned,
+      quoteNumber: rotaxStudentForm.quoteNumber.trim(),
+      orderNumber: rotaxStudentForm.orderNumber.trim(),
+      address: rotaxStudentForm.address.trim(),
+      phone: rotaxStudentForm.phone.trim(),
+      notes: rotaxStudentForm.notes.trim(),
+    };
+    const previousStudents = rotaxStudents;
+
+    if (rotaxStudentModal?.id) {
+      setRotaxStudents((current) =>
+        sortRotaxStudents(current.map((student) => (student.id === rotaxStudentModal.id ? { ...student, ...changes } : student))),
+      );
+
+      try {
+        const savedStudent = await updateRotaxStudent(rotaxStudentModal.id, changes);
+        setRotaxStudents((current) =>
+          sortRotaxStudents(current.map((student) => (student.id === rotaxStudentModal.id ? savedStudent : student))),
+        );
+        setRotaxStudentModal(null);
+        setAppError('');
+      } catch (error) {
+        setRotaxStudents(previousStudents);
+        setAppError(error.message || 'Nao foi possivel salvar o aluno.');
+      }
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const student = { id: crypto.randomUUID(), ...changes, createdAt: nowIso, updatedAt: nowIso };
+    setRotaxStudents((current) => sortRotaxStudents([student, ...current]));
+
+    try {
+      const savedStudent = await createRotaxStudent(student);
+      setRotaxStudents((current) => sortRotaxStudents(current.map((item) => (item.id === student.id ? savedStudent : item))));
+      setActiveRotaxTab('students');
+      setActiveRotaxSessionId(savedStudent.trainingSessionId);
+      setRotaxStudentModal(null);
+      setAppError('');
+    } catch (error) {
+      setRotaxStudents(previousStudents);
+      setAppError(error.message || 'Nao foi possivel adicionar o aluno.');
+    }
+  }
+
+  async function removeRotaxStudent(id) {
+    const previousStudents = rotaxStudents;
+    setRotaxStudents((current) => current.filter((student) => student.id !== id));
+
+    try {
+      await deleteRotaxStudent(id);
+      setAppError('');
+    } catch (error) {
+      setRotaxStudents(previousStudents);
+      setAppError(error.message || 'Nao foi possivel excluir o aluno.');
+    }
+  }
+
+  function toggleRotaxStudentDetails(id) {
+    setExpandedRotaxStudentIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  }
+
+  function openRotaxContactModal(contact = null) {
+    setRotaxContactModal(contact || { id: null });
+    setRotaxContactForm(
+      contact
+        ? {
+            name: contact.name || '',
+            contact: contact.contact || '',
+            status: contact.status || 'Em contato',
+            redirectSessionId: '',
+          }
+        : initialRotaxContactForm,
+    );
+    setRotaxContactErrors({});
+  }
+
+  function updateRotaxContactForm(field, value) {
+    setRotaxContactForm((current) => ({ ...current, [field]: value }));
+    setRotaxContactErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  async function submitRotaxContact(event) {
+    event.preventDefault();
+    const nextErrors = {};
+    if (!rotaxContactForm.name.trim()) nextErrors.name = 'Informe o nome.';
+    if (rotaxContactForm.redirectSessionId && !rotaxSessions.some((session) => session.id === rotaxContactForm.redirectSessionId)) {
+      nextErrors.redirectSessionId = 'Selecione um treinamento valido.';
+    }
+
+    setRotaxContactErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    const changes = {
+      name: rotaxContactForm.name.trim(),
+      contact: rotaxContactForm.contact.trim(),
+      status: rotaxContactForm.status,
+    };
+    const previousContacts = rotaxContacts;
+    let savedContact = null;
+
+    try {
+      if (rotaxContactModal?.id) {
+        setRotaxContacts((current) =>
+          sortRotaxContacts(current.map((contact) => (contact.id === rotaxContactModal.id ? { ...contact, ...changes } : contact))),
+        );
+        savedContact = await updateRotaxContact(rotaxContactModal.id, changes);
+        setRotaxContacts((current) =>
+          sortRotaxContacts(current.map((contact) => (contact.id === rotaxContactModal.id ? savedContact : contact))),
+        );
+      } else {
+        const nowIso = new Date().toISOString();
+        const contact = { id: crypto.randomUUID(), ...changes, createdAt: nowIso, updatedAt: nowIso };
+        setRotaxContacts((current) => sortRotaxContacts([contact, ...current]));
+        savedContact = await createRotaxContact(contact);
+        setRotaxContacts((current) => sortRotaxContacts(current.map((item) => (item.id === contact.id ? savedContact : item))));
+      }
+
+      setRotaxContactModal(null);
+      setAppError('');
+
+      if (rotaxContactForm.redirectSessionId) {
+        setActiveRotaxTab('students');
+        setActiveRotaxSessionId(rotaxContactForm.redirectSessionId);
+        openRotaxStudentModal(null, {
+          trainingSessionId: rotaxContactForm.redirectSessionId,
+          name: savedContact.name,
+          phone: savedContact.contact,
+        });
+      }
+    } catch (error) {
+      setRotaxContacts(previousContacts);
+      setAppError(error.message || 'Nao foi possivel salvar o contato.');
+    }
+  }
+
+  async function removeRotaxContact(id) {
+    const previousContacts = rotaxContacts;
+    setRotaxContacts((current) => current.filter((contact) => contact.id !== id));
+
+    try {
+      await deleteRotaxContact(id);
+      setAppError('');
+    } catch (error) {
+      setRotaxContacts(previousContacts);
+      setAppError(error.message || 'Nao foi possivel excluir o contato.');
     }
   }
 
@@ -1538,6 +1997,10 @@ export function App() {
                           <BookOpenText size={16} />
                           Painel de informações
                         </button>
+                        <button type="button" onClick={() => navigateFromMenu('rotax')}>
+                          <GraduationCap size={16} />
+                          Treinamento Rotax
+                        </button>
                         <button type="button" onClick={() => navigateFromMenu('tracking')}>
                           <Truck size={16} />
                           Rastreio
@@ -1595,6 +2058,14 @@ export function App() {
                 >
                   <BookOpenText size={16} />
                   Painel de informações
+                </button>
+                <button
+                  className={activeView === 'rotax' ? 'view-button active' : 'view-button'}
+                  type="button"
+                  onClick={() => setActiveView('rotax')}
+                >
+                  <GraduationCap size={16} />
+                  Treinamento Rotax
                 </button>
                 <button
                   className={activeView === 'tracking' ? 'view-button active' : 'view-button'}
@@ -1722,6 +2193,35 @@ export function App() {
           searchTerm={trackingSearchTerm}
           setSearchTerm={setTrackingSearchTerm}
         />
+      ) : activeView === 'rotax' ? (
+        <RotaxTrainingWorkspace
+          activeInfoCategory={activeRotaxInfoCategory}
+          activeSessionId={activeRotaxSessionId}
+          activeTab={activeRotaxTab}
+          allStudents={rotaxStudents}
+          blocks={activeRotaxBlocks}
+          contacts={rotaxContacts}
+          expandedStudentIds={expandedRotaxStudentIds}
+          metrics={rotaxMetrics}
+          onAddBlock={addRotaxBlock}
+          onAddContact={() => openRotaxContactModal()}
+          onAddSession={openRotaxSessionModal}
+          onAddStudent={() => openRotaxStudentModal()}
+          onChangeBlock={changeRotaxBlock}
+          onEditContact={openRotaxContactModal}
+          onEditStudent={openRotaxStudentModal}
+          onRemoveBlock={removeRotaxBlock}
+          onRemoveContact={removeRotaxContact}
+          onRemoveStudent={removeRotaxStudent}
+          onSaveBlock={saveRotaxBlock}
+          onToggleStudentDetails={toggleRotaxStudentDetails}
+          sessions={rotaxSessions}
+          setActiveInfoCategory={setActiveRotaxInfoCategory}
+          setActiveSessionId={setActiveRotaxSessionId}
+          setActiveTab={setActiveRotaxTab}
+          setActiveView={setActiveView}
+          students={visibleRotaxStudents}
+        />
       ) : (
         <InfoPanel
           blocks={infoBlocks}
@@ -1774,6 +2274,44 @@ export function App() {
           onCancel={cancelTrackingModal}
           onSubmit={saveStandaloneTrackingForm}
           onUpdate={updateTrackingForm}
+        />
+      )}
+
+      {rotaxSessionModalOpen && (
+        <RotaxSessionModal
+          errors={rotaxSessionErrors}
+          form={rotaxSessionForm}
+          onCancel={() => setRotaxSessionModalOpen(false)}
+          onSubmit={submitRotaxSession}
+          onUpdate={(field, value) => {
+            setRotaxSessionForm((current) => ({ ...current, [field]: value }));
+            setRotaxSessionErrors((current) => ({ ...current, [field]: '' }));
+          }}
+        />
+      )}
+
+      {rotaxStudentModal && (
+        <RotaxStudentModal
+          errors={rotaxStudentErrors}
+          form={rotaxStudentForm}
+          isEditing={Boolean(rotaxStudentModal.id)}
+          onCancel={() => setRotaxStudentModal(null)}
+          onSubmit={submitRotaxStudent}
+          onToggleTrainingType={toggleRotaxTrainingType}
+          onUpdate={updateRotaxStudentForm}
+          sessions={rotaxSessions}
+        />
+      )}
+
+      {rotaxContactModal && (
+        <RotaxContactModal
+          errors={rotaxContactErrors}
+          form={rotaxContactForm}
+          isEditing={Boolean(rotaxContactModal.id)}
+          onCancel={() => setRotaxContactModal(null)}
+          onSubmit={submitRotaxContact}
+          onUpdate={updateRotaxContactForm}
+          sessions={rotaxSessions}
         />
       )}
     </main>
@@ -2757,6 +3295,397 @@ function QuotesWorkspace({
   );
 }
 
+function getRotaxSessionLabel(session) {
+  return session?.trainingDate ? formatDate(`${session.trainingDate}T12:00:00`) : 'Sem treinamento';
+}
+
+function RotaxTrainingWorkspace({
+  activeInfoCategory,
+  activeSessionId,
+  activeTab,
+  blocks,
+  contacts,
+  expandedStudentIds,
+  metrics,
+  onAddBlock,
+  onAddContact,
+  onAddSession,
+  onAddStudent,
+  onChangeBlock,
+  onEditContact,
+  onEditStudent,
+  onRemoveBlock,
+  onRemoveContact,
+  onRemoveStudent,
+  onSaveBlock,
+  onToggleStudentDetails,
+  sessions,
+  setActiveInfoCategory,
+  setActiveSessionId,
+  setActiveTab,
+  setActiveView,
+  allStudents,
+  students,
+}) {
+  const activeCategory = rotaxInfoCategories.find((category) => category.value === activeInfoCategory) || rotaxInfoCategories[0];
+  const activeSession = sessions.find((session) => session.id === activeSessionId);
+
+  return (
+    <section className="rotax-panel">
+      <div className="panel-toolbar">
+        <div className="section-title">
+          <GraduationCap size={20} />
+          <h2>Treinamento Rotax</h2>
+        </div>
+        <div className="panel-actions">
+          <button className="secondary-button compact" type="button" onClick={() => setActiveView('quotes')}>
+            <FileText size={16} />
+            Cotações
+          </button>
+        </div>
+      </div>
+
+      <div className="rotax-info-tabs" role="tablist" aria-label="Informações do treinamento Rotax">
+        {rotaxInfoCategories.map((category) => (
+          <button
+            className={activeInfoCategory === category.value ? 'view-button active' : 'view-button'}
+            key={category.value}
+            type="button"
+            onClick={() => setActiveInfoCategory(category.value)}
+          >
+            {category.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="rotax-info-area">
+        <div className="rotax-info-header">
+          <h3>{activeCategory.label}</h3>
+          <button className="secondary-button compact" type="button" onClick={() => onAddBlock(activeInfoCategory)}>
+            <Plus size={16} />
+            Adicionar linha
+          </button>
+        </div>
+        {blocks.length === 0 ? (
+          <div className="info-empty-state compact">
+            <BookOpenText size={24} />
+            <p>Nenhuma informação cadastrada.</p>
+          </div>
+        ) : (
+          <div className="rotax-toggle-list">
+            {blocks.map((block) => (
+              <RotaxToggleBlock
+                block={block}
+                key={block.id}
+                onChangeBlock={onChangeBlock}
+                onRemoveBlock={onRemoveBlock}
+                onSaveBlock={onSaveBlock}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <section className="rotax-dashboard">
+        <div className="panel-toolbar">
+          <div className="tabs rotax-main-tabs" role="tablist" aria-label="Gestão de treinamento">
+            <button
+              className={activeTab === 'contacts' ? 'tab active' : 'tab'}
+              type="button"
+              onClick={() => setActiveTab('contacts')}
+            >
+              Contatos próximos treinamentos
+              <strong>{metrics.contacts}</strong>
+            </button>
+            <button
+              className={activeTab === 'students' ? 'tab active' : 'tab'}
+              type="button"
+              onClick={() => setActiveTab('students')}
+            >
+              Alunos confirmados
+              <strong>{metrics.students}</strong>
+            </button>
+          </div>
+          <div className="panel-actions">
+            <button className="secondary-button compact" type="button" onClick={onAddStudent}>
+              <Plus size={16} />
+              Adicionar novo aluno
+            </button>
+            <button className="secondary-button compact" type="button" onClick={onAddSession}>
+              <CalendarClock size={16} />
+              Adicionar treinamento
+            </button>
+          </div>
+        </div>
+
+        {activeTab === 'contacts' ? (
+          <RotaxContactsTable
+            contacts={contacts}
+            onAdd={onAddContact}
+            onEdit={onEditContact}
+            onRemove={onRemoveContact}
+          />
+        ) : (
+          <>
+            <div className="tabs rotax-session-tabs" role="tablist" aria-label="Datas de treinamento">
+              {sessions.length === 0 ? (
+                <button className="tab active" type="button" onClick={onAddSession}>
+                  Nenhum treinamento cadastrado
+                  <strong>+</strong>
+                </button>
+              ) : (
+                sessions.map((session) => (
+                  <button
+                    className={activeSessionId === session.id ? 'tab active' : 'tab'}
+                    key={session.id}
+                    type="button"
+                    onClick={() => setActiveSessionId(session.id)}
+                  >
+                    {getRotaxSessionLabel(session)}
+                    <strong>{allStudents.filter((student) => student.trainingSessionId === session.id).length}</strong>
+                  </button>
+                ))
+              )}
+            </div>
+            <RotaxStudentsTable
+              activeSession={activeSession}
+              expandedStudentIds={expandedStudentIds}
+              onEdit={onEditStudent}
+              onRemove={onRemoveStudent}
+              onToggleDetails={onToggleStudentDetails}
+              sessions={sessions}
+              students={students}
+            />
+          </>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function RotaxToggleBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
+  return (
+    <div className="rotax-toggle-block">
+      <button
+        className={block.isOpen ? 'toggle-control open' : 'toggle-control'}
+        type="button"
+        aria-label={block.isOpen ? 'Recolher bloco' : 'Expandir bloco'}
+        onClick={() => {
+          const nextOpen = !block.isOpen;
+          onChangeBlock(block.id, { isOpen: nextOpen });
+          onSaveBlock(block.id, { isOpen: nextOpen });
+        }}
+      >
+        <ChevronRight size={17} />
+      </button>
+      <div className="info-block-content">
+        <input
+          className="info-toggle-title"
+          value={block.title}
+          onBlur={() => onSaveBlock(block.id, { title: block.title })}
+          onChange={(event) => onChangeBlock(block.id, { title: event.target.value })}
+          placeholder="Título"
+        />
+        {block.isOpen && (
+          <textarea
+            className="info-block-input"
+            value={block.body}
+            onBlur={() => onSaveBlock(block.id, { body: block.body })}
+            onChange={(event) => onChangeBlock(block.id, { body: event.target.value })}
+            placeholder="Digite o texto"
+            rows="4"
+          />
+        )}
+      </div>
+      <button className="info-delete-button" type="button" aria-label="Remover bloco" onClick={() => onRemoveBlock(block.id)}>
+        <Trash2 size={15} />
+      </button>
+    </div>
+  );
+}
+
+function RotaxStudentsTable({ activeSession, expandedStudentIds, onEdit, onRemove, onToggleDetails, sessions, students }) {
+  return (
+    <div className="table-wrap">
+      <table className="quote-table rotax-table">
+        <thead>
+          <tr>
+            <th>Nº orçamento</th>
+            <th>Nome</th>
+            <th>Tipos de treinamento</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {students.map((student) => {
+            const expanded = expandedStudentIds.includes(student.id);
+            const session = sessions.find((item) => item.id === student.trainingSessionId);
+            return (
+              <React.Fragment key={student.id}>
+                <tr className="quote-row expandable" onClick={() => onToggleDetails(student.id)}>
+                  <td className="strong-text">{student.quoteNumber || '—'}</td>
+                  <td>{student.name}</td>
+                  <td>
+                    <div className="type-pill-list">
+                      {student.trainingTypes.length ? (
+                        student.trainingTypes.map((type) => (
+                          <span className={`situation ${rotaxTypeColorClass[type] || 'blue'}`} key={type}>
+                            {type}
+                          </span>
+                        ))
+                      ) : (
+                        '—'
+                      )}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="row-actions">
+                      <button
+                        className="icon-button neutral"
+                        type="button"
+                        title="Editar aluno"
+                        aria-label="Editar aluno"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onEdit(student);
+                        }}
+                      >
+                        <Pencil size={17} />
+                      </button>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        title="Excluir aluno"
+                        aria-label="Excluir aluno"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onRemove(student.id);
+                        }}
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                {expanded && (
+                  <tr className="closed-details-row">
+                    <td colSpan="4">
+                      <div className="closed-details rotax-details">
+                        <span>
+                          <b>Data treinamento</b>
+                          {getRotaxSessionLabel(session)}
+                        </span>
+                        <span>
+                          <b>E-mail</b>
+                          {student.email || '—'}
+                        </span>
+                        <span>
+                          <b>Contrato efetuado?</b>
+                          {student.contractDone ? 'Sim' : 'Não'}
+                        </span>
+                        <span>
+                          <b>Contrato assinado?</b>
+                          {student.contractSigned ? 'Sim' : 'Não'}
+                        </span>
+                        <span>
+                          <b>Nº pedido</b>
+                          {student.orderNumber || '—'}
+                        </span>
+                        <span>
+                          <b>Telefone</b>
+                          {student.phone || '—'}
+                        </span>
+                        <span className="wide-detail">
+                          <b>Endereço</b>
+                          {student.address || '—'}
+                        </span>
+                        <span className="wide-detail">
+                          <b>Observações</b>
+                          {student.notes || '—'}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {students.length === 0 && (
+        <div className="empty-state">
+          <GraduationCap size={28} />
+          <p>{activeSession ? 'Nenhum aluno confirmado para esta data.' : 'Cadastre um treinamento para adicionar alunos.'}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RotaxContactsTable({ contacts, onAdd, onEdit, onRemove }) {
+  return (
+    <div className="table-wrap">
+      <div className="rotax-table-actions">
+        <button className="secondary-button compact" type="button" onClick={onAdd}>
+          <Plus size={16} />
+          Incluir contato
+        </button>
+      </div>
+      <table className="quote-table rotax-table contacts-table">
+        <thead>
+          <tr>
+            <th>Nome</th>
+            <th>Contato</th>
+            <th>Status</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {contacts.map((contact) => (
+            <tr className="quote-row" key={contact.id}>
+              <td className="strong-text">{contact.name}</td>
+              <td>{contact.contact || '—'}</td>
+              <td>
+                <span className={contact.status === 'Em contato' ? 'situation blue' : 'situation yellow'}>{contact.status}</span>
+              </td>
+              <td>
+                <div className="row-actions">
+                  <button
+                    className="icon-button neutral"
+                    type="button"
+                    title="Editar contato"
+                    aria-label="Editar contato"
+                    onClick={() => onEdit(contact)}
+                  >
+                    <Pencil size={17} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    title="Excluir contato"
+                    aria-label="Excluir contato"
+                    onClick={() => onRemove(contact.id)}
+                  >
+                    <Trash2 size={17} />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {contacts.length === 0 && (
+        <div className="empty-state">
+          <BookOpenText size={28} />
+          <p>Nenhum contato cadastrado.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TrackingWorkspace({
   activeTrackingTab,
   correiosCandidateCount,
@@ -3116,6 +4045,232 @@ function QuoteEditModal({ errors, form, onCancel, onSubmit, onUpdate }) {
             rows="4"
           />
         </label>
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button className="primary-button" type="submit">
+            Salvar
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function RotaxSessionModal({ errors, form, onCancel, onSubmit, onUpdate }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="close-modal" onSubmit={onSubmit} noValidate>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Treinamento Rotax</p>
+            <h2>Adicionar treinamento</h2>
+          </div>
+          <button className="modal-close" type="button" aria-label="Fechar janela" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <label>
+          Data do treinamento
+          <input type="date" value={form.trainingDate} onChange={(event) => onUpdate('trainingDate', event.target.value)} />
+          {errors.trainingDate && <small>{errors.trainingDate}</small>}
+        </label>
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button className="primary-button" type="submit">
+            Incluir
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function RotaxStudentModal({
+  errors,
+  form,
+  isEditing,
+  onCancel,
+  onSubmit,
+  onToggleTrainingType,
+  onUpdate,
+  sessions,
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="close-modal rotax-modal" onSubmit={onSubmit} noValidate>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Treinamento Rotax</p>
+            <h2>{isEditing ? 'Editar aluno' : 'Adicionar novo aluno'}</h2>
+          </div>
+          <button className="modal-close" type="button" aria-label="Fechar janela" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <label>
+          Data do treinamento
+          <select value={form.trainingSessionId} onChange={(event) => onUpdate('trainingSessionId', event.target.value)}>
+            <option value="">Selecione</option>
+            {sessions.map((session) => (
+              <option key={session.id} value={session.id}>
+                {getRotaxSessionLabel(session)}
+              </option>
+            ))}
+          </select>
+          {errors.trainingSessionId && <small>{errors.trainingSessionId}</small>}
+        </label>
+
+        <div className="form-pair wide">
+          <label>
+            Nome
+            <input value={form.name} onChange={(event) => onUpdate('name', event.target.value)} placeholder="Nome do aluno" />
+            {errors.name && <small>{errors.name}</small>}
+          </label>
+
+          <label>
+            E-mail
+            <input value={form.email} onChange={(event) => onUpdate('email', event.target.value)} placeholder="email@empresa.com" />
+          </label>
+        </div>
+
+        <label>
+          Tipo treinamento
+          <details className="multi-select-dropdown">
+            <summary>{form.trainingTypes.length ? form.trainingTypes.join(', ') : 'Selecione um ou mais tipos'}</summary>
+            <div className="rotax-type-grid">
+              {rotaxTrainingTypes.map((type) => (
+                <label className="checkbox-label compact-checkbox" key={type}>
+                  <input
+                    type="checkbox"
+                    checked={form.trainingTypes.includes(type)}
+                    onChange={() => onToggleTrainingType(type)}
+                  />
+                  <span className={`situation ${rotaxTypeColorClass[type] || 'blue'}`}>{type}</span>
+                </label>
+              ))}
+            </div>
+          </details>
+        </label>
+
+        <div className="form-pair wide">
+          <label className="checkbox-label interest-checkbox">
+            <input
+              type="checkbox"
+              checked={form.contractDone}
+              onChange={(event) => onUpdate('contractDone', event.target.checked)}
+            />
+            Contrato efetuado?
+          </label>
+          <label className="checkbox-label interest-checkbox">
+            <input
+              type="checkbox"
+              checked={form.contractSigned}
+              onChange={(event) => onUpdate('contractSigned', event.target.checked)}
+            />
+            Contrato Assinado?
+          </label>
+        </div>
+
+        <div className="form-pair wide">
+          <label>
+            Número do orçamento
+            <input value={form.quoteNumber} onChange={(event) => onUpdate('quoteNumber', event.target.value)} placeholder="Ex: 10482" />
+          </label>
+          <label>
+            Número do pedido
+            <input value={form.orderNumber} onChange={(event) => onUpdate('orderNumber', event.target.value)} placeholder="Ex: 58014" />
+          </label>
+        </div>
+
+        <div className="form-pair wide">
+          <label>
+            Telefone
+            <input value={form.phone} onChange={(event) => onUpdate('phone', event.target.value)} placeholder="Contato do aluno" />
+          </label>
+          <label>
+            Endereço
+            <input value={form.address} onChange={(event) => onUpdate('address', event.target.value)} placeholder="Endereço" />
+          </label>
+        </div>
+
+        <label>
+          Observações
+          <textarea
+            value={form.notes}
+            onChange={(event) => onUpdate('notes', event.target.value)}
+            placeholder="Observações do aluno"
+            rows="5"
+          />
+        </label>
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button className="primary-button" type="submit">
+            Salvar
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function RotaxContactModal({ errors, form, isEditing, onCancel, onSubmit, onUpdate, sessions }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="close-modal rotax-modal" onSubmit={onSubmit} noValidate>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Próximos treinamentos</p>
+            <h2>{isEditing ? 'Editar contato' : 'Incluir contato'}</h2>
+          </div>
+          <button className="modal-close" type="button" aria-label="Fechar janela" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <label>
+          Nome
+          <input value={form.name} onChange={(event) => onUpdate('name', event.target.value)} placeholder="Nome do contato" />
+          {errors.name && <small>{errors.name}</small>}
+        </label>
+
+        <label>
+          Contato
+          <input value={form.contact} onChange={(event) => onUpdate('contact', event.target.value)} placeholder="Telefone ou e-mail" />
+        </label>
+
+        <label>
+          Status
+          <select value={form.status} onChange={(event) => onUpdate('status', event.target.value)}>
+            <option value="Em contato">Em contato</option>
+            <option value="Manter na lista">Manter na lista</option>
+          </select>
+        </label>
+
+        {isEditing && (
+          <label>
+            Direcionar aluno
+            <select value={form.redirectSessionId} onChange={(event) => onUpdate('redirectSessionId', event.target.value)}>
+              <option value="">Não direcionar agora</option>
+              {sessions.map((session) => (
+                <option key={session.id} value={session.id}>
+                  {getRotaxSessionLabel(session)}
+                </option>
+              ))}
+            </select>
+            {errors.redirectSessionId && <small>{errors.redirectSessionId}</small>}
+          </label>
+        )}
 
         <div className="modal-actions">
           <button className="secondary-button" type="button" onClick={onCancel}>

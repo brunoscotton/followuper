@@ -62,6 +62,50 @@ create table if not exists public.info_blocks (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.rotax_training_blocks (
+  id uuid primary key,
+  category text not null check (category in ('internal', 'explanation', 'indications')),
+  title text,
+  body text,
+  is_open boolean not null default true,
+  position numeric not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.rotax_training_sessions (
+  id uuid primary key,
+  training_date date not null unique,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.rotax_training_students (
+  id uuid primary key,
+  training_session_id uuid references public.rotax_training_sessions(id) on delete set null,
+  name text not null,
+  email text,
+  training_types text[] not null default '{}',
+  contract_done boolean not null default false,
+  contract_signed boolean not null default false,
+  quote_number text,
+  order_number text,
+  address text,
+  phone text,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.rotax_training_contacts (
+  id uuid primary key,
+  name text not null,
+  contact text,
+  status text not null default 'Em contato' check (status in ('Em contato', 'Manter na lista')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.info_blocks drop constraint if exists info_blocks_block_type_check;
 alter table public.info_blocks
   add constraint info_blocks_block_type_check
@@ -92,10 +136,18 @@ where follow_up_started_at is null
 alter table public.quotes replica identity full;
 alter table public.tracking_entries replica identity full;
 alter table public.info_blocks replica identity full;
+alter table public.rotax_training_blocks replica identity full;
+alter table public.rotax_training_sessions replica identity full;
+alter table public.rotax_training_students replica identity full;
+alter table public.rotax_training_contacts replica identity full;
 
 alter table public.quotes enable row level security;
 alter table public.tracking_entries enable row level security;
 alter table public.info_blocks enable row level security;
+alter table public.rotax_training_blocks enable row level security;
+alter table public.rotax_training_sessions enable row level security;
+alter table public.rotax_training_students enable row level security;
+alter table public.rotax_training_contacts enable row level security;
 
 drop policy if exists "Authenticated users can read quotes" on public.quotes;
 drop policy if exists "Authenticated users can insert quotes" on public.quotes;
@@ -109,6 +161,22 @@ drop policy if exists "Authenticated users can read info blocks" on public.info_
 drop policy if exists "Authenticated users can insert info blocks" on public.info_blocks;
 drop policy if exists "Authenticated users can update info blocks" on public.info_blocks;
 drop policy if exists "Authenticated users can delete info blocks" on public.info_blocks;
+drop policy if exists "Authenticated users can read rotax training blocks" on public.rotax_training_blocks;
+drop policy if exists "Authenticated users can insert rotax training blocks" on public.rotax_training_blocks;
+drop policy if exists "Authenticated users can update rotax training blocks" on public.rotax_training_blocks;
+drop policy if exists "Authenticated users can delete rotax training blocks" on public.rotax_training_blocks;
+drop policy if exists "Authenticated users can read rotax training sessions" on public.rotax_training_sessions;
+drop policy if exists "Authenticated users can insert rotax training sessions" on public.rotax_training_sessions;
+drop policy if exists "Authenticated users can update rotax training sessions" on public.rotax_training_sessions;
+drop policy if exists "Authenticated users can delete rotax training sessions" on public.rotax_training_sessions;
+drop policy if exists "Authenticated users can read rotax training students" on public.rotax_training_students;
+drop policy if exists "Authenticated users can insert rotax training students" on public.rotax_training_students;
+drop policy if exists "Authenticated users can update rotax training students" on public.rotax_training_students;
+drop policy if exists "Authenticated users can delete rotax training students" on public.rotax_training_students;
+drop policy if exists "Authenticated users can read rotax training contacts" on public.rotax_training_contacts;
+drop policy if exists "Authenticated users can insert rotax training contacts" on public.rotax_training_contacts;
+drop policy if exists "Authenticated users can update rotax training contacts" on public.rotax_training_contacts;
+drop policy if exists "Authenticated users can delete rotax training contacts" on public.rotax_training_contacts;
 
 create policy "Authenticated users can read quotes"
   on public.quotes
@@ -185,6 +253,106 @@ create policy "Authenticated users can delete info blocks"
   to authenticated
   using (true);
 
+create policy "Authenticated users can read rotax training blocks"
+  on public.rotax_training_blocks
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert rotax training blocks"
+  on public.rotax_training_blocks
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update rotax training blocks"
+  on public.rotax_training_blocks
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete rotax training blocks"
+  on public.rotax_training_blocks
+  for delete
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can read rotax training sessions"
+  on public.rotax_training_sessions
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert rotax training sessions"
+  on public.rotax_training_sessions
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update rotax training sessions"
+  on public.rotax_training_sessions
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete rotax training sessions"
+  on public.rotax_training_sessions
+  for delete
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can read rotax training students"
+  on public.rotax_training_students
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert rotax training students"
+  on public.rotax_training_students
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update rotax training students"
+  on public.rotax_training_students
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete rotax training students"
+  on public.rotax_training_students
+  for delete
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can read rotax training contacts"
+  on public.rotax_training_contacts
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert rotax training contacts"
+  on public.rotax_training_contacts
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update rotax training contacts"
+  on public.rotax_training_contacts
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete rotax training contacts"
+  on public.rotax_training_contacts
+  for delete
+  to authenticated
+  using (true);
+
 do $$
 begin
   if not exists (
@@ -215,5 +383,45 @@ begin
       and tablename = 'info_blocks'
   ) then
     alter publication supabase_realtime add table public.info_blocks;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'rotax_training_blocks'
+  ) then
+    alter publication supabase_realtime add table public.rotax_training_blocks;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'rotax_training_sessions'
+  ) then
+    alter publication supabase_realtime add table public.rotax_training_sessions;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'rotax_training_students'
+  ) then
+    alter publication supabase_realtime add table public.rotax_training_students;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'rotax_training_contacts'
+  ) then
+    alter publication supabase_realtime add table public.rotax_training_contacts;
   end if;
 end $$;
