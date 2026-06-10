@@ -871,6 +871,17 @@ small {
   padding-left: 14px;
 }
 
+.relevance-filter {
+  border-left: 1px solid #d9e0e7;
+  margin-left: 2px;
+  padding-left: 12px;
+}
+
+.simple-relevance-filter {
+  align-self: end;
+  min-height: 46px;
+}
+
 .compact-checkbox {
   color: #354353;
   font-size: 0.84rem;

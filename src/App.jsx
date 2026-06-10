@@ -525,6 +525,7 @@ export function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
+  const [sortByRelevance, setSortByRelevance] = useState(false);
   const [grandpaForm, setGrandpaForm] = useState(initialGrandpaForm);
   const [grandpaErrors, setGrandpaErrors] = useState({});
   const [isUpdatingCorreios, setIsUpdatingCorreios] = useState(false);
@@ -735,8 +736,15 @@ export function App() {
         if (!query) return true;
         return normalize(quote.clientName).includes(query) || normalize(quote.quoteNumber).includes(query);
       })
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  }, [activeTab, now, quotes, searchTerm, selectedSellers]);
+      .sort((a, b) => {
+        if (sortByRelevance) {
+          const relevanceDiff = getQuoteInterestStars(b) - getQuoteInterestStars(a);
+          if (relevanceDiff !== 0) return relevanceDiff;
+        }
+
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      });
+  }, [activeTab, now, quotes, searchTerm, selectedSellers, sortByRelevance]);
 
   const visibleTrackingEntries = useMemo(
     () => {
@@ -2242,9 +2250,11 @@ export function App() {
           expandedQuoteIds={expandedQuoteIds}
           searchTerm={searchTerm}
           selectedSellers={selectedSellers}
+          sortByRelevance={sortByRelevance}
           setActiveTab={setActiveTab}
           setActiveView={setActiveView}
           setSearchTerm={setSearchTerm}
+          setSortByRelevance={setSortByRelevance}
           onChangeSellerFilter={changeSellerFilter}
           onToggleSellerFilter={toggleSellerFilter}
           onToggleQuoteDetails={toggleQuoteDetails}
@@ -2933,9 +2943,11 @@ function QuotesWorkspace({
   expandedQuoteIds,
   searchTerm,
   selectedSellers,
+  sortByRelevance,
   setActiveTab,
   setActiveView,
   setSearchTerm,
+  setSortByRelevance,
   onChangeSellerFilter,
   onToggleSellerFilter,
   onToggleQuoteDetails,
@@ -3117,6 +3129,14 @@ function QuotesWorkspace({
                 ))}
               </select>
             </label>
+            <label className="checkbox-label compact-checkbox relevance-filter simple-relevance-filter">
+              <input
+                type="checkbox"
+                checked={sortByRelevance}
+                onChange={(event) => setSortByRelevance(event.target.checked)}
+              />
+              Relevância
+            </label>
           </div>
         ) : (
           <>
@@ -3155,6 +3175,14 @@ function QuotesWorkspace({
                     {seller}
                   </label>
                 ))}
+                <label className="checkbox-label compact-checkbox relevance-filter">
+                  <input
+                    type="checkbox"
+                    checked={sortByRelevance}
+                    onChange={(event) => setSortByRelevance(event.target.checked)}
+                  />
+                  Relevância
+                </label>
               </div>
             </div>
           </>
