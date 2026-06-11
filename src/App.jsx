@@ -3195,7 +3195,7 @@ function QuotesWorkspace({
                 <th>Status</th>
                 <th>Nº cotação</th>
                 <th>Cliente</th>
-                <th>Pagamento</th>
+                <th>Valor</th>
                 <th>Data cotação</th>
                 <th>Vendedor</th>
                 <th>Follow-up</th>
@@ -3251,7 +3251,7 @@ function QuotesWorkspace({
                         </span>
                       </td>
                       <td>{quote.clientName}</td>
-                      <td>{quote.paymentTerms || '—'}</td>
+                      <td>{quote.quoteValue || '—'}</td>
                       <td>{formatDate(`${quote.quoteDate}T12:00:00`)}</td>
                       <td>{quote.seller}</td>
                       <td>
