@@ -277,7 +277,7 @@ function getTodayInputValue() {
 function getStoredLayoutMode() {
   try {
     const storedMode = localStorage.getItem(LAYOUT_STORAGE_KEY);
-    return ['simple', 'vovo'].includes(storedMode) ? storedMode : 'complete';
+    return ['simple', 'vovo', 'dashboard'].includes(storedMode) ? storedMode : 'complete';
   } catch {
     return 'complete';
   }
@@ -329,6 +329,19 @@ function getQuoteInterestStars(quote) {
   if (value >= 10000) return 2;
   if (value >= 5000) return 1;
   return quote.isInterest ? 1 : 0;
+}
+
+function getQuoteNumericValue(quote) {
+  return parseQuoteValue(quote.quoteValue || quote.closeDetails?.totalValue);
+}
+
+function formatCurrencyValue(value) {
+  return Number(value || 0).toLocaleString('pt-BR', { currency: 'BRL', minimumFractionDigits: 2, style: 'currency' });
+}
+
+function getPercent(part, total) {
+  if (!total) return 0;
+  return Math.round((part / total) * 100);
 }
 
 function getSellerFromUploadCode(value) {
@@ -556,7 +569,10 @@ export function App() {
   const [appError, setAppError] = useState('');
   const [dataStatus, setDataStatus] = useState(persistenceMode === 'supabase' ? 'Supabase' : 'Local');
   const [now, setNow] = useState(new Date());
+  const [saleCelebration, setSaleCelebration] = useState(null);
   const uploadInputRef = useRef(null);
+  const previousClosedQuoteIdsRef = useRef(null);
+  const celebrationTimeoutRef = useRef(null);
 
   useEffect(() => {
     let active = true;
@@ -684,6 +700,38 @@ export function App() {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (celebrationTimeoutRef.current) window.clearTimeout(celebrationTimeoutRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const closedQuotes = quotes.filter(isClosed);
+    const closedIds = new Set(closedQuotes.map((quote) => quote.id));
+
+    if (previousClosedQuoteIdsRef.current === null) {
+      previousClosedQuoteIdsRef.current = closedIds;
+      return;
+    }
+
+    const previousIds = previousClosedQuoteIdsRef.current;
+    const newClosedQuotes = closedQuotes.filter((quote) => !previousIds.has(quote.id));
+    previousClosedQuoteIdsRef.current = closedIds;
+
+    if (newClosedQuotes.length === 0) return;
+
+    const latestSale = [...newClosedQuotes].sort((a, b) => new Date(b.statusUpdatedAt) - new Date(a.statusUpdatedAt))[0];
+    setSaleCelebration({
+      id: `${latestSale.id}-${Date.now()}`,
+      seller: latestSale.seller,
+      value: formatCurrencyValue(getQuoteNumericValue(latestSale)),
+    });
+
+    if (celebrationTimeoutRef.current) window.clearTimeout(celebrationTimeoutRef.current);
+    celebrationTimeoutRef.current = window.setTimeout(() => setSaleCelebration(null), 6500);
+  }, [quotes]);
 
   useEffect(() => {
     if (!rotaxSessions.length) {
@@ -2019,7 +2067,7 @@ export function App() {
     setLayoutMenuOpen(false);
     setMainMenuOpen(false);
     if (mode !== 'complete') setActiveTab('abertas');
-    if (mode === 'vovo') setActiveView('quotes');
+    if (mode === 'vovo' || mode === 'dashboard') setActiveView('quotes');
 
     try {
       localStorage.setItem(LAYOUT_STORAGE_KEY, mode);
@@ -2068,7 +2116,7 @@ export function App() {
                 </button>
                 {mainMenuOpen && (
                   <div className="top-dropdown-menu">
-                    {layoutMode !== 'vovo' && (
+                    {layoutMode !== 'vovo' && layoutMode !== 'dashboard' && (
                       <>
                         <button type="button" onClick={() => navigateFromMenu('quotes')}>
                           <FileText size={16} />
@@ -2094,6 +2142,9 @@ export function App() {
                     </button>
                     <button type="button" onClick={() => changeLayoutMode('vovo')}>
                       Layout vovô
+                    </button>
+                    <button type="button" onClick={() => changeLayoutMode('dashboard')}>
+                      Layout dashboard
                     </button>
                     <button type="button" onClick={() => changeLayoutMode('complete')}>
                       Layout completa
@@ -2168,6 +2219,9 @@ export function App() {
                       <button type="button" onClick={() => changeLayoutMode('vovo')}>
                         Vovô
                       </button>
+                      <button type="button" onClick={() => changeLayoutMode('dashboard')}>
+                        Dashboard
+                      </button>
                       <button type="button" onClick={() => changeLayoutMode('complete')}>
                         Completa
                       </button>
@@ -2224,7 +2278,9 @@ export function App() {
 
       {appError && <div className="app-alert">{appError}</div>}
 
-      {layoutMode === 'vovo' ? (
+      {layoutMode === 'dashboard' ? (
+        <SalesDashboard quotes={quotes} saleCelebration={saleCelebration} />
+      ) : layoutMode === 'vovo' ? (
         <GrandpaWorkspace
           errors={grandpaErrors}
           form={grandpaForm}
@@ -2458,6 +2514,209 @@ function normalizeInfoLink(url) {
   const trimmedUrl = (url || '').trim();
   if (!trimmedUrl) return '';
   return /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
+}
+
+function SalesDashboard({ quotes, saleCelebration }) {
+  const activeQuotes = quotes.filter((quote) => !isArchived(quote));
+  const openQuotes = activeQuotes.filter((quote) => !isClosed(quote));
+  const closedQuotes = activeQuotes.filter(isClosed);
+  const totalQuotes = openQuotes.length + closedQuotes.length;
+  const closedPercent = getPercent(closedQuotes.length, totalQuotes);
+  const openPercent = getPercent(openQuotes.length, totalQuotes);
+  const totalOpenValue = openQuotes.reduce((sum, quote) => sum + getQuoteNumericValue(quote), 0);
+  const totalClosedValue = closedQuotes.reduce((sum, quote) => sum + getQuoteNumericValue(quote), 0);
+  const totalClosedCount = closedQuotes.length;
+  const relevantQuotes = [...activeQuotes]
+    .sort((a, b) => {
+      const starDiff = getQuoteInterestStars(b) - getQuoteInterestStars(a);
+      if (starDiff !== 0) return starDiff;
+      return getQuoteNumericValue(b) - getQuoteNumericValue(a);
+    })
+    .slice(0, 8);
+
+  const sellerStats = sellers.map((seller) => {
+    const sellerQuotes = activeQuotes.filter((quote) => quote.seller === seller);
+    const sellerClosed = sellerQuotes.filter(isClosed);
+    const closedValue = sellerClosed.reduce((sum, quote) => sum + getQuoteNumericValue(quote), 0);
+
+    return {
+      seller,
+      closedCount: sellerClosed.length,
+      closedCountPercent: getPercent(sellerClosed.length, totalClosedCount),
+      closedValue,
+      closedValuePercent: getPercent(closedValue, totalClosedValue),
+      openCount: sellerQuotes.length - sellerClosed.length,
+      totalCount: sellerQuotes.length,
+    };
+  });
+
+  return (
+    <section className="sales-dashboard">
+      {saleCelebration && <FireworksCelebration sale={saleCelebration} />}
+
+      <div className="dashboard-header">
+        <div>
+          <p className="eyebrow">Modo TV</p>
+          <h2>Dashboard comercial</h2>
+        </div>
+        <div className="dashboard-clock">{new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date())}</div>
+      </div>
+
+      <div className="dashboard-grid">
+        <section className="dashboard-card quotes-chart-card">
+          <div className="dashboard-card-title">
+            <h3>Orçamentos por vendedor</h3>
+            <strong>{totalQuotes}</strong>
+          </div>
+          <div className="seller-bars">
+            {sellerStats.map((stat) => {
+              const closedWidth = getPercent(stat.closedCount, stat.totalCount);
+              const openWidth = getPercent(stat.openCount, stat.totalCount);
+              return (
+                <div className="seller-bar-row" key={stat.seller}>
+                  <div className="seller-bar-label">
+                    <b>{stat.seller}</b>
+                    <span>{stat.totalCount} orçamento(s)</span>
+                  </div>
+                  <div className="seller-bar-track">
+                    <span className="seller-bar-open" style={{ width: `${openWidth}%` }} />
+                    <span className="seller-bar-closed" style={{ width: `${closedWidth}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="dashboard-card pie-card">
+          <div className="dashboard-card-title">
+            <h3>Abertos x fechados</h3>
+          </div>
+          <div
+            className="quote-pie"
+            style={{
+              background: `conic-gradient(#22c55e 0 ${closedPercent}%, #facc15 ${closedPercent}% 100%)`,
+            }}
+          >
+            <div>
+              <strong>{closedPercent}%</strong>
+              <span>fechados</span>
+            </div>
+          </div>
+          <div className="pie-legend">
+            <span>
+              <i className="dot yellow" /> Sem finalizar: {openQuotes.length} ({openPercent}%)
+            </span>
+            <span>
+              <i className="dot green" /> Fechados: {closedQuotes.length} ({closedPercent}%)
+            </span>
+          </div>
+        </section>
+
+        <section className="dashboard-card relevant-card">
+          <div className="dashboard-card-title">
+            <h3>Orçamentos relevantes</h3>
+          </div>
+          <div className="relevant-list">
+            {relevantQuotes.map((quote) => {
+              const stars = getQuoteInterestStars(quote);
+              return (
+                <div className="relevant-item" key={quote.id}>
+                  <div>
+                    <b>{quote.quoteNumber}</b>
+                    <span>{quote.clientName}</span>
+                  </div>
+                  <div className="relevant-value">
+                    <span>{formatCurrencyValue(getQuoteNumericValue(quote))}</span>
+                    <span className="relevant-stars">
+                      {Array.from({ length: stars }).map((_, index) => (
+                        <Star key={`${quote.id}-dashboard-star-${index}`} size={15} fill="currentColor" />
+                      ))}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      </div>
+
+      <div className="dashboard-totals">
+        <div className="dashboard-total-card open">
+          <span>Total em aberto</span>
+          <strong>{formatCurrencyValue(totalOpenValue)}</strong>
+        </div>
+        <div className="dashboard-total-card closed">
+          <span>Total fechado</span>
+          <strong>{formatCurrencyValue(totalClosedValue)}</strong>
+        </div>
+      </div>
+
+      <section className="dashboard-gauges">
+        <div className="dashboard-gauge-section">
+          <h3>Participação por pedidos fechados</h3>
+          <div className="gauge-grid">
+            {sellerStats.map((stat) => (
+              <SellerGauge key={`count-${stat.seller}`} label={stat.seller} percent={stat.closedCountPercent} value={`${stat.closedCount} pedido(s)`} />
+            ))}
+          </div>
+        </div>
+        <div className="dashboard-gauge-section">
+          <h3>Participação por valor fechado</h3>
+          <div className="gauge-grid">
+            {sellerStats.map((stat) => (
+              <SellerGauge
+                key={`value-${stat.seller}`}
+                label={stat.seller}
+                percent={stat.closedValuePercent}
+                value={formatCurrencyValue(stat.closedValue)}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function SellerGauge({ label, percent, value }) {
+  const gaugeDegrees = `${Math.min(Math.max(percent, 0), 100) * 1.8}deg`;
+
+  return (
+    <div className="seller-gauge">
+      <div className="seller-gauge-meter" style={{ '--gauge-deg': gaugeDegrees }}>
+        <span className="seller-gauge-needle" />
+      </div>
+      <div className="seller-gauge-info">
+        <b>{label}</b>
+        <strong>{percent}%</strong>
+        <span>{value}</span>
+      </div>
+    </div>
+  );
+}
+
+function FireworksCelebration({ sale }) {
+  return (
+    <div className="fireworks-overlay" aria-live="polite">
+      {Array.from({ length: 18 }).map((_, index) => (
+        <span
+          className="firework-spark"
+          key={`${sale.id}-spark-${index}`}
+          style={{
+            '--spark-left': `${8 + ((index * 17) % 84)}%`,
+            '--spark-top': `${10 + ((index * 29) % 70)}%`,
+            '--spark-delay': `${(index % 6) * 0.18}s`,
+          }}
+        />
+      ))}
+      <div className="sale-celebration-card">
+        <p>Venda fechada</p>
+        <strong>{sale.seller}</strong>
+        <span>{sale.value}</span>
+      </div>
+    </div>
+  );
 }
 
 function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onSaveBlock, setActiveView }) {
