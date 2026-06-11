@@ -2098,14 +2098,16 @@ export function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell${layoutMode === 'dashboard' ? ' dashboard-shell' : ''}`}>
       <section className="topbar">
-        <div>
+        {layoutMode !== 'dashboard' && (
+          <div className="topbar-brand">
           <p className="eyebrow">Dashboard comercial</p>
           <button className="logo-button" type="button" aria-label="Voltar para cotações" onClick={() => setActiveView('quotes')}>
             <img className="app-logo header-logo" src="/followuper-logo.png" alt="FollowUper" />
           </button>
         </div>
+        )}
         <div className="top-stack">
           {layoutMode !== 'complete' ? (
             <div className="session-actions">
@@ -2517,6 +2519,7 @@ function normalizeInfoLink(url) {
 }
 
 function SalesDashboard({ quotes, saleCelebration }) {
+  const [relevantPage, setRelevantPage] = useState(0);
   const activeQuotes = quotes.filter((quote) => !isArchived(quote));
   const openQuotes = activeQuotes.filter((quote) => !isClosed(quote));
   const closedQuotes = activeQuotes.filter(isClosed);
@@ -2526,13 +2529,23 @@ function SalesDashboard({ quotes, saleCelebration }) {
   const totalOpenValue = openQuotes.reduce((sum, quote) => sum + getQuoteNumericValue(quote), 0);
   const totalClosedValue = closedQuotes.reduce((sum, quote) => sum + getQuoteNumericValue(quote), 0);
   const totalClosedCount = closedQuotes.length;
-  const relevantQuotes = [...activeQuotes]
+  const sortedRelevantQuotes = [...activeQuotes]
     .sort((a, b) => {
       const starDiff = getQuoteInterestStars(b) - getQuoteInterestStars(a);
       if (starDiff !== 0) return starDiff;
       return getQuoteNumericValue(b) - getQuoteNumericValue(a);
-    })
-    .slice(0, 8);
+    });
+  const relevantPageSize = 5;
+  const relevantPageCount = Math.max(1, Math.ceil(sortedRelevantQuotes.length / relevantPageSize));
+  const currentRelevantPage = relevantPage % relevantPageCount;
+  const relevantQuotes =
+    sortedRelevantQuotes.length <= relevantPageSize
+      ? sortedRelevantQuotes
+      : Array.from({ length: relevantPageSize }, (_, index) => {
+          const quoteIndex = (currentRelevantPage * relevantPageSize + index) % sortedRelevantQuotes.length;
+          return sortedRelevantQuotes[quoteIndex];
+        });
+  const visibleRelevantQuotes = relevantQuotes.filter(Boolean).slice(0, relevantPageSize);
 
   const sellerStats = sellers.map((seller) => {
     const sellerQuotes = activeQuotes.filter((quote) => quote.seller === seller);
@@ -2550,15 +2563,19 @@ function SalesDashboard({ quotes, saleCelebration }) {
     };
   });
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setRelevantPage((currentPage) => currentPage + 1);
+    }, 12000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
   return (
     <section className="sales-dashboard">
       {saleCelebration && <FireworksCelebration sale={saleCelebration} />}
 
       <div className="dashboard-header">
-        <div>
-          <p className="eyebrow">Modo TV</p>
-          <h2>Dashboard comercial</h2>
-        </div>
         <div className="dashboard-clock">{new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date())}</div>
       </div>
 
@@ -2618,7 +2635,7 @@ function SalesDashboard({ quotes, saleCelebration }) {
             <h3>Orçamentos relevantes</h3>
           </div>
           <div className="relevant-list">
-            {relevantQuotes.map((quote) => {
+            {visibleRelevantQuotes.map((quote) => {
               const stars = getQuoteInterestStars(quote);
               return (
                 <div className="relevant-item" key={quote.id}>
@@ -2699,17 +2716,7 @@ function SellerGauge({ label, percent, value }) {
 function FireworksCelebration({ sale }) {
   return (
     <div className="fireworks-overlay" aria-live="polite">
-      {Array.from({ length: 18 }).map((_, index) => (
-        <span
-          className="firework-spark"
-          key={`${sale.id}-spark-${index}`}
-          style={{
-            '--spark-left': `${8 + ((index * 17) % 84)}%`,
-            '--spark-top': `${10 + ((index * 29) % 70)}%`,
-            '--spark-delay': `${(index % 6) * 0.18}s`,
-          }}
-        />
-      ))}
+      <img className="fireworks-gif" src="/fireworks.gif" alt="" aria-hidden="true" />
       <div className="sale-celebration-card">
         <p>Venda fechada</p>
         <strong>{sale.seller}</strong>

@@ -35,6 +35,10 @@ button {
   padding: 24px;
 }
 
+.dashboard-shell {
+  padding: 12px 18px;
+}
+
 .topbar {
   align-items: center;
   display: flex;
@@ -42,6 +46,16 @@ button {
   justify-content: space-between;
   margin: 0 auto 22px;
   max-width: 1440px;
+}
+
+.dashboard-shell .topbar {
+  justify-content: flex-end;
+  margin-bottom: 8px;
+  max-width: 1600px;
+}
+
+.dashboard-shell .topbar-brand {
+  display: none;
 }
 
 .eyebrow {
@@ -919,7 +933,7 @@ small {
 
 .sales-dashboard {
   display: grid;
-  gap: 18px;
+  gap: 10px;
   margin: 0 auto;
   max-width: 1600px;
 }
@@ -930,27 +944,32 @@ small {
   border: 1px solid #d9e0e7;
   border-radius: 8px;
   display: flex;
-  justify-content: space-between;
-  padding: 18px 20px;
+  justify-content: flex-end;
+  min-height: 46px;
+  padding: 8px 14px;
 }
 
-.dashboard-header h2 {
-  font-size: clamp(1.6rem, 3vw, 2.8rem);
+.dashboard-logo {
+  display: block;
+  height: 48px;
+  max-width: min(310px, 44vw);
+  object-fit: contain;
+  object-position: left center;
 }
 
 .dashboard-clock {
   background: #0f766e;
   border-radius: 8px;
   color: #ffffff;
-  font-size: clamp(1rem, 1.5vw, 1.35rem);
+  font-size: clamp(0.9rem, 1.25vw, 1.1rem);
   font-weight: 900;
-  padding: 10px 14px;
+  padding: 8px 12px;
 }
 
 .dashboard-grid {
   display: grid;
-  gap: 18px;
-  grid-template-columns: 1.15fr 0.85fr 1.1fr;
+  gap: 10px;
+  grid-template-columns: 1.16fr 0.72fr 1.12fr;
 }
 
 .dashboard-card,
@@ -963,15 +982,15 @@ small {
 }
 
 .dashboard-card {
-  min-height: 330px;
-  padding: 18px;
+  min-height: 250px;
+  padding: 12px;
 }
 
 .dashboard-card-title {
   align-items: center;
   display: flex;
   justify-content: space-between;
-  margin-bottom: 18px;
+  margin-bottom: 10px;
 }
 
 .dashboard-card-title h3,
@@ -983,12 +1002,12 @@ small {
 
 .dashboard-card-title strong {
   color: #0f766e;
-  font-size: 1.7rem;
+  font-size: 1.35rem;
 }
 
 .seller-bars {
   display: grid;
-  gap: 18px;
+  gap: 12px;
 }
 
 .seller-bar-row {
@@ -1004,11 +1023,12 @@ small {
 
 .seller-bar-label b {
   color: #17212b;
-  font-size: 1.05rem;
+  font-size: 0.95rem;
 }
 
 .seller-bar-label span {
   color: #657587;
+  font-size: 0.86rem;
   font-weight: 800;
 }
 
@@ -1016,7 +1036,7 @@ small {
   background: #eef2f6;
   border-radius: 999px;
   display: flex;
-  height: 22px;
+  height: 18px;
   overflow: hidden;
 }
 
@@ -1038,12 +1058,12 @@ small {
   align-items: center;
   border-radius: 50%;
   display: flex;
-  height: min(250px, 24vw);
+  height: min(174px, 18vw);
   justify-content: center;
-  min-height: 210px;
-  min-width: 210px;
+  min-height: 150px;
+  min-width: 150px;
   position: relative;
-  width: min(250px, 24vw);
+  width: min(174px, 18vw);
 }
 
 .quote-pie::after {
@@ -1064,25 +1084,27 @@ small {
 
 .quote-pie strong {
   color: #0f766e;
-  font-size: 2.1rem;
+  font-size: 1.55rem;
   line-height: 1;
 }
 
 .quote-pie span {
   color: #657587;
+  font-size: 0.82rem;
   font-weight: 900;
 }
 
 .pie-legend {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   justify-self: stretch;
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .pie-legend span {
   align-items: center;
   display: flex;
+  font-size: 0.86rem;
   font-weight: 900;
   gap: 8px;
 }
@@ -1093,7 +1115,11 @@ small {
 
 .relevant-list {
   display: grid;
-  gap: 10px;
+  gap: 7px;
+}
+
+.relevant-list .relevant-item:nth-child(n + 6) {
+  display: none;
 }
 
 .relevant-item {
@@ -1104,7 +1130,7 @@ small {
   display: grid;
   gap: 10px;
   grid-template-columns: minmax(0, 1fr) auto;
-  padding: 11px 12px;
+  padding: 8px 10px;
 }
 
 .relevant-item b,
@@ -1116,7 +1142,7 @@ small {
 .relevant-item span {
   color: #657587;
   display: block;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   font-weight: 800;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1137,24 +1163,25 @@ small {
 
 .dashboard-totals {
   display: grid;
-  gap: 18px;
+  gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .dashboard-total-card {
   display: grid;
-  gap: 6px;
-  padding: 20px;
+  gap: 4px;
+  padding: 12px 16px;
 }
 
 .dashboard-total-card span {
   color: #657587;
+  font-size: 0.82rem;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .dashboard-total-card strong {
-  font-size: clamp(1.8rem, 4vw, 3.6rem);
+  font-size: clamp(1.35rem, 3vw, 2.45rem);
   line-height: 1;
 }
 
@@ -1168,26 +1195,26 @@ small {
 
 .dashboard-gauges {
   display: grid;
-  gap: 18px;
+  gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .dashboard-gauge-section {
   display: grid;
-  gap: 14px;
-  padding: 18px;
+  gap: 9px;
+  padding: 12px;
 }
 
 .gauge-grid {
   display: grid;
-  gap: 14px;
+  gap: 9px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .seller-gauge {
   align-items: center;
   display: grid;
-  gap: 8px;
+  gap: 5px;
   justify-items: center;
   min-width: 0;
 }
@@ -1195,22 +1222,22 @@ small {
 .seller-gauge-meter {
   background:
     conic-gradient(from 270deg at 50% 100%, #0f766e 0 var(--gauge-deg), #dbe3eb var(--gauge-deg) 180deg, transparent 180deg 360deg);
-  border-radius: 120px 120px 0 0;
-  height: 74px;
+  border-radius: 96px 96px 0 0;
+  height: 56px;
   overflow: hidden;
   position: relative;
-  width: 150px;
+  width: 118px;
 }
 
 .seller-gauge-meter::after {
   background: #ffffff;
-  border-radius: 95px 95px 0 0;
+  border-radius: 74px 74px 0 0;
   bottom: 0;
   content: "";
-  height: 48px;
-  left: 24px;
+  height: 36px;
+  left: 18px;
   position: absolute;
-  width: 102px;
+  width: 82px;
 }
 
 .seller-gauge-needle {
@@ -1222,7 +1249,7 @@ small {
   position: absolute;
   transform: rotate(calc(-90deg + var(--gauge-deg)));
   transform-origin: left center;
-  width: 58px;
+  width: 46px;
   z-index: 2;
 }
 
@@ -1238,7 +1265,7 @@ small {
 
 .seller-gauge-info strong {
   color: #0f766e;
-  font-size: 1.55rem;
+  font-size: 1.22rem;
 }
 
 .seller-gauge-info span {
@@ -1250,7 +1277,7 @@ small {
 
 .fireworks-overlay {
   align-items: center;
-  background: rgba(15, 23, 42, 0.34);
+  background: #000000;
   display: flex;
   inset: 0;
   justify-content: center;
@@ -1258,6 +1285,16 @@ small {
   pointer-events: none;
   position: fixed;
   z-index: 30;
+}
+
+.fireworks-gif {
+  height: 100%;
+  inset: 0;
+  object-fit: cover;
+  opacity: 1;
+  position: absolute;
+  width: 100%;
+  z-index: 1;
 }
 
 .firework-spark {
