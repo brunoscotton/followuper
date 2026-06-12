@@ -1287,19 +1287,32 @@ small {
   left: 18px;
   position: absolute;
   width: 82px;
+  z-index: 1;
 }
 
 .seller-gauge-needle {
   background: #17212b;
   border-radius: 999px;
   bottom: 0;
-  height: 4px;
+  height: 48px;
   left: 50%;
   position: absolute;
-  transform: rotate(calc(-90deg + var(--needle-deg)));
-  transform-origin: left center;
-  width: 42px;
+  transform: translateX(-50%) rotate(calc(-90deg + var(--needle-deg)));
+  transform-origin: bottom center;
+  width: 4px;
   z-index: 2;
+}
+
+.seller-gauge-needle::after {
+  background: #17212b;
+  border-radius: 50%;
+  bottom: -3px;
+  content: "";
+  height: 8px;
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+  width: 8px;
 }
 
 .seller-gauge-info {
