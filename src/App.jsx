@@ -2520,6 +2520,7 @@ function normalizeInfoLink(url) {
 
 function SalesDashboard({ quotes, saleCelebration }) {
   const [relevantPage, setRelevantPage] = useState(0);
+  const [dollarQuote, setDollarQuote] = useState({ error: '', updatedAt: '', value: null });
   const activeQuotes = quotes.filter((quote) => !isArchived(quote));
   const openQuotes = activeQuotes.filter((quote) => !isClosed(quote));
   const closedQuotes = activeQuotes.filter(isClosed);
@@ -2571,6 +2572,44 @@ function SalesDashboard({ quotes, saleCelebration }) {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    async function loadDollarQuote() {
+      try {
+        const response = await fetch('https://economia.awesomeapi.com.br/json/last/USD-BRL');
+        if (!response.ok) throw new Error('cotacao_indisponivel');
+        const data = await response.json();
+        const quote = data?.USDBRL;
+        const value = Number.parseFloat(quote?.bid);
+        if (!Number.isFinite(value)) throw new Error('cotacao_invalida');
+
+        if (active) {
+          setDollarQuote({
+            error: '',
+            updatedAt: quote?.create_date || new Date().toISOString(),
+            value,
+          });
+        }
+      } catch {
+        if (active) {
+          setDollarQuote((currentQuote) => ({
+            ...currentQuote,
+            error: currentQuote.value ? 'Atualizacao indisponivel' : 'Cotacao indisponivel',
+          }));
+        }
+      }
+    }
+
+    loadDollarQuote();
+    const timer = window.setInterval(loadDollarQuote, 5 * 60 * 1000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
   return (
     <section className="sales-dashboard">
       {saleCelebration && <FireworksCelebration sale={saleCelebration} />}
@@ -2602,6 +2641,18 @@ function SalesDashboard({ quotes, saleCelebration }) {
                 </div>
               );
             })}
+          </div>
+          <div className="dollar-quote-card">
+            <span>Dolar comercial</span>
+            <strong>{dollarQuote.value ? formatCurrencyValue(dollarQuote.value) : '--'}</strong>
+            <small>
+              {dollarQuote.error ||
+                (dollarQuote.updatedAt
+                  ? `Atualizado ${new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(
+                      new Date(dollarQuote.updatedAt.replace(' ', 'T')),
+                    )}`
+                  : 'Atualiza a cada 5 min')}
+            </small>
           </div>
         </section>
 

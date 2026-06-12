@@ -1048,6 +1048,38 @@ small {
   background: #22c55e;
 }
 
+.dollar-quote-card {
+  align-items: center;
+  background: #f0fdfa;
+  border: 1px solid #99f6e4;
+  border-radius: 8px;
+  display: grid;
+  gap: 2px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-top: 2px;
+  padding: 9px 11px;
+}
+
+.dollar-quote-card span {
+  color: #0f766e;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.dollar-quote-card strong {
+  color: #0f172a;
+  font-size: 1.12rem;
+  line-height: 1;
+}
+
+.dollar-quote-card small {
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 800;
+  grid-column: 1 / -1;
+}
+
 .pie-card {
   align-items: center;
   display: grid;
