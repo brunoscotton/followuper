@@ -1512,29 +1512,48 @@ export function App() {
         const existingQuote = existingQuotesByNumber.get(row.quoteNumber);
         if (!existingQuote) continue;
 
+        const closedAt = new Date().toISOString();
         const formattedTotalValue = formatUploadCurrency(row.totalValue);
+        const isClosedUpload = Boolean(row.orderNumber);
         const changes = {
           quoteValue: formattedTotalValue,
           isInterest: existingQuote.isInterest || row.totalValue >= 5000,
         };
 
-        if (existingQuote.closeDetails) {
+        if (isClosedUpload) {
+          changes.status = 'fechada';
+          changes.statusUpdatedAt = existingQuote.status === 'fechada' ? existingQuote.statusUpdatedAt || closedAt : closedAt;
+          changes.closeDetails = {
+            orderNumber: row.orderNumber,
+            agreedPaymentTerms: existingQuote.closeDetails?.agreedPaymentTerms || '',
+            carrier: existingQuote.closeDetails?.carrier || existingQuote.closeDetails?.freight || '',
+            totalValue: existingQuote.closeDetails?.totalValue || formattedTotalValue,
+            notes: existingQuote.closeDetails?.notes || '',
+            closedAt: existingQuote.closeDetails?.closedAt || closedAt,
+          };
+        } else if (existingQuote.closeDetails) {
           changes.closeDetails = {
             ...existingQuote.closeDetails,
             totalValue: existingQuote.closeDetails.totalValue || formattedTotalValue,
           };
         }
 
-        if (
-          existingQuote.quoteValue === changes.quoteValue &&
-          existingQuote.isInterest === changes.isInterest &&
-          existingQuote.closeDetails?.totalValue === changes.closeDetails?.totalValue
-        ) {
+        const hasChanges = Object.entries(changes).some(([key, value]) => {
+          if (key === 'closeDetails') return JSON.stringify(existingQuote.closeDetails || null) !== JSON.stringify(value || null);
+          return existingQuote[key] !== value;
+        });
+
+        if (!hasChanges) {
           continue;
         }
 
         const savedQuote = await updateQuote(existingQuote.id, changes);
         updatedQuotes.push(savedQuote);
+
+        if (isClosedUpload && savedQuote.closeDetails) {
+          if (existingQuote.status !== 'fechada') closedCount += 1;
+          await ensureTrackingEntry(savedQuote, savedQuote.closeDetails);
+        }
       }
 
       for (const row of newRows) {
