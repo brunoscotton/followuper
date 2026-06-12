@@ -296,6 +296,19 @@ function normalizeUploadValue(value) {
   return String(value).trim();
 }
 
+function normalizeUploadText(value) {
+  return normalizeUploadValue(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+function isIgnoredUploadClientName(value) {
+  return normalizeUploadText(value) === 'CRUZEIRO DO SUL AVIACAO';
+}
+
 function normalizeUploadQuoteNumber(value) {
   return normalizeUploadValue(value).replace(/\.0$/, '').replace(/-\d{1,3}$/, '');
 }
@@ -381,6 +394,7 @@ async function parseQuotesUploadFile(file) {
   for (const row of rows.slice(headerIndex + 1)) {
     const quoteNumber = normalizeUploadQuoteNumber(row[columnIndex.quoteNumber]);
     if (!quoteNumber) continue;
+    if (isIgnoredUploadClientName(row[columnIndex.clientName])) continue;
 
     const current = grouped.get(quoteNumber) || {
       quoteNumber,
