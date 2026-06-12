@@ -899,6 +899,44 @@ export function App() {
     }
   }
 
+  async function reorderInfoBlocks(draggedId, targetId, placement = 'before') {
+    if (!draggedId || !targetId || draggedId === targetId) return;
+
+    const previousBlocks = infoBlocks;
+    const sortedBlocks = sortInfoBlocks(infoBlocks);
+    const draggedBlock = sortedBlocks.find((block) => block.id === draggedId);
+    if (!draggedBlock) return;
+
+    const blocksWithoutDragged = sortedBlocks.filter((block) => block.id !== draggedId);
+    const targetIndex = blocksWithoutDragged.findIndex((block) => block.id === targetId);
+    if (targetIndex < 0) return;
+
+    const insertIndex = placement === 'after' ? targetIndex + 1 : targetIndex;
+    const reorderedBlocks = [
+      ...blocksWithoutDragged.slice(0, insertIndex),
+      draggedBlock,
+      ...blocksWithoutDragged.slice(insertIndex),
+    ].map((block, index) => ({ ...block, position: index + 1 }));
+    const changedBlocks = reorderedBlocks.filter((block) => {
+      const previousBlock = sortedBlocks.find((item) => item.id === block.id);
+      return previousBlock?.position !== block.position;
+    });
+
+    if (!changedBlocks.length) return;
+
+    setInfoBlocks(reorderedBlocks);
+
+    try {
+      const savedBlocks = await Promise.all(changedBlocks.map((block) => updateInfoBlock(block.id, { position: block.position })));
+      const savedById = new Map(savedBlocks.filter(Boolean).map((block) => [block.id, block]));
+      setInfoBlocks((current) => sortInfoBlocks(current.map((block) => savedById.get(block.id) || block)));
+      setAppError('');
+    } catch (error) {
+      setInfoBlocks(previousBlocks);
+      setAppError(error.message || 'Nao foi possivel reordenar os blocos.');
+    }
+  }
+
   function getNextRotaxBlockPosition(category) {
     const categoryBlocks = rotaxBlocks.filter((block) => block.category === category);
     return categoryBlocks.length ? Math.max(...categoryBlocks.map((block) => block.position || 0)) + 1 : 1;
@@ -2369,6 +2407,7 @@ export function App() {
           onAddBlock={addInfoBlock}
           onChangeBlock={changeInfoBlock}
           onRemoveBlock={removeInfoBlock}
+          onReorderBlocks={reorderInfoBlocks}
           onSaveBlock={saveInfoBlock}
           setActiveView={setActiveView}
         />
@@ -2777,7 +2816,9 @@ function FireworksCelebration({ sale }) {
   );
 }
 
-function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onSaveBlock, setActiveView }) {
+function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onReorderBlocks, onSaveBlock, setActiveView }) {
+  const [draggedBlockId, setDraggedBlockId] = useState(null);
+  const [dragOverBlockId, setDragOverBlockId] = useState(null);
   const [menuTarget, setMenuTarget] = useState(null);
   const [pendingImageTarget, setPendingImageTarget] = useState(null);
   const pendingImageTargetRef = useRef(null);
@@ -2812,6 +2853,47 @@ function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onSaveBlo
     setPendingImageTarget(null);
     pendingImageTargetRef.current = null;
     event.target.value = '';
+  }
+
+  function isDragIgnored(target) {
+    return Boolean(target.closest('input, textarea, select, button, a, label, [contenteditable="true"]'));
+  }
+
+  function handleBlockDragStart(event, blockId) {
+    if (isDragIgnored(event.target)) {
+      event.preventDefault();
+      return;
+    }
+
+    setDraggedBlockId(blockId);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', blockId);
+  }
+
+  function handleBlockDragOver(event, blockId) {
+    const currentDraggedId = draggedBlockId || event.dataTransfer.getData('text/plain');
+    if (!currentDraggedId || currentDraggedId === blockId) return;
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDragOverBlockId(blockId);
+  }
+
+  function handleBlockDrop(event, blockId) {
+    event.preventDefault();
+    const currentDraggedId = draggedBlockId || event.dataTransfer.getData('text/plain');
+    setDraggedBlockId(null);
+    setDragOverBlockId(null);
+    if (!currentDraggedId || currentDraggedId === blockId) return;
+
+    const blockRect = event.currentTarget.getBoundingClientRect();
+    const placement = event.clientY > blockRect.top + blockRect.height / 2 ? 'after' : 'before';
+    onReorderBlocks(currentDraggedId, blockId, placement);
+  }
+
+  function handleBlockDragEnd() {
+    setDraggedBlockId(null);
+    setDragOverBlockId(null);
   }
 
   function renderAddControl(targetId, isInline = false) {
@@ -2870,7 +2952,18 @@ function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onSaveBlo
           <div className="info-block-list">
             {blocks.map((block) => (
               <React.Fragment key={block.id}>
-                <InfoBlock block={block} onChangeBlock={onChangeBlock} onRemoveBlock={onRemoveBlock} onSaveBlock={onSaveBlock} />
+                <InfoBlock
+                  block={block}
+                  isDragTarget={dragOverBlockId === block.id}
+                  isDragging={draggedBlockId === block.id}
+                  onChangeBlock={onChangeBlock}
+                  onDragEnd={handleBlockDragEnd}
+                  onDragOver={handleBlockDragOver}
+                  onDragStart={handleBlockDragStart}
+                  onDrop={handleBlockDrop}
+                  onRemoveBlock={onRemoveBlock}
+                  onSaveBlock={onSaveBlock}
+                />
                 {renderAddControl(block.id, true)}
               </React.Fragment>
             ))}
@@ -2881,9 +2974,28 @@ function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onSaveBlo
   );
 }
 
-function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
+function InfoBlock({
+  block,
+  isDragging = false,
+  isDragTarget = false,
+  onChangeBlock,
+  onDragEnd,
+  onDragOver,
+  onDragStart,
+  onDrop,
+  onRemoveBlock,
+  onSaveBlock,
+}) {
   const blockType = infoBlockTypes.find((item) => item.value === block.type) || infoBlockTypes[0];
   const Icon = blockType.icon;
+  const dragClassName = `${isDragging ? ' dragging' : ''}${isDragTarget ? ' drag-over' : ''}`;
+  const dragProps = {
+    draggable: true,
+    onDragEnd,
+    onDragOver: (event) => onDragOver(event, block.id),
+    onDragStart: (event) => onDragStart(event, block.id),
+    onDrop: (event) => onDrop(event, block.id),
+  };
   const toggleContent = block.type === 'toggle' ? splitToggleContent(block.content) : null;
   const imageContent = block.type === 'image' ? safeParseInfoContent(block.content, { src: '', name: '', caption: '' }) : null;
   const linkContent = block.type === 'link' ? safeParseInfoContent(block.content, { url: '', label: '' }) : null;
@@ -2945,7 +3057,7 @@ function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
 
   if (block.type === 'divider') {
     return (
-      <div className="info-block info-divider-block">
+      <div className={`info-block info-divider-block${dragClassName}`} {...dragProps}>
         <div className="info-block-handle">
           <Minus size={16} />
         </div>
@@ -2959,7 +3071,7 @@ function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
 
   if (block.type === 'toggle') {
     return (
-      <div className="info-block">
+      <div className={`info-block${dragClassName}`} {...dragProps}>
         <button
           className={block.isOpen ? 'toggle-control open' : 'toggle-control'}
           type="button"
@@ -3000,7 +3112,7 @@ function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
 
   if (block.type === 'image') {
     return (
-      <div className="info-block info-image-block">
+      <div className={`info-block info-image-block${dragClassName}`} {...dragProps}>
         <div className="info-block-handle">
           <ImageIcon size={16} />
         </div>
@@ -3036,7 +3148,7 @@ function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
     const href = normalizeInfoLink(linkContent.url);
 
     return (
-      <div className="info-block info-link-block">
+      <div className={`info-block info-link-block${dragClassName}`} {...dragProps}>
         <div className="info-block-handle">
           <LinkIcon size={16} />
         </div>
@@ -3070,7 +3182,7 @@ function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
 
   if (block.type === 'table') {
     return (
-      <div className="info-block info-table-block">
+      <div className={`info-block info-table-block${dragClassName}`} {...dragProps}>
         <div className="info-block-handle">
           <Table2 size={16} />
         </div>
@@ -3127,7 +3239,7 @@ function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
 
   if (block.type === 'sidebar') {
     return (
-      <div className="info-block info-sidebar-block">
+      <div className={`info-block info-sidebar-block${dragClassName}`} {...dragProps}>
         <div className="info-block-handle">
           <PanelLeft size={16} />
         </div>
@@ -3156,7 +3268,7 @@ function InfoBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
   }
 
   return (
-    <div className={`info-block ${block.type === 'title' ? 'title-block' : ''} ${block.type === 'bullet' ? 'bullet-block' : ''}`}>
+    <div className={`info-block ${block.type === 'title' ? 'title-block' : ''} ${block.type === 'bullet' ? 'bullet-block' : ''}${dragClassName}`} {...dragProps}>
       <div className="info-block-handle">
         <Icon size={16} />
       </div>
@@ -3924,6 +4036,12 @@ function RotaxTrainingWorkspace({
 }
 
 function RotaxToggleBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) {
+  function openForEditing() {
+    if (block.isOpen) return;
+    onChangeBlock(block.id, { isOpen: true });
+    onSaveBlock(block.id, { isOpen: true });
+  }
+
   return (
     <div className="rotax-toggle-block">
       <button
@@ -3957,9 +4075,16 @@ function RotaxToggleBlock({ block, onChangeBlock, onRemoveBlock, onSaveBlock }) 
           />
         )}
       </div>
-      <button className="info-delete-button" type="button" aria-label="Remover bloco" onClick={() => onRemoveBlock(block.id)}>
-        <Trash2 size={15} />
-      </button>
+      <div className="rotax-block-actions">
+        <button className="secondary-button compact" type="button" onClick={openForEditing}>
+          <Pencil size={15} />
+          Editar
+        </button>
+        <button className="rotax-delete-button" type="button" onClick={() => onRemoveBlock(block.id)}>
+          <Trash2 size={15} />
+          Excluir
+        </button>
+      </div>
     </div>
   );
 }
