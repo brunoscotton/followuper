@@ -1602,11 +1602,13 @@ export function App() {
 
   function openCloseModal(quote) {
     setCloseModal({ quoteId: quote.id, quoteNumber: quote.quoteNumber, clientName: quote.clientName });
+    const totalValue = quote.closeDetails?.totalValue || quote.quoteValue || '';
     setCloseDetails({
       ...initialCloseDetails,
       ...quote.closeDetails,
       carrier: quote.closeDetails?.carrier || quote.closeDetails?.freight || '',
       phone: quote.phone || '',
+      totalValue,
     });
     setCloseErrors({});
   }
