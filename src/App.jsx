@@ -306,7 +306,7 @@ function normalizeUploadText(value) {
 }
 
 function isIgnoredUploadClientName(value) {
-  return normalizeUploadText(value) === 'CRUZEIRO DO SUL AVIACAO';
+  return normalizeUploadText(value).startsWith('CRUZEIRO DO SUL AVIACAO');
 }
 
 function normalizeUploadQuoteNumber(value) {
@@ -1512,6 +1512,7 @@ export function App() {
       const existingQuoteNumbers = new Set(existingQuotesByNumber.keys());
       const existingRows = importedRows.filter((row) => existingQuoteNumbers.has(row.quoteNumber));
       const newRows = importedRows.filter((row) => !existingQuoteNumbers.has(row.quoteNumber));
+      const importedQuoteNumbers = new Set(importedRows.map((row) => row.quoteNumber));
 
       if (newRows.length === 0 && existingRows.length === 0) {
         setAppError('Upload concluído: todos os orçamentos da planilha já existem no FollowUper.');
@@ -1521,6 +1522,7 @@ export function App() {
       const savedQuotes = [];
       const updatedQuotes = [];
       let closedCount = 0;
+      let archivedCount = 0;
 
       for (const row of existingRows) {
         const existingQuote = existingQuotesByNumber.get(row.quoteNumber);
@@ -1530,6 +1532,7 @@ export function App() {
         const formattedTotalValue = formatUploadCurrency(row.totalValue);
         const isClosedUpload = Boolean(row.orderNumber);
         const changes = {
+          archivedAt: '',
           quoteValue: formattedTotalValue,
           isInterest: existingQuote.isInterest || row.totalValue >= 5000,
         };
@@ -1541,15 +1544,14 @@ export function App() {
             orderNumber: row.orderNumber,
             agreedPaymentTerms: existingQuote.closeDetails?.agreedPaymentTerms || '',
             carrier: existingQuote.closeDetails?.carrier || existingQuote.closeDetails?.freight || '',
-            totalValue: existingQuote.closeDetails?.totalValue || formattedTotalValue,
+            totalValue: formattedTotalValue,
             notes: existingQuote.closeDetails?.notes || '',
             closedAt: existingQuote.closeDetails?.closedAt || closedAt,
           };
-        } else if (existingQuote.closeDetails) {
-          changes.closeDetails = {
-            ...existingQuote.closeDetails,
-            totalValue: existingQuote.closeDetails.totalValue || formattedTotalValue,
-          };
+        } else if (existingQuote.status === 'fechada' || existingQuote.closeDetails) {
+          changes.status = 'sem-resposta';
+          changes.statusUpdatedAt = closedAt;
+          changes.closeDetails = undefined;
         }
 
         const hasChanges = Object.entries(changes).some(([key, value]) => {
@@ -1568,6 +1570,16 @@ export function App() {
           if (existingQuote.status !== 'fechada') closedCount += 1;
           await ensureTrackingEntry(savedQuote, savedQuote.closeDetails);
         }
+      }
+
+      const staleQuotes = quotes.filter(
+        (quote) => !isArchived(quote) && !importedQuoteNumbers.has(normalizeUploadQuoteNumber(quote.quoteNumber)),
+      );
+
+      for (const quote of staleQuotes) {
+        const savedQuote = await updateQuote(quote.id, { archivedAt: new Date().toISOString() });
+        updatedQuotes.push(savedQuote);
+        archivedCount += 1;
       }
 
       for (const row of newRows) {
@@ -1625,7 +1637,7 @@ export function App() {
       setActiveView('quotes');
       setActiveTab('abertas');
       setAppError(
-        `Upload concluído: ${savedQuotes.length} orçamento(s) novo(s), ${updatedQuotes.length} atualizado(s), ${closedCount} finalizado(s), ${existingRows.length - updatedQuotes.length} ignorado(s).`,
+        `Upload concluído: ${savedQuotes.length} orçamento(s) novo(s), ${Math.max(updatedQuotes.length - archivedCount, 0)} atualizado(s), ${closedCount} finalizado(s), ${archivedCount} removido(s) do dashboard ativo.`,
       );
     } catch (error) {
       setAppError(error.message || 'Não foi possível importar a planilha.');
