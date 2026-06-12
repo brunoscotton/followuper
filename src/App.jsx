@@ -348,6 +348,7 @@ function getSellerFromUploadCode(value) {
   const code = normalizeUploadValue(value).replace(/\D/g, '').padStart(6, '0');
   if (code === '000022') return 'Bruno';
   if (code === '000036') return 'Elton';
+  if (code === '000063') return 'Stephanie';
   return '';
 }
 
