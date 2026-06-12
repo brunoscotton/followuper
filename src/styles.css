@@ -1296,9 +1296,9 @@ small {
   height: 4px;
   left: 50%;
   position: absolute;
-  transform: rotate(calc(-90deg + var(--gauge-deg)));
+  transform: rotate(calc(-90deg + var(--needle-deg)));
   transform-origin: left center;
-  width: 46px;
+  width: 42px;
   z-index: 2;
 }
 

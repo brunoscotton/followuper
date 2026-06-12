@@ -2809,11 +2809,13 @@ function SalesDashboard({ quotes, saleCelebration }) {
 }
 
 function SellerGauge({ label, percent, value }) {
-  const gaugeDegrees = `${Math.min(Math.max(percent, 0), 100) * 1.8}deg`;
+  const normalizedPercent = Math.min(Math.max(percent, 0), 100);
+  const gaugeDegrees = `${normalizedPercent * 1.8}deg`;
+  const needleDegrees = `${Math.min(Math.max(normalizedPercent * 1.8, 4), 176)}deg`;
 
   return (
     <div className="seller-gauge">
-      <div className="seller-gauge-meter" style={{ '--gauge-deg': gaugeDegrees }}>
+      <div className="seller-gauge-meter" style={{ '--gauge-deg': gaugeDegrees, '--needle-deg': needleDegrees }}>
         <span className="seller-gauge-needle" />
       </div>
       <div className="seller-gauge-info">
