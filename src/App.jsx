@@ -1531,11 +1531,14 @@ export function App() {
         const closedAt = new Date().toISOString();
         const formattedTotalValue = formatUploadCurrency(row.totalValue);
         const isClosedUpload = Boolean(row.orderNumber);
+        const hasUploadClientName = row.clientName && !isFinalClientName(row.clientName);
+        const shouldUpdateClientName = hasUploadClientName && (isFinalClientName(existingQuote.clientName) || existingQuote.clientName !== row.clientName);
         const changes = {
           archivedAt: '',
           quoteValue: formattedTotalValue,
           isInterest: existingQuote.isInterest || row.totalValue >= 5000,
         };
+        if (shouldUpdateClientName) changes.clientName = row.clientName;
 
         if (isClosedUpload) {
           changes.status = 'fechada';
