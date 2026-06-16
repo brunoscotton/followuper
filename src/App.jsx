@@ -90,6 +90,7 @@ import {
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 const LAYOUT_STORAGE_KEY = 'followuper.layoutMode.v1';
+const AUTO_ARCHIVE_INACTIVE_DAYS = 15;
 
 const statuses = [
   { value: 'sem-resposta', label: 'Sem resposta', color: 'yellow' },
@@ -501,6 +502,21 @@ function isStatusUnchanged(quote, now) {
   return !isClosed(quote) && quote.statusUpdatedAt === quote.createdAt && oneDayAfterCreation <= now;
 }
 
+function getQuoteLastActivityAt(quote) {
+  const timestamps = [quote.createdAt, quote.statusUpdatedAt, quote.followUpStartedAt]
+    .map((value) => new Date(value || 0).getTime())
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  return timestamps.length ? new Date(Math.max(...timestamps)) : new Date(quote.createdAt);
+}
+
+function shouldAutoArchiveQuote(quote, now) {
+  if (isClosed(quote) || isArchived(quote)) return false;
+
+  const archiveAfter = addDays(getQuoteLastActivityAt(quote), AUTO_ARCHIVE_INACTIVE_DAYS);
+  return archiveAfter <= now;
+}
+
 function sortQuotes(quotes) {
   return [...quotes].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
@@ -587,6 +603,7 @@ export function App() {
   const [saleCelebration, setSaleCelebration] = useState(null);
   const uploadInputRef = useRef(null);
   const previousClosedQuoteIdsRef = useRef(null);
+  const autoArchiveRunningRef = useRef(false);
   const celebrationTimeoutRef = useRef(null);
 
   useEffect(() => {
@@ -747,6 +764,36 @@ export function App() {
     if (celebrationTimeoutRef.current) window.clearTimeout(celebrationTimeoutRef.current);
     celebrationTimeoutRef.current = window.setTimeout(() => setSaleCelebration(null), 6500);
   }, [quotes]);
+
+  useEffect(() => {
+    if (isLoading || autoArchiveRunningRef.current) return;
+
+    const quotesToArchive = quotes.filter((quote) => shouldAutoArchiveQuote(quote, now));
+    if (quotesToArchive.length === 0) return;
+
+    autoArchiveRunningRef.current = true;
+    const archivedAt = new Date().toISOString();
+    const previousQuotes = quotes;
+    const quoteIds = new Set(quotesToArchive.map((quote) => quote.id));
+
+    setQuotes((current) =>
+      current.map((quote) => (quoteIds.has(quote.id) ? { ...quote, archivedAt } : quote)),
+    );
+
+    Promise.all(quotesToArchive.map((quote) => updateQuote(quote.id, { archivedAt })))
+      .then((savedQuotes) => {
+        const savedById = new Map(savedQuotes.filter(Boolean).map((quote) => [quote.id, quote]));
+        setQuotes((current) => current.map((quote) => savedById.get(quote.id) || quote));
+        setAppError('');
+      })
+      .catch((error) => {
+        setQuotes(previousQuotes);
+        setAppError(error.message || 'Nao foi possivel arquivar automaticamente cotacoes antigas.');
+      })
+      .finally(() => {
+        autoArchiveRunningRef.current = false;
+      });
+  }, [isLoading, now, quotes]);
 
   useEffect(() => {
     if (!rotaxSessions.length) {
