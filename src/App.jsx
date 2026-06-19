@@ -4005,6 +4005,7 @@ function QuotesWorkspace({
   const tableRef = useRef(null);
   const topScrollRef = useRef(null);
   const [tableScrollWidth, setTableScrollWidth] = useState(0);
+  const [isOpportunityPanelCollapsed, setIsOpportunityPanelCollapsed] = useState(false);
 
   useEffect(() => {
     function updateScrollWidth() {
@@ -4273,27 +4274,38 @@ function QuotesWorkspace({
         )}
 
         {topOpportunities.length > 0 && (
-          <div className="opportunity-panel">
+          <div className={isOpportunityPanelCollapsed ? 'opportunity-panel collapsed' : 'opportunity-panel'}>
             <div className="opportunity-header">
               <strong>Top 10 oportunidades para atacar hoje</strong>
+              <button
+                className="opportunity-collapse-button"
+                type="button"
+                aria-expanded={!isOpportunityPanelCollapsed}
+                onClick={() => setIsOpportunityPanelCollapsed((current) => !current)}
+              >
+                <ChevronRight size={16} />
+                {isOpportunityPanelCollapsed ? `Mostrar (${topOpportunities.length})` : 'Minimizar'}
+              </button>
             </div>
-            <div className="opportunity-list">
-              {topOpportunities.map(({ quote, score }) => (
-                <button
-                  className="opportunity-item"
-                  key={quote.id}
-                  type="button"
-                  onClick={() => onToggleQuoteDetails(quote.id)}
-                >
-                  <span>
-                    <b>{quote.quoteNumber}</b>
-                    {quote.clientName}
-                  </span>
-                  <strong>{formatCurrencyValue(getQuoteNumericValue(quote))}</strong>
-                  <em>{score} pts</em>
-                </button>
-              ))}
-            </div>
+            {!isOpportunityPanelCollapsed && (
+              <div className="opportunity-list">
+                {topOpportunities.map(({ quote, score }) => (
+                  <button
+                    className="opportunity-item"
+                    key={quote.id}
+                    type="button"
+                    onClick={() => onToggleQuoteDetails(quote.id)}
+                  >
+                    <span>
+                      <b>{quote.quoteNumber}</b>
+                      {quote.clientName}
+                    </span>
+                    <strong>{formatCurrencyValue(getQuoteNumericValue(quote))}</strong>
+                    <em>{score} pts</em>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
