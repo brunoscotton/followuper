@@ -9,6 +9,8 @@ create table if not exists public.quotes (
   seller text not null check (seller in ('Elton', 'Bruno', 'Stephanie')),
   notes text,
   is_interest boolean not null default false,
+  loss_reason jsonb,
+  history jsonb not null default '[]'::jsonb,
   follow_up_days integer not null default 1 check (follow_up_days >= 1),
   follow_up_amount numeric not null default 1 check (follow_up_amount > 0),
   follow_up_unit text not null default 'days' check (follow_up_unit in ('days', 'hours', 'minutes')),
@@ -108,6 +110,16 @@ create table if not exists public.rotax_training_contacts (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.upload_audits (
+  id uuid primary key,
+  user_email text,
+  file_name text,
+  summary jsonb not null default '{}'::jsonb,
+  total_open_value numeric not null default 0,
+  total_closed_value numeric not null default 0,
+  created_at timestamptz not null default now()
+);
+
 alter table public.info_blocks drop constraint if exists info_blocks_block_type_check;
 alter table public.info_blocks
   add constraint info_blocks_block_type_check
@@ -121,6 +133,8 @@ alter table public.quotes add column if not exists notes text;
 alter table public.quotes add column if not exists is_interest boolean not null default false;
 alter table public.quotes add column if not exists phone text;
 alter table public.quotes add column if not exists quote_value text;
+alter table public.quotes add column if not exists loss_reason jsonb;
+alter table public.quotes add column if not exists history jsonb not null default '[]'::jsonb;
 alter table public.tracking_entries add column if not exists invoice_number text;
 alter table public.tracking_entries add column if not exists correios_update_failed boolean not null default false;
 
@@ -144,6 +158,7 @@ alter table public.rotax_training_blocks replica identity full;
 alter table public.rotax_training_sessions replica identity full;
 alter table public.rotax_training_students replica identity full;
 alter table public.rotax_training_contacts replica identity full;
+alter table public.upload_audits replica identity full;
 
 alter table public.quotes enable row level security;
 alter table public.tracking_entries enable row level security;
@@ -152,6 +167,7 @@ alter table public.rotax_training_blocks enable row level security;
 alter table public.rotax_training_sessions enable row level security;
 alter table public.rotax_training_students enable row level security;
 alter table public.rotax_training_contacts enable row level security;
+alter table public.upload_audits enable row level security;
 
 drop policy if exists "Authenticated users can read quotes" on public.quotes;
 drop policy if exists "Authenticated users can insert quotes" on public.quotes;
@@ -181,6 +197,8 @@ drop policy if exists "Authenticated users can read rotax training contacts" on 
 drop policy if exists "Authenticated users can insert rotax training contacts" on public.rotax_training_contacts;
 drop policy if exists "Authenticated users can update rotax training contacts" on public.rotax_training_contacts;
 drop policy if exists "Authenticated users can delete rotax training contacts" on public.rotax_training_contacts;
+drop policy if exists "Authenticated users can read upload audits" on public.upload_audits;
+drop policy if exists "Authenticated users can insert upload audits" on public.upload_audits;
 
 create policy "Authenticated users can read quotes"
   on public.quotes
@@ -357,6 +375,18 @@ create policy "Authenticated users can delete rotax training contacts"
   to authenticated
   using (true);
 
+create policy "Authenticated users can read upload audits"
+  on public.upload_audits
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert upload audits"
+  on public.upload_audits
+  for insert
+  to authenticated
+  with check (true);
+
 do $$
 begin
   if not exists (
@@ -427,5 +457,15 @@ begin
       and tablename = 'rotax_training_contacts'
   ) then
     alter publication supabase_realtime add table public.rotax_training_contacts;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'upload_audits'
+  ) then
+    alter publication supabase_realtime add table public.upload_audits;
   end if;
 end $$;

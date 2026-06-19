@@ -124,6 +124,23 @@ h2 {
   justify-content: flex-end;
 }
 
+.smart-alerts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.smart-alerts span {
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  color: #9a3412;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 7px 9px;
+}
+
 .top-stack {
   align-items: flex-end;
   display: grid;
@@ -868,6 +885,69 @@ small {
   margin: 0 0 12px;
 }
 
+.opportunity-panel {
+  background: #f8fafc;
+  border: 1px solid #dbe3eb;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px;
+}
+
+.opportunity-header strong {
+  color: #17212b;
+  font-size: 0.9rem;
+}
+
+.opportunity-list {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.opportunity-item {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  color: #344252;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  min-height: 52px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.opportunity-item:hover {
+  border-color: #0f766e;
+}
+
+.opportunity-item span {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.opportunity-item span b,
+.opportunity-item strong {
+  color: #17212b;
+  font-weight: 900;
+}
+
+.opportunity-item em {
+  background: #e8f5f3;
+  border-radius: 999px;
+  color: #0f766e;
+  font-size: 0.76rem;
+  font-style: normal;
+  font-weight: 900;
+  padding: 3px 7px;
+}
+
 .legend span,
 .status-cell,
 .due-cell {
@@ -1446,6 +1526,38 @@ small {
   overflow: auto;
 }
 
+.table-top-scroll {
+  background: #f8fafc;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  height: 18px;
+  margin: 0 0 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.table-top-scroll div {
+  height: 1px;
+}
+
+.table-top-scroll::-webkit-scrollbar {
+  height: 12px;
+}
+
+.table-top-scroll::-webkit-scrollbar-track {
+  background: #e6ebf0;
+  border-radius: 999px;
+}
+
+.table-top-scroll::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 999px;
+}
+
+.table-top-scroll::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
 table {
   border-collapse: collapse;
   min-width: 980px;
@@ -1656,6 +1768,59 @@ td {
   font-size: 0.72rem;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.quote-history {
+  border-top: 1px solid #e6ebf0;
+  display: grid;
+  gap: 8px;
+  grid-column: 1 / -1;
+  padding-top: 10px;
+}
+
+.quote-history > b {
+  color: #17212b;
+}
+
+.quote-history-list {
+  display: grid;
+  gap: 7px;
+}
+
+.quote-history-item {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  display: grid !important;
+  gap: 8px;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  padding: 8px 10px;
+}
+
+.quote-history-item i {
+  background: #0f766e;
+  border-radius: 50%;
+  height: 9px;
+  width: 9px;
+}
+
+.quote-history-item strong {
+  color: #17212b;
+  font-size: 0.88rem;
+}
+
+.quote-history-item small {
+  color: #657587;
+  font-size: 0.78rem;
+}
+
+.quote-history-item em {
+  color: #0f766e;
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 900;
+  grid-column: 2 / -1;
 }
 
 .quote-notes-details {
@@ -2048,6 +2213,41 @@ td {
   overflow: auto;
   padding: 18px;
   width: min(620px, 100%);
+}
+
+.upload-preview-modal {
+  max-width: 720px;
+  width: min(720px, 100%);
+}
+
+.upload-preview-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.upload-preview-grid span,
+.upload-preview-totals span {
+  background: #f8fafc;
+  border: 1px solid #dbe3eb;
+  border-radius: 8px;
+  color: #536273;
+  display: grid;
+  font-weight: 800;
+  gap: 2px;
+  padding: 12px;
+}
+
+.upload-preview-grid b,
+.upload-preview-totals b {
+  color: #17212b;
+  font-size: 1.2rem;
+}
+
+.upload-preview-totals {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .modal-header {

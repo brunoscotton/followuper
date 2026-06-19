@@ -35,6 +35,8 @@ function toQuote(row) {
     seller: row.seller,
     notes: row.notes || '',
     isInterest: row.is_interest === true,
+    lossReason: row.loss_reason || undefined,
+    history: Array.isArray(row.history) ? row.history : [],
     followUpDays: row.follow_up_days || (followUpUnit === 'days' ? followUpAmount : 1),
     followUpAmount,
     followUpUnit,
@@ -60,6 +62,8 @@ function toRow(quote) {
   if ('seller' in quote) row.seller = quote.seller;
   if ('notes' in quote) row.notes = quote.notes || null;
   if ('isInterest' in quote) row.is_interest = quote.isInterest === true;
+  if ('lossReason' in quote) row.loss_reason = quote.lossReason || null;
+  if ('history' in quote) row.history = Array.isArray(quote.history) ? quote.history : [];
   if ('followUpDays' in quote) row.follow_up_days = quote.followUpDays;
   if ('followUpAmount' in quote) row.follow_up_amount = quote.followUpAmount;
   if ('followUpUnit' in quote) row.follow_up_unit = quote.followUpUnit;

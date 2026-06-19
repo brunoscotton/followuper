@@ -87,10 +87,22 @@ import {
   updateRotaxContact,
   updateRotaxStudent,
 } from './services/rotaxTrainingRepository';
+import { createUploadAudit, loadUploadAudits } from './services/uploadAuditsRepository';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 const LAYOUT_STORAGE_KEY = 'followuper.layoutMode.v1';
 const AUTO_ARCHIVE_INACTIVE_DAYS = 15;
+const DOLLAR_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+
+const lossReasons = [
+  { value: 'preco', label: 'Preco' },
+  { value: 'prazo', label: 'Prazo' },
+  { value: 'cliente-desistiu', label: 'Cliente desistiu' },
+  { value: 'comprou-concorrente', label: 'Comprou concorrente' },
+  { value: 'sem-retorno', label: 'Sem retorno' },
+  { value: 'duplicado', label: 'Duplicado' },
+  { value: 'outro', label: 'Outro' },
+];
 
 const statuses = [
   { value: 'sem-resposta', label: 'Sem resposta', color: 'yellow' },
@@ -353,9 +365,103 @@ function formatCurrencyValue(value) {
   return Number(value || 0).toLocaleString('pt-BR', { currency: 'BRL', minimumFractionDigits: 2, style: 'currency' });
 }
 
+function getLossReasonLabel(value) {
+  return lossReasons.find((reason) => reason.value === value)?.label || value || 'Sem retorno';
+}
+
 function getPercent(part, total) {
   if (!total) return 0;
   return Math.round((part / total) * 100);
+}
+
+function buildQuoteHistoryEvent(type, label, details = {}, createdAt = new Date().toISOString()) {
+  return {
+    id: crypto.randomUUID(),
+    type,
+    label,
+    details,
+    createdAt,
+  };
+}
+
+function getQuoteHistory(quote) {
+  const history = Array.isArray(quote.history) ? quote.history : [];
+
+  if (history.length > 0) {
+    return [...history].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }
+
+  return [
+    buildQuoteHistoryEvent(
+      'created',
+      'Cotacao criada',
+      { seller: quote.seller },
+      quote.createdAt || new Date().toISOString(),
+    ),
+  ];
+}
+
+function appendQuoteHistory(quote, events) {
+  const nextEvents = Array.isArray(events) ? events : [events];
+  const currentHistory = Array.isArray(quote.history) ? quote.history : [];
+  return [...currentHistory, ...nextEvents].filter(Boolean);
+}
+
+function createInitialQuoteHistory(quote, createdAt, source = 'manual') {
+  return [
+    buildQuoteHistoryEvent(
+      'created',
+      source === 'upload' ? 'Cotacao importada' : 'Cotacao criada',
+      { seller: quote.seller, source },
+      createdAt,
+    ),
+  ];
+}
+
+function getQuoteAgeInDays(quote, now) {
+  const createdAt = new Date(quote.createdAt || now);
+  return Math.max(0, Math.floor((now.getTime() - createdAt.getTime()) / 86_400_000));
+}
+
+function getQuoteInactiveDays(quote, now) {
+  const activityAt = getQuoteLastActivityAt(quote);
+  return Math.max(0, Math.floor((now.getTime() - activityAt.getTime()) / 86_400_000));
+}
+
+function shouldRequestLossReason(quote, now) {
+  return !isClosed(quote) && !isArchived(quote) && (isFollowUpDue(quote, now) || getQuoteAgeInDays(quote, now) >= 15);
+}
+
+function getOpportunityScore(quote, now) {
+  if (isClosed(quote) || isArchived(quote)) return 0;
+
+  const value = getQuoteNumericValue(quote);
+  const inactiveDays = getQuoteInactiveDays(quote, now);
+  let score = 0;
+
+  if (value >= 100000) score += 45;
+  else if (value >= 50000) score += 35;
+  else if (value >= 10000) score += 25;
+  else if (value >= 5000) score += 15;
+
+  if (!isFinalClientName(quote.clientName)) score += 12;
+  if (quote.seller) score += 5;
+  if (quote.status === 'negociacao') score += 22;
+  if (isFollowUpDue(quote, now)) score += 28;
+  if (inactiveDays >= 7) score += 18;
+  else if (inactiveDays >= 3) score += 10;
+  if (getQuoteInterestStars(quote) >= 2) score += 12;
+
+  return score;
+}
+
+function getTopOpportunities(quotes, now, limit = 10) {
+  return quotes
+    .filter((quote) => !isClosed(quote) && !isArchived(quote))
+    .map((quote) => ({ quote, score: getOpportunityScore(quote, now) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || getQuoteNumericValue(b.quote) - getQuoteNumericValue(a.quote))
+    .slice(0, limit);
 }
 
 function getSellerFromUploadCode(value) {
@@ -391,11 +497,15 @@ async function parseQuotesUploadFile(file) {
   }
 
   const grouped = new Map();
+  let ignoredCruzeiroCount = 0;
 
   for (const row of rows.slice(headerIndex + 1)) {
     const quoteNumber = normalizeUploadQuoteNumber(row[columnIndex.quoteNumber]);
     if (!quoteNumber) continue;
-    if (isIgnoredUploadClientName(row[columnIndex.clientName])) continue;
+    if (isIgnoredUploadClientName(row[columnIndex.clientName])) {
+      ignoredCruzeiroCount += 1;
+      continue;
+    }
 
     const current = grouped.get(quoteNumber) || {
       quoteNumber,
@@ -412,7 +522,10 @@ async function parseQuotesUploadFile(file) {
     grouped.set(quoteNumber, current);
   }
 
-  return [...grouped.values()].filter((item) => item.clientName && item.seller);
+  return {
+    ignoredCruzeiroCount,
+    rows: [...grouped.values()].filter((item) => item.clientName && item.seller),
+  };
 }
 
 function addDays(dateValue, days) {
@@ -517,6 +630,42 @@ function shouldAutoArchiveQuote(quote, now) {
   return archiveAfter <= now;
 }
 
+function buildUploadPreview(importedRows, quotes, ignoredCruzeiroCount, fileName) {
+  const existingQuotesByNumber = new Map(
+    quotes.map((quote) => [normalizeUploadQuoteNumber(quote.quoteNumber), quote]),
+  );
+  const existingQuoteNumbers = new Set(existingQuotesByNumber.keys());
+  const existingRows = importedRows.filter((row) => existingQuoteNumbers.has(row.quoteNumber));
+  const newRows = importedRows.filter((row) => !existingQuoteNumbers.has(row.quoteNumber));
+  const importedQuoteNumbers = new Set(importedRows.map((row) => row.quoteNumber));
+  const staleQuotes = quotes.filter(
+    (quote) => !isArchived(quote) && !importedQuoteNumbers.has(normalizeUploadQuoteNumber(quote.quoteNumber)),
+  );
+  const finalizingRows = importedRows.filter((row) => {
+    if (!row.orderNumber) return false;
+    const quote = existingQuotesByNumber.get(row.quoteNumber);
+    return !quote || quote.status !== 'fechada';
+  });
+
+  return {
+    fileName,
+    importedRows,
+    ignoredCruzeiroCount,
+    summary: {
+      novos: newRows.length,
+      atualizados: existingRows.length,
+      finalizados: finalizingRows.length,
+      arquivados: staleQuotes.length,
+      ignorados: 0,
+      cruzeiroIgnorados: ignoredCruzeiroCount,
+    },
+    totals: {
+      open: importedRows.filter((row) => !row.orderNumber).reduce((sum, row) => sum + row.totalValue, 0),
+      closed: importedRows.filter((row) => row.orderNumber).reduce((sum, row) => sum + row.totalValue, 0),
+    },
+  };
+}
+
 function sortQuotes(quotes) {
   return [...quotes].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
@@ -554,6 +703,7 @@ export function App() {
   const [rotaxSessions, setRotaxSessions] = useState([]);
   const [rotaxStudents, setRotaxStudents] = useState([]);
   const [rotaxContacts, setRotaxContacts] = useState([]);
+  const [uploadAudits, setUploadAudits] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [activeView, setActiveView] = useState('quotes');
   const [activeTab, setActiveTab] = useState('abertas');
@@ -566,6 +716,7 @@ export function App() {
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
   const [isUploadingQuotes, setIsUploadingQuotes] = useState(false);
+  const [uploadPreview, setUploadPreview] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
@@ -580,6 +731,8 @@ export function App() {
   const [quoteEditModal, setQuoteEditModal] = useState(null);
   const [quoteEditForm, setQuoteEditForm] = useState(initialQuoteEditForm);
   const [quoteEditErrors, setQuoteEditErrors] = useState({});
+  const [lossModal, setLossModal] = useState(null);
+  const [lossForm, setLossForm] = useState({ reason: 'sem-retorno', notes: '' });
   const [trackingModal, setTrackingModal] = useState(null);
   const [standaloneTrackingModal, setStandaloneTrackingModal] = useState(false);
   const [trackingForm, setTrackingForm] = useState(initialTrackingForm);
@@ -648,10 +801,12 @@ export function App() {
       setQuotes([]);
       setTrackingEntries([]);
       setInfoBlocks([]);
+      setUploadAudits([]);
       setRotaxBlocks([]);
       setRotaxSessions([]);
       setRotaxStudents([]);
       setRotaxContacts([]);
+      setUploadAudits([]);
       setIsLoading(false);
       return () => {
         active = false;
@@ -659,8 +814,8 @@ export function App() {
     }
 
     setIsLoading(true);
-    Promise.all([loadStoredQuotes(), loadTrackingEntries(), loadInfoBlocks(), loadRotaxTrainingData()])
-      .then(([quoteResult, trackingResult, infoResult, rotaxResult]) => {
+    Promise.all([loadStoredQuotes(), loadTrackingEntries(), loadInfoBlocks(), loadRotaxTrainingData(), loadUploadAudits()])
+      .then(([quoteResult, trackingResult, infoResult, rotaxResult, uploadAuditResult]) => {
         if (!active) return;
         setQuotes(quoteResult.quotes);
         setTrackingEntries(trackingResult.entries);
@@ -669,6 +824,7 @@ export function App() {
         setRotaxSessions(rotaxResult.sessions);
         setRotaxStudents(rotaxResult.students);
         setRotaxContacts(rotaxResult.contacts);
+        setUploadAudits(uploadAuditResult.audits);
         setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
         setDataStatus(quoteResult.mode === 'supabase' ? 'Supabase · tempo real' : 'Local');
         setAppError('');
@@ -740,6 +896,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (isLoading) {
+      previousClosedQuoteIdsRef.current = null;
+      return;
+    }
+
     const closedQuotes = quotes.filter(isClosed);
     const closedIds = new Set(closedQuotes.map((quote) => quote.id));
 
@@ -763,7 +924,7 @@ export function App() {
 
     if (celebrationTimeoutRef.current) window.clearTimeout(celebrationTimeoutRef.current);
     celebrationTimeoutRef.current = window.setTimeout(() => setSaleCelebration(null), 6500);
-  }, [quotes]);
+  }, [isLoading, quotes]);
 
   useEffect(() => {
     if (isLoading || autoArchiveRunningRef.current) return;
@@ -776,11 +937,28 @@ export function App() {
     const previousQuotes = quotes;
     const quoteIds = new Set(quotesToArchive.map((quote) => quote.id));
 
-    setQuotes((current) =>
-      current.map((quote) => (quoteIds.has(quote.id) ? { ...quote, archivedAt } : quote)),
+    const changesById = new Map(
+      quotesToArchive.map((quote) => {
+        const lossReason = { reason: 'sem-retorno', notes: 'Arquivada automaticamente apos 15 dias sem atividade.' };
+        return [
+          quote.id,
+          {
+            archivedAt,
+            lossReason,
+            history: appendQuoteHistory(
+              quote,
+              buildQuoteHistoryEvent('archived', 'Arquivada automaticamente', { reason: getLossReasonLabel(lossReason.reason) }, archivedAt),
+            ),
+          },
+        ];
+      }),
     );
 
-    Promise.all(quotesToArchive.map((quote) => updateQuote(quote.id, { archivedAt })))
+    setQuotes((current) =>
+      current.map((quote) => (quoteIds.has(quote.id) ? { ...quote, ...changesById.get(quote.id) } : quote)),
+    );
+
+    Promise.all(quotesToArchive.map((quote) => updateQuote(quote.id, changesById.get(quote.id))))
       .then((savedQuotes) => {
         const savedById = new Map(savedQuotes.filter(Boolean).map((quote) => [quote.id, quote]));
         setQuotes((current) => current.map((quote) => savedById.get(quote.id) || quote));
@@ -809,6 +987,19 @@ export function App() {
   const metrics = useMemo(() => {
     const followUpDue = quotes.filter((quote) => isFollowUpDue(quote, now));
     const unchangedStatus = quotes.filter((quote) => isStatusUnchanged(quote, now));
+    const highValueFollowUps = followUpDue.filter((quote) => getQuoteNumericValue(quote) >= 50000);
+    const followUpsBySeller = sellers
+      .map((seller) => ({
+        seller,
+        total: followUpDue.filter((quote) => quote.seller === seller).length,
+      }))
+      .filter((item) => item.total > 0)
+      .sort((a, b) => b.total - a.total);
+    const stoppedHighValueQuote = quotes
+      .filter((quote) => !isClosed(quote) && !isArchived(quote) && getQuoteNumericValue(quote) >= 50000)
+      .map((quote) => ({ quote, inactiveDays: getQuoteInactiveDays(quote, now) }))
+      .filter((item) => item.inactiveDays >= 5)
+      .sort((a, b) => getQuoteNumericValue(b.quote) - getQuoteNumericValue(a.quote))[0];
 
     return {
       abertas: quotes.filter((quote) => !isClosed(quote) && !isArchived(quote)).length,
@@ -818,8 +1009,21 @@ export function App() {
       todas: quotes.length,
       followUpDue: followUpDue.length,
       unchangedStatus: unchangedStatus.length,
+      smartAlerts: [
+        highValueFollowUps.length
+          ? `${highValueFollowUps.length} cotacao(oes) acima de R$ 50 mil estao sem follow-up`
+          : '',
+        followUpsBySeller[0] ? `${followUpsBySeller[0].seller} tem ${followUpsBySeller[0].total} follow-up(s) vencido(s)` : '',
+        stoppedHighValueQuote
+          ? `Cotacao ${stoppedHighValueQuote.quote.quoteNumber} de ${formatCurrencyValue(
+              getQuoteNumericValue(stoppedHighValueQuote.quote),
+            )} esta ha ${stoppedHighValueQuote.inactiveDays} dias sem alteracao`
+          : '',
+      ].filter(Boolean),
     };
   }, [quotes, now]);
+
+  const topOpportunities = useMemo(() => getTopOpportunities(quotes, now, 10), [now, quotes]);
 
   const trackingMetrics = useMemo(
     () => ({
@@ -1364,6 +1568,7 @@ export function App() {
         statusUpdatedAt: createdAt,
         archivedAt: '',
       };
+      nextQuote.history = createInitialQuoteHistory(nextQuote, createdAt, 'layout vovo');
 
       const previousQuotes = quotes;
       setQuotes((current) => [nextQuote, ...current]);
@@ -1394,8 +1599,12 @@ export function App() {
         };
       }
     }
+    changes.history = appendQuoteHistory(
+      quote,
+      buildQuoteHistoryEvent('updated', 'Cotacao atualizada pelo layout vovo', {}, new Date().toISOString()),
+    );
 
-    if (Object.keys(changes).length === 0) {
+    if (Object.keys(changes).length === 1 && changes.history) {
       setAppError(`Orcamento ${quoteNumber} encontrado, mas nao havia dados para alterar.`);
       return;
     }
@@ -1487,6 +1696,14 @@ export function App() {
         };
       }
 
+      const historyEvents = [
+        buildQuoteHistoryEvent('updated', 'Cotacao atualizada', { source: 'formulario' }, createdAt),
+      ];
+      if ((existingQuote.notes || '').trim() !== form.notes.trim() && form.notes.trim()) {
+        historyEvents.push(buildQuoteHistoryEvent('notes', 'Observacao adicionada', {}, createdAt));
+      }
+      changes.history = appendQuoteHistory(existingQuote, historyEvents);
+
       const previousQuotes = quotes;
       setQuotes((current) => current.map((quote) => (quote.id === existingQuote.id ? { ...quote, ...changes } : quote)));
 
@@ -1524,6 +1741,7 @@ export function App() {
       statusUpdatedAt: createdAt,
       archivedAt: '',
     };
+    nextQuote.history = createInitialQuoteHistory(nextQuote, createdAt);
 
     const previousQuotes = quotes;
     setQuotes((current) => [nextQuote, ...current]);
@@ -1548,10 +1766,14 @@ export function App() {
     setIsUploadingQuotes(true);
 
     try {
-      const importedRows = await parseQuotesUploadFile(file);
+      const { ignoredCruzeiroCount, rows: importedRows } = await parseQuotesUploadFile(file);
       if (importedRows.length === 0) {
         throw new Error('Nenhum orçamento válido foi encontrado na segunda aba da planilha.');
       }
+
+      setUploadPreview(buildUploadPreview(importedRows, quotes, ignoredCruzeiroCount, file.name));
+      setAppError('');
+      return;
 
       const existingQuotesByNumber = new Map(
         quotes.map((quote) => [normalizeUploadQuoteNumber(quote.quoteNumber), quote]),
@@ -1696,6 +1918,191 @@ export function App() {
     }
   }
 
+  async function confirmQuotesUpload() {
+    if (!uploadPreview) return;
+
+    setIsUploadingQuotes(true);
+
+    try {
+      const importedRows = uploadPreview.importedRows;
+      const existingQuotesByNumber = new Map(quotes.map((quote) => [normalizeUploadQuoteNumber(quote.quoteNumber), quote]));
+      const existingQuoteNumbers = new Set(existingQuotesByNumber.keys());
+      const existingRows = importedRows.filter((row) => existingQuoteNumbers.has(row.quoteNumber));
+      const newRows = importedRows.filter((row) => !existingQuoteNumbers.has(row.quoteNumber));
+      const importedQuoteNumbers = new Set(importedRows.map((row) => row.quoteNumber));
+      const savedQuotes = [];
+      const updatedQuotes = [];
+      let closedCount = 0;
+      let archivedCount = 0;
+
+      for (const row of existingRows) {
+        const existingQuote = existingQuotesByNumber.get(row.quoteNumber);
+        if (!existingQuote) continue;
+
+        const changedAt = new Date().toISOString();
+        const formattedTotalValue = formatUploadCurrency(row.totalValue);
+        const isClosedUpload = Boolean(row.orderNumber);
+        const hasUploadClientName = row.clientName && !isFinalClientName(row.clientName);
+        const shouldUpdateClientName =
+          hasUploadClientName && (isFinalClientName(existingQuote.clientName) || existingQuote.clientName !== row.clientName);
+        const changes = {
+          archivedAt: '',
+          quoteValue: formattedTotalValue,
+          isInterest: existingQuote.isInterest || row.totalValue >= 5000,
+        };
+        const historyEvents = [];
+
+        if (shouldUpdateClientName) {
+          changes.clientName = row.clientName;
+          historyEvents.push(buildQuoteHistoryEvent('updated', 'Cliente atualizado pelo upload', {}, changedAt));
+        }
+
+        if (existingQuote.quoteValue !== formattedTotalValue) {
+          historyEvents.push(buildQuoteHistoryEvent('updated', 'Valor atualizado pelo upload', { value: formattedTotalValue }, changedAt));
+        }
+
+        if (isClosedUpload) {
+          changes.status = 'fechada';
+          changes.statusUpdatedAt = existingQuote.status === 'fechada' ? existingQuote.statusUpdatedAt || changedAt : changedAt;
+          changes.closeDetails = {
+            orderNumber: row.orderNumber,
+            agreedPaymentTerms: existingQuote.closeDetails?.agreedPaymentTerms || '',
+            carrier: existingQuote.closeDetails?.carrier || existingQuote.closeDetails?.freight || '',
+            totalValue: formattedTotalValue,
+            notes: existingQuote.closeDetails?.notes || '',
+            closedAt: existingQuote.closeDetails?.closedAt || changedAt,
+          };
+          if (existingQuote.status !== 'fechada') {
+            historyEvents.push(buildQuoteHistoryEvent('closed', 'Virou pedido pelo upload', { orderNumber: row.orderNumber }, changedAt));
+          }
+        } else if (existingQuote.status === 'fechada' || existingQuote.closeDetails) {
+          changes.status = 'sem-resposta';
+          changes.statusUpdatedAt = changedAt;
+          changes.closeDetails = undefined;
+          historyEvents.push(buildQuoteHistoryEvent('status', 'Status voltou para sem resposta pelo upload', {}, changedAt));
+        }
+
+        if (historyEvents.length) changes.history = appendQuoteHistory(existingQuote, historyEvents);
+
+        const hasChanges = Object.entries(changes).some(([key, value]) => {
+          if (key === 'closeDetails') return JSON.stringify(existingQuote.closeDetails || null) !== JSON.stringify(value || null);
+          if (key === 'history') return true;
+          return existingQuote[key] !== value;
+        });
+
+        if (!hasChanges) continue;
+
+        const savedQuote = await updateQuote(existingQuote.id, changes);
+        updatedQuotes.push(savedQuote);
+
+        if (isClosedUpload && savedQuote.closeDetails) {
+          if (existingQuote.status !== 'fechada') closedCount += 1;
+          await ensureTrackingEntry(savedQuote, savedQuote.closeDetails);
+        }
+      }
+
+      const staleQuotes = quotes.filter(
+        (quote) => !isArchived(quote) && !importedQuoteNumbers.has(normalizeUploadQuoteNumber(quote.quoteNumber)),
+      );
+
+      for (const quote of staleQuotes) {
+        const archivedAt = new Date().toISOString();
+        const savedQuote = await updateQuote(quote.id, {
+          archivedAt,
+          history: appendQuoteHistory(quote, buildQuoteHistoryEvent('archived', 'Arquivada pelo upload', {}, archivedAt)),
+        });
+        updatedQuotes.push(savedQuote);
+        archivedCount += 1;
+      }
+
+      for (const row of newRows) {
+        const createdAt = new Date().toISOString();
+        const isClosedUpload = Boolean(row.orderNumber);
+        const formattedTotalValue = formatUploadCurrency(row.totalValue);
+        const closeDetails = isClosedUpload
+          ? {
+              orderNumber: row.orderNumber,
+              agreedPaymentTerms: '',
+              carrier: '',
+              totalValue: formattedTotalValue,
+              notes: '',
+              closedAt: createdAt,
+            }
+          : undefined;
+        const nextQuote = {
+          id: crypto.randomUUID(),
+          quoteNumber: row.quoteNumber,
+          clientName: row.clientName,
+          quoteValue: formattedTotalValue,
+          paymentTerms: '',
+          quoteDate: getTodayInputValue(),
+          seller: row.seller,
+          notes: '',
+          isInterest: row.totalValue >= 5000,
+          followUpDays: 1,
+          followUpAmount: 1,
+          followUpUnit: 'days',
+          followUpStartedAt: createdAt,
+          status: isClosedUpload ? 'fechada' : 'sem-resposta',
+          createdAt,
+          statusUpdatedAt: createdAt,
+          archivedAt: '',
+          closeDetails,
+        };
+        nextQuote.history = [
+          ...createInitialQuoteHistory(nextQuote, createdAt, 'upload'),
+          ...(isClosedUpload ? [buildQuoteHistoryEvent('closed', 'Virou pedido pelo upload', { orderNumber: row.orderNumber }, createdAt)] : []),
+        ];
+
+        const savedQuote = await createQuote(nextQuote);
+        savedQuotes.push(savedQuote);
+        existingQuoteNumbers.add(normalizeUploadQuoteNumber(savedQuote.quoteNumber));
+
+        if (isClosedUpload && savedQuote.closeDetails) {
+          closedCount += 1;
+          await ensureTrackingEntry(savedQuote, savedQuote.closeDetails);
+        }
+      }
+
+      setQuotes((current) => {
+        const changedQuotes = [...savedQuotes, ...updatedQuotes];
+        return [...changedQuotes, ...current.filter((quote) => !changedQuotes.some((saved) => saved.id === quote.id))];
+      });
+
+      const audit = {
+        id: crypto.randomUUID(),
+        userEmail: user?.email || '',
+        fileName: uploadPreview.fileName,
+        summary: {
+          ...uploadPreview.summary,
+          novos: savedQuotes.length,
+          atualizados: Math.max(updatedQuotes.length - archivedCount, 0),
+          finalizados: closedCount,
+          arquivados: archivedCount,
+        },
+        totalOpenValue: uploadPreview.totals.open,
+        totalClosedValue: uploadPreview.totals.closed,
+        createdAt: new Date().toISOString(),
+      };
+      const savedAudit = await createUploadAudit(audit);
+      setUploadAudits((current) => [savedAudit, ...current]);
+      setUploadPreview(null);
+      setActiveView('quotes');
+      setActiveTab('abertas');
+      setAppError(
+        `Upload concluido: ${savedQuotes.length} orcamento(s) novo(s), ${Math.max(updatedQuotes.length - archivedCount, 0)} atualizado(s), ${closedCount} finalizado(s), ${archivedCount} removido(s) do dashboard ativo.`,
+      );
+    } catch (error) {
+      setAppError(error.message || 'Nao foi possivel importar a planilha.');
+    } finally {
+      setIsUploadingQuotes(false);
+    }
+  }
+
+  function cancelQuotesUploadPreview() {
+    setUploadPreview(null);
+  }
+
   function openCloseModal(quote) {
     setCloseModal({ quoteId: quote.id, quoteNumber: quote.quoteNumber, clientName: quote.clientName });
     const totalValue = quote.closeDetails?.totalValue || quote.quoteValue || '';
@@ -1735,9 +2142,22 @@ export function App() {
       return;
     }
 
+    if (status === 'sem-resposta' && quote && quote.status !== 'sem-resposta' && shouldRequestLossReason(quote, now)) {
+      setLossModal({ quoteId: id, mode: 'status', status });
+      setLossForm({ reason: 'sem-retorno', notes: '' });
+      return;
+    }
+
     const previousQuotes = quotes;
     const statusUpdatedAt = new Date().toISOString();
-    const changes = { status, statusUpdatedAt };
+    const changes = {
+      status,
+      statusUpdatedAt,
+      history: appendQuoteHistory(
+        quote,
+        buildQuoteHistoryEvent('status', 'Status alterado pelo vendedor', { seller: quote?.seller, status: getStatusMeta(status).label }, statusUpdatedAt),
+      ),
+    };
 
     setQuotes((current) => current.map((quote) => (quote.id === id ? { ...quote, ...changes } : quote)));
 
@@ -1772,6 +2192,13 @@ export function App() {
         closedAt,
       },
     };
+    const quote = quotes.find((item) => item.id === closeModal.quoteId);
+    if (quote) {
+      changes.history = appendQuoteHistory(
+        quote,
+        buildQuoteHistoryEvent('closed', 'Virou pedido', { orderNumber: closeDetails.orderNumber.trim() }, closedAt),
+      );
+    }
 
     setQuotes((current) =>
       current.map((quote) => (quote.id === closeModal.quoteId ? { ...quote, ...changes } : quote)),
@@ -1864,6 +2291,12 @@ export function App() {
       followUpAmount: Number(quoteEditForm.followUpAmount),
       followUpUnit: quoteEditForm.followUpUnit,
     };
+    const editAt = new Date().toISOString();
+    const historyEvents = [buildQuoteHistoryEvent('updated', 'Cotacao editada', {}, editAt)];
+    if ((quoteEditModal.notes || '').trim() !== quoteEditForm.notes.trim() && quoteEditForm.notes.trim()) {
+      historyEvents.push(buildQuoteHistoryEvent('notes', 'Observacao adicionada', {}, editAt));
+    }
+    changes.history = appendQuoteHistory(quoteEditModal, historyEvents);
 
     setQuotes((current) =>
       current.map((quote) => (quote.id === quoteEditModal.id ? { ...quote, ...changes } : quote)),
@@ -1898,6 +2331,10 @@ export function App() {
       followUpStartedAt: startedAt,
       archivedAt: '',
     };
+    const quote = quotes.find((item) => item.id === id);
+    if (quote) {
+      changes.history = appendQuoteHistory(quote, buildQuoteHistoryEvent('followup', 'Follow-up reiniciado', { days: 5 }, startedAt));
+    }
 
     setQuotes((current) => current.map((quote) => (quote.id === id ? { ...quote, ...changes } : quote)));
 
@@ -1912,6 +2349,10 @@ export function App() {
   }
 
   async function archiveQuote(id) {
+    setLossModal({ quoteId: id, mode: 'archive' });
+    setLossForm({ reason: 'sem-retorno', notes: '' });
+    return;
+
     const previousQuotes = quotes;
     const changes = { archivedAt: new Date().toISOString() };
 
@@ -1926,6 +2367,56 @@ export function App() {
       setQuotes(previousQuotes);
       setAppError(error.message || 'Não foi possível arquivar a cotação.');
     }
+  }
+
+  async function confirmLossModal(event) {
+    event.preventDefault();
+    if (!lossModal) return;
+
+    const quote = quotes.find((item) => item.id === lossModal.quoteId);
+    if (!quote) return;
+
+    const previousQuotes = quotes;
+    const changedAt = new Date().toISOString();
+    const lossReason = { reason: lossForm.reason, notes: lossForm.notes.trim() };
+    const changes =
+      lossModal.mode === 'archive'
+        ? {
+            archivedAt: changedAt,
+            lossReason,
+            history: appendQuoteHistory(
+              quote,
+              buildQuoteHistoryEvent('archived', 'Cotacao arquivada', { reason: getLossReasonLabel(lossForm.reason) }, changedAt),
+            ),
+          }
+        : {
+            status: lossModal.status || 'sem-resposta',
+            statusUpdatedAt: changedAt,
+            lossReason,
+            history: appendQuoteHistory(
+              quote,
+              buildQuoteHistoryEvent('status', 'Marcada como sem resposta', { reason: getLossReasonLabel(lossForm.reason) }, changedAt),
+            ),
+          };
+
+    setQuotes((current) => current.map((item) => (item.id === lossModal.quoteId ? { ...item, ...changes } : item)));
+
+    try {
+      const savedQuote = await updateQuote(lossModal.quoteId, changes);
+      setQuotes((current) => current.map((item) => (item.id === lossModal.quoteId ? savedQuote : item)));
+      if (lossModal.mode === 'archive') setActiveTab('arquivadas');
+      setLossModal(null);
+      setLossForm({ reason: 'sem-retorno', notes: '' });
+      setAppError('');
+    } catch (error) {
+      setQuotes(previousQuotes);
+      setAppError(error.message || 'Nao foi possivel salvar o motivo de perda.');
+    }
+  }
+
+  function cancelLossModal() {
+    setLossModal(null);
+    setLossForm({ reason: 'sem-retorno', notes: '' });
   }
 
   async function ensureTrackingEntry(quote, details) {
@@ -2408,6 +2899,13 @@ export function App() {
                   <span>({trackingMetrics.withoutCode}) fretes sem rastreio</span>
                 </button>
               </div>
+              {metrics.smartAlerts.length > 0 && (
+                <div className="smart-alerts" aria-live="polite">
+                  {metrics.smartAlerts.map((alert) => (
+                    <span key={alert}>{alert}</span>
+                  ))}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -2441,6 +2939,7 @@ export function App() {
           onSubmit={handleSubmit}
           onUpdateForm={updateForm}
           openCloseModal={openCloseModal}
+          topOpportunities={topOpportunities}
           expandedQuoteIds={expandedQuoteIds}
           searchTerm={searchTerm}
           selectedSellers={selectedSellers}
@@ -2529,6 +3028,25 @@ export function App() {
           onCancel={cancelQuoteEditModal}
           onSubmit={saveQuoteEditForm}
           onUpdate={updateQuoteEditForm}
+        />
+      )}
+
+      {lossModal && (
+        <LossReasonModal
+          form={lossForm}
+          mode={lossModal.mode}
+          onCancel={cancelLossModal}
+          onSubmit={confirmLossModal}
+          onUpdate={(field, value) => setLossForm((current) => ({ ...current, [field]: value }))}
+        />
+      )}
+
+      {uploadPreview && (
+        <UploadPreviewModal
+          isUploading={isUploadingQuotes}
+          onCancel={cancelQuotesUploadPreview}
+          onConfirm={confirmQuotesUpload}
+          preview={uploadPreview}
         />
       )}
 
@@ -2739,7 +3257,7 @@ function SalesDashboard({ quotes, saleCelebration }) {
     }
 
     loadDollarQuote();
-    const timer = window.setInterval(loadDollarQuote, 5 * 60 * 1000);
+    const timer = window.setInterval(loadDollarQuote, DOLLAR_REFRESH_INTERVAL_MS);
 
     return () => {
       active = false;
@@ -2788,7 +3306,7 @@ function SalesDashboard({ quotes, saleCelebration }) {
                   ? `Atualizado ${new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(
                       new Date(dollarQuote.updatedAt.replace(' ', 'T')),
                     )}`
-                  : 'Atualiza a cada 5 min')}
+                  : 'Atualiza a cada 15 min')}
             </small>
           </div>
         </section>
@@ -3469,6 +3987,7 @@ function QuotesWorkspace({
   onSubmit,
   onUpdateForm,
   openCloseModal,
+  topOpportunities,
   expandedQuoteIds,
   searchTerm,
   selectedSellers,
@@ -3482,6 +4001,42 @@ function QuotesWorkspace({
   onToggleQuoteDetails,
   visibleQuotes,
 }) {
+  const tableWrapRef = useRef(null);
+  const tableRef = useRef(null);
+  const topScrollRef = useRef(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
+
+  useEffect(() => {
+    function updateScrollWidth() {
+      const nextWidth = tableRef.current?.scrollWidth || tableWrapRef.current?.scrollWidth || 0;
+      setTableScrollWidth(nextWidth);
+    }
+
+    updateScrollWidth();
+    window.addEventListener('resize', updateScrollWidth);
+
+    if (typeof ResizeObserver === 'undefined') {
+      return () => window.removeEventListener('resize', updateScrollWidth);
+    }
+
+    const resizeObserver = new ResizeObserver(updateScrollWidth);
+    if (tableRef.current) resizeObserver.observe(tableRef.current);
+    if (tableWrapRef.current) resizeObserver.observe(tableWrapRef.current);
+
+    return () => {
+      window.removeEventListener('resize', updateScrollWidth);
+      resizeObserver.disconnect();
+    };
+  }, [activeTab, isSimpleLayout, topOpportunities.length, visibleQuotes.length]);
+
+  function syncTableScrollFromTop(event) {
+    if (tableWrapRef.current) tableWrapRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
+
+  function syncTopScrollFromTable(event) {
+    if (topScrollRef.current) topScrollRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
+
   return (
     <section className="workspace-grid">
       <form className="quote-form" onSubmit={onSubmit} noValidate>
@@ -3717,8 +4272,37 @@ function QuotesWorkspace({
           </>
         )}
 
-        <div className="table-wrap">
-          <table className="quote-table">
+        {topOpportunities.length > 0 && (
+          <div className="opportunity-panel">
+            <div className="opportunity-header">
+              <strong>Top 10 oportunidades para atacar hoje</strong>
+            </div>
+            <div className="opportunity-list">
+              {topOpportunities.map(({ quote, score }) => (
+                <button
+                  className="opportunity-item"
+                  key={quote.id}
+                  type="button"
+                  onClick={() => onToggleQuoteDetails(quote.id)}
+                >
+                  <span>
+                    <b>{quote.quoteNumber}</b>
+                    {quote.clientName}
+                  </span>
+                  <strong>{formatCurrencyValue(getQuoteNumericValue(quote))}</strong>
+                  <em>{score} pts</em>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="table-top-scroll" ref={topScrollRef} onScroll={syncTableScrollFromTop} aria-label="Mover tabela lateralmente">
+          <div style={{ width: `${tableScrollWidth || 900}px` }} />
+        </div>
+
+        <div className="table-wrap" ref={tableWrapRef} onScroll={syncTopScrollFromTable}>
+          <table className="quote-table" ref={tableRef}>
             <thead>
               <tr>
                 <th>Status</th>
@@ -3828,6 +4412,18 @@ function QuotesWorkspace({
                               <Pencil size={17} />
                             </button>
                           )}
+                          <button
+                            className="obs-button history-button"
+                            type="button"
+                            title="Ver historico da cotacao"
+                            aria-label="Ver historico da cotacao"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onToggleQuoteDetails(quote.id);
+                            }}
+                          >
+                            Hist.
+                          </button>
                           {canEditQuote && hasQuoteNotes && (
                             <button
                               className="obs-button"
@@ -3933,11 +4529,18 @@ function QuotesWorkspace({
                               <b>Obs. pedido</b>
                               {quote.closeDetails.notes || '—'}
                             </span>
+                            {quote.lossReason && (
+                              <span>
+                                <b>Motivo de perda</b>
+                                {getLossReasonLabel(quote.lossReason.reason)}
+                              </span>
+                            )}
+                            <QuoteHistoryTimeline quote={quote} />
                           </div>
                         </td>
                       </tr>
                     )}
-                    {!showCloseDetails && hasQuoteNotes && detailsExpanded && (
+                    {!showCloseDetails && detailsExpanded && (
                       <tr className="closed-details-row quote-notes-row">
                         <td colSpan="8">
                           <div className="closed-details quote-notes-details">
@@ -3945,6 +4548,13 @@ function QuotesWorkspace({
                               <b>Obs. cotação</b>
                               {quote.notes}
                             </span>
+                            {quote.lossReason && (
+                              <span>
+                                <b>Motivo de perda</b>
+                                {getLossReasonLabel(quote.lossReason.reason)}
+                              </span>
+                            )}
+                            <QuoteHistoryTimeline quote={quote} />
                           </div>
                         </td>
                       </tr>
@@ -3964,6 +4574,30 @@ function QuotesWorkspace({
         </div>
       </section>
     </section>
+  );
+}
+
+function QuoteHistoryTimeline({ quote }) {
+  const history = getQuoteHistory(quote);
+
+  return (
+    <div className="quote-history">
+      <b>Historico da cotacao</b>
+      <div className="quote-history-list">
+        {history.map((event) => (
+          <span className="quote-history-item" key={event.id || `${event.type}-${event.createdAt}`}>
+            <i />
+            <strong>{event.label}</strong>
+            <small>{formatDateTime(event.createdAt)}</small>
+            {event.details?.status && <em>{event.details.status}</em>}
+            {event.details?.seller && <em>{event.details.seller}</em>}
+            {event.details?.reason && <em>{event.details.reason}</em>}
+            {event.details?.orderNumber && <em>Pedido {event.details.orderNumber}</em>}
+            {event.details?.value && <em>{event.details.value}</em>}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -4538,6 +5172,110 @@ function TrackingWorkspace({
         )}
       </div>
     </section>
+  );
+}
+
+function LossReasonModal({ form, mode, onCancel, onSubmit, onUpdate }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="close-modal" onSubmit={onSubmit} noValidate>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Motivo de perda</p>
+            <h2>{mode === 'archive' ? 'Arquivar cotacao' : 'Marcar sem resposta'}</h2>
+          </div>
+          <button className="modal-close" type="button" aria-label="Fechar janela" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <label>
+          Motivo
+          <select value={form.reason} onChange={(event) => onUpdate('reason', event.target.value)}>
+            {lossReasons.map((reason) => (
+              <option key={reason.value} value={reason.value}>
+                {reason.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Observacao
+          <textarea
+            value={form.notes}
+            onChange={(event) => onUpdate('notes', event.target.value)}
+            placeholder="Detalhes opcionais"
+            rows="4"
+          />
+        </label>
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button className="primary-button" type="submit">
+            Salvar
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function UploadPreviewModal({ isUploading, onCancel, onConfirm, preview }) {
+  const items = [
+    ['Novos', preview.summary.novos],
+    ['Atualizados', preview.summary.atualizados],
+    ['Finalizados', preview.summary.finalizados],
+    ['Arquivados', preview.summary.arquivados],
+    ['Ignorados', preview.summary.ignorados],
+    ['Cruzeiro do Sul ignorados', preview.summary.cruzeiroIgnorados],
+  ];
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <div className="close-modal upload-preview-modal">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Previa da importacao</p>
+            <h2>{preview.fileName}</h2>
+          </div>
+          <button className="modal-close" type="button" aria-label="Fechar janela" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="upload-preview-grid">
+          {items.map(([label, value]) => (
+            <span key={label}>
+              <b>{value}</b>
+              {label}
+            </span>
+          ))}
+        </div>
+
+        <div className="upload-preview-totals">
+          <span>
+            <b>Total em aberto</b>
+            {formatCurrencyValue(preview.totals.open)}
+          </span>
+          <span>
+            <b>Total finalizado</b>
+            {formatCurrencyValue(preview.totals.closed)}
+          </span>
+        </div>
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel} disabled={isUploading}>
+            Cancelar
+          </button>
+          <button className="primary-button" type="button" onClick={onConfirm} disabled={isUploading}>
+            {isUploading ? 'Importando...' : 'Confirmar importacao'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
