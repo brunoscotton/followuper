@@ -757,6 +757,7 @@ export function App() {
   const uploadInputRef = useRef(null);
   const previousClosedQuoteIdsRef = useRef(null);
   const autoArchiveRunningRef = useRef(false);
+  const closedUnarchiveRunningRef = useRef(false);
   const celebrationTimeoutRef = useRef(null);
 
   useEffect(() => {
@@ -972,6 +973,35 @@ export function App() {
         autoArchiveRunningRef.current = false;
       });
   }, [isLoading, now, quotes]);
+
+  useEffect(() => {
+    if (isLoading || closedUnarchiveRunningRef.current) return;
+
+    const closedArchivedQuotes = quotes.filter((quote) => isClosed(quote) && isArchived(quote));
+    if (closedArchivedQuotes.length === 0) return;
+
+    closedUnarchiveRunningRef.current = true;
+    const previousQuotes = quotes;
+    const quoteIds = new Set(closedArchivedQuotes.map((quote) => quote.id));
+
+    setQuotes((current) =>
+      current.map((quote) => (quoteIds.has(quote.id) ? { ...quote, archivedAt: '' } : quote)),
+    );
+
+    Promise.all(closedArchivedQuotes.map((quote) => updateQuote(quote.id, { archivedAt: '' })))
+      .then((savedQuotes) => {
+        const savedById = new Map(savedQuotes.filter(Boolean).map((quote) => [quote.id, quote]));
+        setQuotes((current) => current.map((quote) => savedById.get(quote.id) || quote));
+        setAppError('');
+      })
+      .catch((error) => {
+        setQuotes(previousQuotes);
+        setAppError(error.message || 'Nao foi possivel reativar cotacoes fechadas no dashboard.');
+      })
+      .finally(() => {
+        closedUnarchiveRunningRef.current = false;
+      });
+  }, [isLoading, quotes]);
 
   useEffect(() => {
     if (!rotaxSessions.length) {
@@ -2153,6 +2183,7 @@ export function App() {
     const changes = {
       status,
       statusUpdatedAt,
+      archivedAt: '',
       history: appendQuoteHistory(
         quote,
         buildQuoteHistoryEvent('status', 'Status alterado pelo vendedor', { seller: quote?.seller, status: getStatusMeta(status).label }, statusUpdatedAt),
@@ -2183,6 +2214,7 @@ export function App() {
       quoteValue: closeDetails.totalValue.trim(),
       status: 'fechada',
       statusUpdatedAt: closedAt,
+      archivedAt: '',
       closeDetails: {
         orderNumber: closeDetails.orderNumber.trim(),
         agreedPaymentTerms: closeDetails.agreedPaymentTerms.trim(),
@@ -2392,6 +2424,7 @@ export function App() {
         : {
             status: lossModal.status || 'sem-resposta',
             statusUpdatedAt: changedAt,
+            archivedAt: '',
             lossReason,
             history: appendQuoteHistory(
               quote,
