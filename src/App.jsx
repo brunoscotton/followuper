@@ -346,6 +346,12 @@ function formatUploadCurrency(value) {
   return value.toLocaleString('pt-BR', { currency: 'BRL', minimumFractionDigits: 2, style: 'currency' });
 }
 
+function formatCurrencyInput(value) {
+  const digits = normalizeUploadValue(value).replace(/\D/g, '');
+  if (!digits) return '';
+  return formatUploadCurrency(Number(digits) / 100);
+}
+
 function parseQuoteValue(value) {
   return parseUploadCurrency(value);
 }
@@ -1574,12 +1580,14 @@ export function App() {
   }
 
   function updateForm(field, value) {
+    const nextValue = field === 'quoteValue' ? formatCurrencyInput(value) : value;
+
     setForm((current) => {
       if (field === 'followUpUsesTime') {
-        return { ...current, followUpUsesTime: value, followUpUnit: value ? 'hours' : 'days' };
+        return { ...current, followUpUsesTime: nextValue, followUpUnit: nextValue ? 'hours' : 'days' };
       }
 
-      return { ...current, [field]: value };
+      return { ...current, [field]: nextValue };
     });
     setErrors((current) => ({ ...current, [field]: '' }));
   }
@@ -2180,7 +2188,8 @@ export function App() {
   }
 
   function updateCloseDetails(field, value) {
-    setCloseDetails((current) => ({ ...current, [field]: value }));
+    const nextValue = field === 'totalValue' ? formatCurrencyInput(value) : value;
+    setCloseDetails((current) => ({ ...current, [field]: nextValue }));
     setCloseErrors((current) => ({ ...current, [field]: '' }));
   }
 
@@ -2312,12 +2321,14 @@ export function App() {
   }
 
   function updateQuoteEditForm(field, value) {
+    const nextValue = field === 'quoteValue' ? formatCurrencyInput(value) : value;
+
     setQuoteEditForm((current) => {
       if (field === 'followUpUsesTime') {
-        return { ...current, followUpUsesTime: value, followUpUnit: value ? 'hours' : 'days' };
+        return { ...current, followUpUsesTime: nextValue, followUpUnit: nextValue ? 'hours' : 'days' };
       }
 
-      return { ...current, [field]: value };
+      return { ...current, [field]: nextValue };
     });
     setQuoteEditErrors((current) => ({ ...current, [field]: '' }));
   }
@@ -4161,9 +4172,10 @@ function QuotesWorkspace({
         <label>
           Valor
           <input
+            inputMode="numeric"
             value={form.quoteValue}
             onChange={(event) => onUpdateForm('quoteValue', event.target.value)}
-            placeholder="Opcional"
+            placeholder="R$ 0,00"
           />
         </label>
 
@@ -5447,6 +5459,7 @@ function CloseQuoteModal({ closeDetails, closeErrors, closeModal, onCancel, onSu
         <label>
           Valor Total
           <input
+            inputMode="numeric"
             value={closeDetails.totalValue}
             onChange={(event) => onUpdate('totalValue', event.target.value)}
             placeholder="Ex: R$ 12.500,00"
@@ -5532,9 +5545,10 @@ function QuoteEditModal({ errors, form, onCancel, onSubmit, onUpdate }) {
         <label>
           Valor
           <input
+            inputMode="numeric"
             value={form.quoteValue}
             onChange={(event) => onUpdate('quoteValue', event.target.value)}
-            placeholder="Opcional"
+            placeholder="R$ 0,00"
           />
         </label>
 
