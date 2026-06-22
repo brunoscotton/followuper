@@ -23,6 +23,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Save,
   Search,
   ShieldCheck,
   Star,
@@ -87,12 +88,35 @@ import {
   updateRotaxContact,
   updateRotaxStudent,
 } from './services/rotaxTrainingRepository';
+import {
+  cacheRotaxRevenueEntries,
+  createRotaxRevenueEntry,
+  loadRotaxRevenueEntries,
+  sortRotaxRevenueEntries,
+  subscribeToRotaxRevenueChanges,
+  updateRotaxRevenueEntry,
+} from './services/rotaxRevenueRepository';
 import { createUploadAudit, loadUploadAudits } from './services/uploadAuditsRepository';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 const LAYOUT_STORAGE_KEY = 'followuper.layoutMode.v1';
+const MASTER_USER_EMAIL = 'bruno.scotton@cdsav.com.br';
 const AUTO_ARCHIVE_INACTIVE_DAYS = 15;
 const DOLLAR_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+const monthNames = [
+  'Janeiro',
+  'Fevereiro',
+  'Marco',
+  'Abril',
+  'Maio',
+  'Junho',
+  'Julho',
+  'Agosto',
+  'Setembro',
+  'Outubro',
+  'Novembro',
+  'Dezembro',
+];
 
 const lossReasons = [
   { value: 'preco', label: 'Preco' },
@@ -730,6 +754,8 @@ export function App() {
   const [rotaxSessions, setRotaxSessions] = useState([]);
   const [rotaxStudents, setRotaxStudents] = useState([]);
   const [rotaxContacts, setRotaxContacts] = useState([]);
+  const [rotaxRevenueEntries, setRotaxRevenueEntries] = useState([]);
+  const [activeRotaxRevenueYear, setActiveRotaxRevenueYear] = useState(2026);
   const [uploadAudits, setUploadAudits] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [activeView, setActiveView] = useState('quotes');
@@ -787,6 +813,7 @@ export function App() {
   const autoArchiveRunningRef = useRef(false);
   const closedUnarchiveRunningRef = useRef(false);
   const celebrationTimeoutRef = useRef(null);
+  const isMasterUser = normalize(user?.email || '') === MASTER_USER_EMAIL;
 
   useEffect(() => {
     let active = true;
@@ -835,6 +862,7 @@ export function App() {
       setRotaxSessions([]);
       setRotaxStudents([]);
       setRotaxContacts([]);
+      setRotaxRevenueEntries([]);
       setUploadAudits([]);
       setIsLoading(false);
       return () => {
@@ -912,6 +940,48 @@ export function App() {
       unsubscribeRealtime();
     };
   }, [authChecked, user]);
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribeRealtime = () => {};
+
+    if (!authChecked) return () => {};
+
+    if (!isMasterUser) {
+      setRotaxRevenueEntries([]);
+      if (activeView === 'rotaxRevenue') setActiveView('quotes');
+      return () => {
+        active = false;
+      };
+    }
+
+    loadRotaxRevenueEntries()
+      .then((result) => {
+        if (!active) return;
+        setRotaxRevenueEntries(result.entries);
+        setActiveRotaxRevenueYear((currentYear) => {
+          if (result.entries.some((entry) => Number(entry.year) === Number(currentYear))) return currentYear;
+          return result.entries[0]?.year || 2026;
+        });
+
+        if (result.mode === 'supabase') {
+          unsubscribeRealtime = subscribeToRotaxRevenueChanges(({ eventType, entry, oldId }) => {
+            setRotaxRevenueEntries((current) =>
+              syncCollection(current, eventType, entry, oldId, sortRotaxRevenueEntries, cacheRotaxRevenueEntries),
+            );
+          });
+        }
+      })
+      .catch((error) => {
+        if (!active) return;
+        setAppError(error.message || 'Nao foi possivel carregar o faturamento Rotax.');
+      });
+
+    return () => {
+      active = false;
+      unsubscribeRealtime();
+    };
+  }, [authChecked, user, isMasterUser, activeView]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
@@ -2774,6 +2844,99 @@ export function App() {
     );
   }
 
+  async function saveRotaxRevenueEntry(entry, changes) {
+    if (!isMasterUser) return;
+
+    const previousEntries = rotaxRevenueEntries;
+    const nowIso = new Date().toISOString();
+    const nextEntry = {
+      id: entry.id || crypto.randomUUID(),
+      year: Number(entry.year),
+      month: Number(entry.month),
+      revenueValue: Number(changes.revenueValue || 0),
+      targetValue: Number(changes.targetValue || 0),
+      notes: changes.notes || '',
+      createdAt: entry.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+
+    setRotaxRevenueEntries((current) =>
+      sortRotaxRevenueEntries([
+        nextEntry,
+        ...current.filter((currentEntry) => currentEntry.id !== nextEntry.id),
+      ]),
+    );
+
+    try {
+      const savedEntry = entry.id
+        ? await updateRotaxRevenueEntry(entry.id, {
+            revenueValue: nextEntry.revenueValue,
+            targetValue: nextEntry.targetValue,
+            notes: nextEntry.notes,
+          })
+        : await createRotaxRevenueEntry(nextEntry);
+
+      setRotaxRevenueEntries((current) =>
+        sortRotaxRevenueEntries([
+          savedEntry,
+          ...current.filter((currentEntry) => currentEntry.id !== savedEntry.id),
+        ]),
+      );
+      setAppError('');
+    } catch (error) {
+      setRotaxRevenueEntries(previousEntries);
+      setAppError(error.message || 'Nao foi possivel salvar o faturamento Rotax.');
+    }
+  }
+
+  async function createRotaxRevenueYear(year) {
+    if (!isMasterUser) return;
+
+    const numericYear = Number(year);
+    if (!Number.isFinite(numericYear)) return;
+
+    const existingKeys = new Set(rotaxRevenueEntries.map((entry) => `${entry.year}-${entry.month}`));
+    const nowIso = new Date().toISOString();
+    const newEntries = monthNames
+      .map((_, index) => ({
+        id: crypto.randomUUID(),
+        year: numericYear,
+        month: index + 1,
+        revenueValue: 0,
+        targetValue: 0,
+        notes: '',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      }))
+      .filter((entry) => !existingKeys.has(`${entry.year}-${entry.month}`));
+
+    if (newEntries.length === 0) {
+      setActiveRotaxRevenueYear(numericYear);
+      return;
+    }
+
+    const previousEntries = rotaxRevenueEntries;
+    setRotaxRevenueEntries((current) => sortRotaxRevenueEntries([...newEntries, ...current]));
+    setActiveRotaxRevenueYear(numericYear);
+
+    try {
+      const savedEntries = [];
+      for (const entry of newEntries) {
+        savedEntries.push(await createRotaxRevenueEntry(entry));
+      }
+      setRotaxRevenueEntries((current) =>
+        sortRotaxRevenueEntries([
+          ...savedEntries,
+          ...current.filter((entry) => !savedEntries.some((savedEntry) => savedEntry.id === entry.id)),
+        ]),
+      );
+      setAppError('');
+    } catch (error) {
+      setRotaxRevenueEntries(previousEntries);
+      setAppError(error.message || 'Nao foi possivel criar o ano do faturamento Rotax.');
+    }
+  }
+
   function changeLayoutMode(mode) {
     setLayoutMode(mode);
     setLayoutMenuOpen(false);
@@ -2844,6 +3007,12 @@ export function App() {
                           <GraduationCap size={16} />
                           Treinamento Rotax
                         </button>
+                        {isMasterUser && (
+                          <button type="button" onClick={() => navigateFromMenu('rotaxRevenue')}>
+                            <ShieldCheck size={16} />
+                            Faturamento Rotax
+                          </button>
+                        )}
                         <button type="button" onClick={() => navigateFromMenu('tracking')}>
                           <Truck size={16} />
                           Rastreio
@@ -2913,6 +3082,16 @@ export function App() {
                   <GraduationCap size={16} />
                   Treinamento Rotax
                 </button>
+                {isMasterUser && (
+                  <button
+                    className={activeView === 'rotaxRevenue' ? 'view-button active' : 'view-button'}
+                    type="button"
+                    onClick={() => setActiveView('rotaxRevenue')}
+                  >
+                    <ShieldCheck size={16} />
+                    Faturamento Rotax
+                  </button>
+                )}
                 <button
                   className={activeView === 'tracking' ? 'view-button active' : 'view-button'}
                   type="button"
@@ -3084,6 +3263,15 @@ export function App() {
           setActiveTab={setActiveRotaxTab}
           setActiveView={setActiveView}
           students={visibleRotaxStudents}
+        />
+      ) : activeView === 'rotaxRevenue' && isMasterUser ? (
+        <RotaxRevenueWorkspace
+          activeYear={activeRotaxRevenueYear}
+          entries={rotaxRevenueEntries}
+          onCreateYear={createRotaxRevenueYear}
+          onSaveEntry={saveRotaxRevenueEntry}
+          setActiveView={setActiveView}
+          setActiveYear={setActiveRotaxRevenueYear}
         />
       ) : (
         <InfoPanel
@@ -4720,6 +4908,219 @@ function QuoteHistoryTimeline({ quote }) {
         ))}
       </div>
     </div>
+  );
+}
+
+function RotaxRevenueWorkspace({ activeYear, entries, onCreateYear, onSaveEntry, setActiveView, setActiveYear }) {
+  const years = useMemo(() => {
+    const entryYears = [...new Set(entries.map((entry) => Number(entry.year)))].filter(Boolean);
+    const currentYear = new Date().getFullYear();
+    return [...new Set([currentYear, 2026, ...entryYears])].sort((a, b) => b - a);
+  }, [entries]);
+  const [newYear, setNewYear] = useState(String(years[0] || new Date().getFullYear()));
+  const rows = useMemo(() => {
+    const byMonth = new Map(
+      entries
+        .filter((entry) => Number(entry.year) === Number(activeYear))
+        .map((entry) => [Number(entry.month), entry]),
+    );
+
+    return monthNames.map((monthName, index) => {
+      const month = index + 1;
+      return (
+        byMonth.get(month) || {
+          id: '',
+          year: activeYear,
+          month,
+          revenueValue: 0,
+          targetValue: 0,
+          notes: '',
+        }
+      );
+    });
+  }, [activeYear, entries]);
+  const [drafts, setDrafts] = useState({});
+
+  useEffect(() => {
+    setDrafts(
+      rows.reduce((acc, row) => {
+        acc[`${row.year}-${row.month}`] = {
+          revenueValue: row.revenueValue ? formatUploadCurrency(row.revenueValue) : '',
+          targetValue: row.targetValue ? formatUploadCurrency(row.targetValue) : '',
+          notes: row.notes || '',
+        };
+        return acc;
+      }, {}),
+    );
+  }, [rows]);
+
+  const totals = rows.reduce(
+    (acc, row) => ({
+      revenue: acc.revenue + Number(row.revenueValue || 0),
+      target: acc.target + Number(row.targetValue || 0),
+    }),
+    { revenue: 0, target: 0 },
+  );
+  const difference = totals.revenue - totals.target;
+  const percent = totals.target ? Math.round((totals.revenue / totals.target) * 100) : 0;
+  const progressPercent = Math.max(0, Math.min(100, percent));
+
+  function getDraft(row) {
+    return drafts[`${row.year}-${row.month}`] || { revenueValue: '', targetValue: '', notes: '' };
+  }
+
+  function updateDraft(row, field, value) {
+    setDrafts((current) => ({
+      ...current,
+      [`${row.year}-${row.month}`]: {
+        ...getDraft(row),
+        [field]: field === 'notes' ? value : formatCurrencyInput(value),
+      },
+    }));
+  }
+
+  function saveRow(row) {
+    const draft = getDraft(row);
+    onSaveEntry(row, {
+      revenueValue: parseUploadCurrency(draft.revenueValue),
+      targetValue: parseUploadCurrency(draft.targetValue),
+      notes: draft.notes.trim(),
+    });
+  }
+
+  return (
+    <section className="rotax-revenue-panel">
+      <div className="panel-toolbar">
+        <div className="section-title">
+          <ShieldCheck size={20} />
+          <h2>Faturamento Rotax</h2>
+        </div>
+        <div className="panel-actions">
+          <button className="secondary-button compact" type="button" onClick={() => setActiveView('quotes')}>
+            <FileText size={16} />
+            Cotações
+          </button>
+        </div>
+      </div>
+
+      <div className="master-notice">
+        <ShieldCheck size={18} />
+        Área master restrita ao usuário bruno.scotton@cdsav.com.br
+      </div>
+
+      <div className="rotax-revenue-controls">
+        <label>
+          Ano
+          <select value={activeYear} onChange={(event) => setActiveYear(Number(event.target.value))}>
+            {years.map((year) => (
+              <option key={year} value={year}>
+                {year}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Criar ano
+          <input
+            inputMode="numeric"
+            min="2023"
+            type="number"
+            value={newYear}
+            onChange={(event) => setNewYear(event.target.value)}
+          />
+        </label>
+        <button className="primary-button compact" type="button" onClick={() => onCreateYear(newYear)}>
+          <Plus size={16} />
+          Criar/abrir ano
+        </button>
+      </div>
+
+      <div className="rotax-revenue-summary">
+        <article>
+          <span>Faturamento anual</span>
+          <strong>{formatCurrencyValue(totals.revenue)}</strong>
+        </article>
+        <article>
+          <span>Meta anual</span>
+          <strong>{formatCurrencyValue(totals.target)}</strong>
+        </article>
+        <article className={difference >= 0 ? 'positive' : 'negative'}>
+          <span>Diferença</span>
+          <strong>{formatCurrencyValue(difference)}</strong>
+        </article>
+        <article>
+          <span>Atingimento</span>
+          <strong>{percent}%</strong>
+          <div className="rotax-revenue-progress" aria-hidden="true">
+            <i style={{ width: `${progressPercent}%` }} />
+          </div>
+        </article>
+      </div>
+
+      <div className="table-wrap">
+        <table className="quote-table rotax-revenue-table">
+          <thead>
+            <tr>
+              <th>Mês</th>
+              <th>Faturamento</th>
+              <th>Meta</th>
+              <th>Diferença</th>
+              <th>% meta</th>
+              <th>Observações</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const draft = getDraft(row);
+              const revenue = parseUploadCurrency(draft.revenueValue);
+              const target = parseUploadCurrency(draft.targetValue);
+              const monthDifference = revenue - target;
+              const monthPercent = target ? Math.round((revenue / target) * 100) : 0;
+
+              return (
+                <tr className="quote-row" key={`${row.year}-${row.month}`}>
+                  <td className="strong-text">{monthNames[row.month - 1]}</td>
+                  <td>
+                    <input
+                      inputMode="numeric"
+                      value={draft.revenueValue}
+                      onChange={(event) => updateDraft(row, 'revenueValue', event.target.value)}
+                      placeholder="R$ 0,00"
+                    />
+                  </td>
+                  <td>
+                    <input
+                      inputMode="numeric"
+                      value={draft.targetValue}
+                      onChange={(event) => updateDraft(row, 'targetValue', event.target.value)}
+                      placeholder="R$ 0,00"
+                    />
+                  </td>
+                  <td className={monthDifference >= 0 ? 'positive-text' : 'negative-text'}>
+                    {formatCurrencyValue(monthDifference)}
+                  </td>
+                  <td>{target ? `${monthPercent}%` : '—'}</td>
+                  <td>
+                    <input
+                      value={draft.notes}
+                      onChange={(event) => updateDraft(row, 'notes', event.target.value)}
+                      placeholder="Observação do mês"
+                    />
+                  </td>
+                  <td>
+                    <button className="secondary-button compact" type="button" onClick={() => saveRow(row)}>
+                      <Save size={16} />
+                      Salvar
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 

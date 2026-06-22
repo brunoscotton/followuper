@@ -120,6 +120,18 @@ create table if not exists public.upload_audits (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.rotax_revenue_entries (
+  id uuid primary key,
+  entry_year integer not null check (entry_year >= 2020),
+  entry_month integer not null check (entry_month between 1 and 12),
+  revenue_value numeric not null default 0,
+  target_value numeric not null default 0,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (entry_year, entry_month)
+);
+
 alter table public.info_blocks drop constraint if exists info_blocks_block_type_check;
 alter table public.info_blocks
   add constraint info_blocks_block_type_check
@@ -159,6 +171,7 @@ alter table public.rotax_training_sessions replica identity full;
 alter table public.rotax_training_students replica identity full;
 alter table public.rotax_training_contacts replica identity full;
 alter table public.upload_audits replica identity full;
+alter table public.rotax_revenue_entries replica identity full;
 
 alter table public.quotes enable row level security;
 alter table public.tracking_entries enable row level security;
@@ -168,6 +181,7 @@ alter table public.rotax_training_sessions enable row level security;
 alter table public.rotax_training_students enable row level security;
 alter table public.rotax_training_contacts enable row level security;
 alter table public.upload_audits enable row level security;
+alter table public.rotax_revenue_entries enable row level security;
 
 drop policy if exists "Authenticated users can read quotes" on public.quotes;
 drop policy if exists "Authenticated users can insert quotes" on public.quotes;
@@ -199,6 +213,10 @@ drop policy if exists "Authenticated users can update rotax training contacts" o
 drop policy if exists "Authenticated users can delete rotax training contacts" on public.rotax_training_contacts;
 drop policy if exists "Authenticated users can read upload audits" on public.upload_audits;
 drop policy if exists "Authenticated users can insert upload audits" on public.upload_audits;
+drop policy if exists "Master user can read rotax revenue entries" on public.rotax_revenue_entries;
+drop policy if exists "Master user can insert rotax revenue entries" on public.rotax_revenue_entries;
+drop policy if exists "Master user can update rotax revenue entries" on public.rotax_revenue_entries;
+drop policy if exists "Master user can delete rotax revenue entries" on public.rotax_revenue_entries;
 
 create policy "Authenticated users can read quotes"
   on public.quotes
@@ -387,6 +405,31 @@ create policy "Authenticated users can insert upload audits"
   to authenticated
   with check (true);
 
+create policy "Master user can read rotax revenue entries"
+  on public.rotax_revenue_entries
+  for select
+  to authenticated
+  using (lower(auth.jwt() ->> 'email') = 'bruno.scotton@cdsav.com.br');
+
+create policy "Master user can insert rotax revenue entries"
+  on public.rotax_revenue_entries
+  for insert
+  to authenticated
+  with check (lower(auth.jwt() ->> 'email') = 'bruno.scotton@cdsav.com.br');
+
+create policy "Master user can update rotax revenue entries"
+  on public.rotax_revenue_entries
+  for update
+  to authenticated
+  using (lower(auth.jwt() ->> 'email') = 'bruno.scotton@cdsav.com.br')
+  with check (lower(auth.jwt() ->> 'email') = 'bruno.scotton@cdsav.com.br');
+
+create policy "Master user can delete rotax revenue entries"
+  on public.rotax_revenue_entries
+  for delete
+  to authenticated
+  using (lower(auth.jwt() ->> 'email') = 'bruno.scotton@cdsav.com.br');
+
 do $$
 begin
   if not exists (
@@ -467,5 +510,15 @@ begin
       and tablename = 'upload_audits'
   ) then
     alter publication supabase_realtime add table public.upload_audits;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'rotax_revenue_entries'
+  ) then
+    alter publication supabase_realtime add table public.rotax_revenue_entries;
   end if;
 end $$;

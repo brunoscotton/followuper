@@ -2078,6 +2078,113 @@ td {
   padding: 18px;
 }
 
+.rotax-revenue-panel {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(31, 48, 65, 0.08);
+  display: grid;
+  gap: 18px;
+  margin: 0 auto;
+  max-width: 1440px;
+  padding: 18px;
+}
+
+.master-notice {
+  align-items: center;
+  background: #eef7f6;
+  border: 1px solid #b7deda;
+  border-radius: 8px;
+  color: #0f4f4a;
+  display: inline-flex;
+  font-weight: 900;
+  gap: 8px;
+  justify-self: start;
+  padding: 9px 11px;
+}
+
+.rotax-revenue-controls {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(150px, 190px) minmax(150px, 190px) auto;
+}
+
+.rotax-revenue-summary {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.rotax-revenue-summary article {
+  background: #f8fafc;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  min-height: 112px;
+  padding: 14px;
+}
+
+.rotax-revenue-summary span {
+  color: #596674;
+  font-size: 0.8rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.rotax-revenue-summary strong {
+  color: #102033;
+  font-size: 1.45rem;
+  line-height: 1.1;
+}
+
+.rotax-revenue-summary article.positive strong,
+.positive-text {
+  color: #087f5b;
+}
+
+.rotax-revenue-summary article.negative strong,
+.negative-text {
+  color: #be123c;
+}
+
+.rotax-revenue-progress {
+  background: #dce5ee;
+  border-radius: 999px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.rotax-revenue-progress i {
+  background: #0f766e;
+  display: block;
+  height: 100%;
+}
+
+.rotax-revenue-table th:nth-child(1) {
+  width: 150px;
+}
+
+.rotax-revenue-table th:nth-child(2),
+.rotax-revenue-table th:nth-child(3) {
+  width: 190px;
+}
+
+.rotax-revenue-table th:nth-child(4),
+.rotax-revenue-table th:nth-child(5) {
+  width: 130px;
+}
+
+.rotax-revenue-table th:nth-child(7) {
+  width: 120px;
+}
+
+.rotax-revenue-table input {
+  min-height: 38px;
+  width: 100%;
+}
+
 .rotax-info-tabs {
   align-items: center;
   display: flex;
