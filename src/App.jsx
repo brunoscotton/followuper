@@ -395,6 +395,39 @@ function formatCurrencyValue(value) {
   return Number(value || 0).toLocaleString('pt-BR', { currency: 'BRL', minimumFractionDigits: 2, style: 'currency' });
 }
 
+function isBusinessDay(date) {
+  const day = date.getDay();
+  return day !== 0 && day !== 6;
+}
+
+function countBusinessDaysInMonth(year, month, startDay = 1) {
+  const firstDay = new Date(year, month - 1, Math.max(1, startDay));
+  const lastDay = new Date(year, month, 0);
+  let count = 0;
+
+  for (let date = new Date(firstDay); date <= lastDay; date.setDate(date.getDate() + 1)) {
+    if (isBusinessDay(date)) count += 1;
+  }
+
+  return count;
+}
+
+function countRemainingBusinessDays(year, month, now = new Date()) {
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+
+  if (year < currentYear || (year === currentYear && month < currentMonth)) return 0;
+  if (year > currentYear || month > currentMonth) return countBusinessDaysInMonth(year, month);
+
+  return countBusinessDaysInMonth(year, month, now.getDate());
+}
+
+function isMonthAvailableForGoalDiff(year, month, now = new Date()) {
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+  return year < currentYear || (year === currentYear && month <= currentMonth);
+}
+
 function compareQuoteNumbers(a, b) {
   const normalizedA = normalizeUploadQuoteNumber(a);
   const normalizedB = normalizeUploadQuoteNumber(b);
@@ -2855,6 +2888,9 @@ export function App() {
       month: Number(entry.month),
       revenueValue: Number(changes.revenueValue || 0),
       targetValue: Number(changes.targetValue || 0),
+      matrizValue: Number(changes.matrizValue || 0),
+      campinasValue: Number(changes.campinasValue || 0),
+      goianiaValue: Number(changes.goianiaValue || 0),
       notes: changes.notes || '',
       createdAt: entry.createdAt || nowIso,
       updatedAt: nowIso,
@@ -2872,6 +2908,9 @@ export function App() {
         ? await updateRotaxRevenueEntry(entry.id, {
             revenueValue: nextEntry.revenueValue,
             targetValue: nextEntry.targetValue,
+            matrizValue: nextEntry.matrizValue,
+            campinasValue: nextEntry.campinasValue,
+            goianiaValue: nextEntry.goianiaValue,
             notes: nextEntry.notes,
           })
         : await createRotaxRevenueEntry(nextEntry);
@@ -2904,6 +2943,9 @@ export function App() {
         month: index + 1,
         revenueValue: 0,
         targetValue: 0,
+        matrizValue: 0,
+        campinasValue: 0,
+        goianiaValue: 0,
         notes: '',
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -3265,7 +3307,7 @@ export function App() {
           students={visibleRotaxStudents}
         />
       ) : activeView === 'rotaxRevenue' && isMasterUser ? (
-        <RotaxRevenueWorkspace
+        <RotaxRevenueWorkspaceV2
           activeYear={activeRotaxRevenueYear}
           entries={rotaxRevenueEntries}
           onCreateYear={createRotaxRevenueYear}
@@ -5115,6 +5157,512 @@ function RotaxRevenueWorkspace({ activeYear, entries, onCreateYear, onSaveEntry,
                     </button>
                   </td>
                 </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function RotaxRevenueWorkspaceV2({ activeYear, entries, onCreateYear, onSaveEntry, setActiveView, setActiveYear }) {
+  const years = useMemo(() => {
+    const entryYears = [...new Set(entries.map((entry) => Number(entry.year)))].filter(Boolean);
+    const currentYear = new Date().getFullYear();
+    return [...new Set([currentYear, 2026, ...entryYears])].sort((a, b) => b - a);
+  }, [entries]);
+  const currentDate = new Date();
+  const [newYear, setNewYear] = useState(String(years[0] || currentDate.getFullYear()));
+  const [activeInsight, setActiveInsight] = useState('monthlyGoal');
+  const [monthlyGoalYear, setMonthlyGoalYear] = useState(activeYear);
+  const [monthlyGoalMonth, setMonthlyGoalMonth] = useState(currentDate.getMonth() + 1);
+  const [compareBaseYear, setCompareBaseYear] = useState(2025);
+  const [compareBaseMonth, setCompareBaseMonth] = useState(currentDate.getMonth() + 1);
+  const [compareTargetYear, setCompareTargetYear] = useState(2026);
+  const [compareTargetMonth, setCompareTargetMonth] = useState(currentDate.getMonth() + 1);
+  const [expandedBranchRows, setExpandedBranchRows] = useState([]);
+  const rows = useMemo(() => {
+    const byMonth = new Map(
+      entries
+        .filter((entry) => Number(entry.year) === Number(activeYear))
+        .map((entry) => [Number(entry.month), entry]),
+    );
+
+    return monthNames.map((monthName, index) => {
+      const month = index + 1;
+      return (
+        byMonth.get(month) || {
+          id: '',
+          year: activeYear,
+          month,
+          revenueValue: 0,
+          targetValue: 0,
+          matrizValue: 0,
+          campinasValue: 0,
+          goianiaValue: 0,
+          notes: '',
+        }
+      );
+    });
+  }, [activeYear, entries]);
+  const [drafts, setDrafts] = useState({});
+
+  useEffect(() => {
+    setDrafts(
+      rows.reduce((acc, row) => {
+        acc[`${row.year}-${row.month}`] = {
+          revenueValue: row.revenueValue ? formatUploadCurrency(row.revenueValue) : '',
+          targetValue: row.targetValue ? formatUploadCurrency(row.targetValue) : '',
+          matrizValue: row.matrizValue ? formatUploadCurrency(row.matrizValue) : '',
+          campinasValue: row.campinasValue ? formatUploadCurrency(row.campinasValue) : '',
+          goianiaValue: row.goianiaValue ? formatUploadCurrency(row.goianiaValue) : '',
+          notes: row.notes || '',
+        };
+        return acc;
+      }, {}),
+    );
+  }, [rows]);
+
+  function getEntry(year, month) {
+    return entries.find((entry) => Number(entry.year) === Number(year) && Number(entry.month) === Number(month));
+  }
+
+  const totals = rows.reduce(
+    (acc, row) => ({
+      revenue: acc.revenue + Number(row.revenueValue || 0),
+      target: acc.target + Number(row.targetValue || 0),
+    }),
+    { revenue: 0, target: 0 },
+  );
+  const difference = totals.revenue - totals.target;
+  const percent = totals.target ? Math.round((totals.revenue / totals.target) * 100) : 0;
+  const progressPercent = Math.max(0, Math.min(100, percent));
+  const monthlyGoalEntry = getEntry(monthlyGoalYear, monthlyGoalMonth) || {};
+  const monthlyBusinessDays = countBusinessDaysInMonth(Number(monthlyGoalYear), Number(monthlyGoalMonth));
+  const monthlyRemainingDays = countRemainingBusinessDays(Number(monthlyGoalYear), Number(monthlyGoalMonth), currentDate);
+  const monthlyTarget = Number(monthlyGoalEntry.targetValue || 0);
+  const monthlyRevenue = Number(monthlyGoalEntry.revenueValue || 0);
+  const monthlyMissing = Math.max(0, monthlyTarget - monthlyRevenue);
+  const dailyNeeded = monthlyMissing === 0 || monthlyRemainingDays === 0 ? 0 : monthlyMissing / monthlyRemainingDays;
+  const goalDiffRows = rows.filter((row) => isMonthAvailableForGoalDiff(Number(row.year), Number(row.month), currentDate));
+  const goalDiffTotals = goalDiffRows.reduce(
+    (acc, row) => {
+      const rowDiff = Number(row.revenueValue || 0) - Number(row.targetValue || 0);
+      if (rowDiff >= 0) acc.above += rowDiff;
+      else acc.below += Math.abs(rowDiff);
+      return acc;
+    },
+    { above: 0, below: 0 },
+  );
+  const goalDiffNet = goalDiffTotals.above - goalDiffTotals.below;
+  const compareBaseEntry = getEntry(compareBaseYear, compareBaseMonth) || {};
+  const compareTargetEntry = getEntry(compareTargetYear, compareTargetMonth) || {};
+  const periodDifference = Number(compareTargetEntry.revenueValue || 0) - Number(compareBaseEntry.revenueValue || 0);
+  const annualAverage = totals.revenue / 12;
+
+  function getDraft(row) {
+    return (
+      drafts[`${row.year}-${row.month}`] || {
+        revenueValue: '',
+        targetValue: '',
+        matrizValue: '',
+        campinasValue: '',
+        goianiaValue: '',
+        notes: '',
+      }
+    );
+  }
+
+  function updateDraft(row, field, value) {
+    setDrafts((current) => ({
+      ...current,
+      [`${row.year}-${row.month}`]: {
+        ...getDraft(row),
+        [field]: field === 'notes' ? value : formatCurrencyInput(value),
+      },
+    }));
+  }
+
+  function toggleBranchRow(row) {
+    const key = `${row.year}-${row.month}`;
+    setExpandedBranchRows((current) => (current.includes(key) ? current.filter((item) => item !== key) : [...current, key]));
+  }
+
+  function saveRow(row, options = {}) {
+    const draft = getDraft(row);
+    const matrizValue = parseUploadCurrency(draft.matrizValue);
+    const campinasValue = parseUploadCurrency(draft.campinasValue);
+    const goianiaValue = parseUploadCurrency(draft.goianiaValue);
+    const branchTotal = matrizValue + campinasValue + goianiaValue;
+
+    onSaveEntry(row, {
+      revenueValue: options.useBranchTotal ? branchTotal : parseUploadCurrency(draft.revenueValue),
+      targetValue: parseUploadCurrency(draft.targetValue),
+      matrizValue,
+      campinasValue,
+      goianiaValue,
+      notes: draft.notes.trim(),
+    });
+  }
+
+  function renderYearSelect(value, onChange) {
+    return (
+      <select value={value} onChange={(event) => onChange(Number(event.target.value))}>
+        {years.map((year) => (
+          <option key={year} value={year}>
+            {year}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  function renderMonthSelect(value, onChange) {
+    return (
+      <select value={value} onChange={(event) => onChange(Number(event.target.value))}>
+        {monthNames.map((monthName, index) => (
+          <option key={monthName} value={index + 1}>
+            {monthName}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  return (
+    <section className="rotax-revenue-panel">
+      <div className="panel-toolbar">
+        <div className="section-title">
+          <ShieldCheck size={20} />
+          <h2>Faturamento Rotax</h2>
+        </div>
+        <div className="panel-actions rotax-revenue-actions">
+          <button
+            className={activeInsight === 'monthlyGoal' ? 'secondary-button compact active' : 'secondary-button compact'}
+            type="button"
+            onClick={() => setActiveInsight('monthlyGoal')}
+          >
+            Meta mensal
+          </button>
+          <button
+            className={activeInsight === 'goalDiff' ? 'secondary-button compact active' : 'secondary-button compact'}
+            type="button"
+            onClick={() => setActiveInsight('goalDiff')}
+          >
+            Diferença meta
+          </button>
+          <button
+            className={activeInsight === 'periodDiff' ? 'secondary-button compact active' : 'secondary-button compact'}
+            type="button"
+            onClick={() => setActiveInsight('periodDiff')}
+          >
+            Diferença período
+          </button>
+          <button
+            className={activeInsight === 'annualAverage' ? 'secondary-button compact active' : 'secondary-button compact'}
+            type="button"
+            onClick={() => setActiveInsight('annualAverage')}
+          >
+            Média fat. anual
+          </button>
+          <button className="secondary-button compact" type="button" onClick={() => setActiveView('quotes')}>
+            <FileText size={16} />
+            Cotações
+          </button>
+        </div>
+      </div>
+
+      <div className="master-notice">
+        <ShieldCheck size={18} />
+        Área master restrita ao usuário bruno.scotton@cdsav.com.br
+      </div>
+
+      <div className="rotax-revenue-controls">
+        <label>
+          Ano
+          <select value={activeYear} onChange={(event) => setActiveYear(Number(event.target.value))}>
+            {years.map((year) => (
+              <option key={year} value={year}>
+                {year}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Criar ano
+          <input
+            inputMode="numeric"
+            min="2023"
+            type="number"
+            value={newYear}
+            onChange={(event) => setNewYear(event.target.value)}
+          />
+        </label>
+        <button className="primary-button compact" type="button" onClick={() => onCreateYear(newYear)}>
+          <Plus size={16} />
+          Criar/abrir ano
+        </button>
+      </div>
+
+      <div className="rotax-revenue-summary">
+        <article>
+          <span>Faturamento anual</span>
+          <strong>{formatCurrencyValue(totals.revenue)}</strong>
+        </article>
+        <article>
+          <span>Meta anual</span>
+          <strong>{formatCurrencyValue(totals.target)}</strong>
+        </article>
+        <article className={difference >= 0 ? 'positive' : 'negative'}>
+          <span>Diferença</span>
+          <strong>{formatCurrencyValue(difference)}</strong>
+        </article>
+        <article>
+          <span>Atingimento</span>
+          <strong>{percent}%</strong>
+          <div className="rotax-revenue-progress" aria-hidden="true">
+            <i style={{ width: `${progressPercent}%` }} />
+          </div>
+        </article>
+      </div>
+
+      <div className="rotax-revenue-insight">
+        {activeInsight === 'monthlyGoal' && (
+          <>
+            <div className="rotax-insight-controls">
+              <label>
+                Ano
+                {renderYearSelect(monthlyGoalYear, setMonthlyGoalYear)}
+              </label>
+              <label>
+                Mês
+                {renderMonthSelect(monthlyGoalMonth, setMonthlyGoalMonth)}
+              </label>
+            </div>
+            <div className="rotax-insight-grid">
+              <span>
+                <b>Dias úteis do mês</b>
+                {monthlyBusinessDays}
+              </span>
+              <span>
+                <b>Dias úteis restantes</b>
+                {monthlyRemainingDays}
+              </span>
+              <span>
+                <b>Valor da meta</b>
+                {formatCurrencyValue(monthlyTarget)}
+              </span>
+              <span>
+                <b>Valor atual</b>
+                {formatCurrencyValue(monthlyRevenue)}
+              </span>
+              <span>
+                <b>Venda diária necessária</b>
+                {formatCurrencyValue(dailyNeeded)}
+              </span>
+            </div>
+          </>
+        )}
+
+        {activeInsight === 'goalDiff' && (
+          <div className="rotax-insight-grid three">
+            <span className="positive">
+              <b>Meses acima da meta</b>
+              {formatCurrencyValue(goalDiffTotals.above)}
+            </span>
+            <span className="negative">
+              <b>Meses abaixo da meta</b>
+              {formatCurrencyValue(goalDiffTotals.below)}
+            </span>
+            <span className={goalDiffNet >= 0 ? 'positive' : 'negative'}>
+              <b>Diferença final</b>
+              {formatCurrencyValue(goalDiffNet)}
+            </span>
+          </div>
+        )}
+
+        {activeInsight === 'periodDiff' && (
+          <>
+            <div className="rotax-insight-controls compare">
+              <label>
+                Ano inicial
+                {renderYearSelect(compareBaseYear, setCompareBaseYear)}
+              </label>
+              <label>
+                Mês inicial
+                {renderMonthSelect(compareBaseMonth, setCompareBaseMonth)}
+              </label>
+              <label>
+                Ano comparação
+                {renderYearSelect(compareTargetYear, setCompareTargetYear)}
+              </label>
+              <label>
+                Mês comparação
+                {renderMonthSelect(compareTargetMonth, setCompareTargetMonth)}
+              </label>
+            </div>
+            <div className="rotax-insight-grid three">
+              <span>
+                <b>
+                  {monthNames[compareBaseMonth - 1]} / {compareBaseYear}
+                </b>
+                {formatCurrencyValue(compareBaseEntry.revenueValue)}
+              </span>
+              <span>
+                <b>
+                  {monthNames[compareTargetMonth - 1]} / {compareTargetYear}
+                </b>
+                {formatCurrencyValue(compareTargetEntry.revenueValue)}
+              </span>
+              <span className={periodDifference >= 0 ? 'positive' : 'negative'}>
+                <b>Diferença</b>
+                {formatCurrencyValue(periodDifference)}
+              </span>
+            </div>
+          </>
+        )}
+
+        {activeInsight === 'annualAverage' && (
+          <div className="rotax-insight-grid three">
+            <span>
+              <b>Total faturado em 12 meses</b>
+              {formatCurrencyValue(totals.revenue)}
+            </span>
+            <span>
+              <b>Divisão</b>
+              12 meses
+            </span>
+            <span className="positive">
+              <b>Média fat. anual</b>
+              {formatCurrencyValue(annualAverage)}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="table-wrap">
+        <table className="quote-table rotax-revenue-table">
+          <thead>
+            <tr>
+              <th>Mês</th>
+              <th>Faturamento</th>
+              <th>Meta</th>
+              <th>Diferença</th>
+              <th>% meta</th>
+              <th>Observações</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const draft = getDraft(row);
+              const revenue = parseUploadCurrency(draft.revenueValue);
+              const target = parseUploadCurrency(draft.targetValue);
+              const monthDifference = revenue - target;
+              const monthPercent = target ? Math.round((revenue / target) * 100) : 0;
+              const rowKey = `${row.year}-${row.month}`;
+              const branchesExpanded = expandedBranchRows.includes(rowKey);
+              const branchTotal =
+                parseUploadCurrency(draft.matrizValue) +
+                parseUploadCurrency(draft.campinasValue) +
+                parseUploadCurrency(draft.goianiaValue);
+
+              return (
+                <React.Fragment key={rowKey}>
+                  <tr className="quote-row">
+                    <td className="strong-text">
+                      <div className="month-with-branch">
+                        <button
+                          className="inline-plus-button"
+                          type="button"
+                          title="Abrir faturamento por filial"
+                          aria-label="Abrir faturamento por filial"
+                          onClick={() => toggleBranchRow(row)}
+                        >
+                          <Plus size={15} />
+                        </button>
+                        {monthNames[row.month - 1]}
+                      </div>
+                    </td>
+                    <td>
+                      <input
+                        inputMode="numeric"
+                        value={draft.revenueValue}
+                        onChange={(event) => updateDraft(row, 'revenueValue', event.target.value)}
+                        placeholder="R$ 0,00"
+                      />
+                    </td>
+                    <td>
+                      <input
+                        inputMode="numeric"
+                        value={draft.targetValue}
+                        onChange={(event) => updateDraft(row, 'targetValue', event.target.value)}
+                        placeholder="R$ 0,00"
+                      />
+                    </td>
+                    <td className={monthDifference >= 0 ? 'positive-text' : 'negative-text'}>
+                      {formatCurrencyValue(monthDifference)}
+                    </td>
+                    <td>{target ? `${monthPercent}%` : '—'}</td>
+                    <td>
+                      <input
+                        value={draft.notes}
+                        onChange={(event) => updateDraft(row, 'notes', event.target.value)}
+                        placeholder="Observação do mês"
+                      />
+                    </td>
+                    <td>
+                      <button className="secondary-button compact" type="button" onClick={() => saveRow(row)}>
+                        <Save size={16} />
+                        Salvar
+                      </button>
+                    </td>
+                  </tr>
+                  {branchesExpanded && (
+                    <tr className="closed-details-row rotax-branch-row">
+                      <td colSpan="7">
+                        <div className="rotax-branch-editor">
+                          <label>
+                            Matriz:
+                            <input
+                              inputMode="numeric"
+                              value={draft.matrizValue}
+                              onChange={(event) => updateDraft(row, 'matrizValue', event.target.value)}
+                              placeholder="R$ 0,00"
+                            />
+                          </label>
+                          <label>
+                            Campinas:
+                            <input
+                              inputMode="numeric"
+                              value={draft.campinasValue}
+                              onChange={(event) => updateDraft(row, 'campinasValue', event.target.value)}
+                              placeholder="R$ 0,00"
+                            />
+                          </label>
+                          <label>
+                            Goiania:
+                            <input
+                              inputMode="numeric"
+                              value={draft.goianiaValue}
+                              onChange={(event) => updateDraft(row, 'goianiaValue', event.target.value)}
+                              placeholder="R$ 0,00"
+                            />
+                          </label>
+                          <span className="branch-total">
+                            <b>Total filiais</b>
+                            {formatCurrencyValue(branchTotal)}
+                          </span>
+                          <button className="primary-button compact" type="button" onClick={() => saveRow(row, { useBranchTotal: true })}>
+                            <Save size={16} />
+                            Salvar soma
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
           </tbody>

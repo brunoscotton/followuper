@@ -2185,6 +2185,127 @@ td {
   width: 100%;
 }
 
+.rotax-revenue-actions {
+  flex-wrap: wrap;
+}
+
+.secondary-button.compact.active {
+  background: #eef7f6;
+  border-color: #0f766e;
+  color: #0f766e;
+}
+
+.rotax-revenue-insight {
+  background: #f8fafc;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.rotax-insight-controls {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(150px, 210px));
+}
+
+.rotax-insight-controls.compare {
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+}
+
+.rotax-insight-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.rotax-insight-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.rotax-insight-grid span {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  color: #102033;
+  display: grid;
+  font-weight: 900;
+  gap: 4px;
+  min-height: 78px;
+  padding: 11px;
+}
+
+.rotax-insight-grid b {
+  color: #596674;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+}
+
+.rotax-insight-grid .positive {
+  color: #087f5b;
+}
+
+.rotax-insight-grid .negative {
+  color: #be123c;
+}
+
+.month-with-branch {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.inline-plus-button {
+  align-items: center;
+  background: #eef7f6;
+  border: 1px solid #b7deda;
+  border-radius: 7px;
+  color: #0f766e;
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.inline-plus-button:hover {
+  background: #dff1ef;
+}
+
+.rotax-branch-row td {
+  background: #f8fafc;
+}
+
+.rotax-branch-editor {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(150px, 1fr)) minmax(140px, 180px) auto;
+  padding: 4px 0;
+}
+
+.rotax-branch-editor input {
+  margin-top: 5px;
+}
+
+.branch-total {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  display: grid;
+  font-weight: 900;
+  gap: 2px;
+  min-height: 50px;
+  padding: 8px 10px;
+}
+
+.branch-total b {
+  color: #596674;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
 .rotax-info-tabs {
   align-items: center;
   display: flex;

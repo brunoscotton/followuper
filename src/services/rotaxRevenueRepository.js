@@ -83,6 +83,9 @@ function createSeedEntries() {
     month,
     revenueValue,
     targetValue,
+    matrizValue: 0,
+    campinasValue: 0,
+    goianiaValue: 0,
     notes: '',
     createdAt: now,
     updatedAt: now,
@@ -107,6 +110,9 @@ function toEntry(row) {
     month: Number(row.entry_month),
     revenueValue: Number(row.revenue_value || 0),
     targetValue: Number(row.target_value || 0),
+    matrizValue: Number(row.matriz_value || 0),
+    campinasValue: Number(row.campinas_value || 0),
+    goianiaValue: Number(row.goiania_value || 0),
     notes: row.notes || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -121,6 +127,9 @@ function toRow(entry) {
   if ('month' in entry) row.entry_month = Number(entry.month);
   if ('revenueValue' in entry) row.revenue_value = Number(entry.revenueValue || 0);
   if ('targetValue' in entry) row.target_value = Number(entry.targetValue || 0);
+  if ('matrizValue' in entry) row.matriz_value = Number(entry.matrizValue || 0);
+  if ('campinasValue' in entry) row.campinas_value = Number(entry.campinasValue || 0);
+  if ('goianiaValue' in entry) row.goiania_value = Number(entry.goianiaValue || 0);
   if ('notes' in entry) row.notes = entry.notes || '';
   if ('createdAt' in entry) row.created_at = entry.createdAt;
   if ('updatedAt' in entry) row.updated_at = entry.updatedAt;

@@ -126,6 +126,9 @@ create table if not exists public.rotax_revenue_entries (
   entry_month integer not null check (entry_month between 1 and 12),
   revenue_value numeric not null default 0,
   target_value numeric not null default 0,
+  matriz_value numeric not null default 0,
+  campinas_value numeric not null default 0,
+  goiania_value numeric not null default 0,
   notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -149,6 +152,9 @@ alter table public.quotes add column if not exists loss_reason jsonb;
 alter table public.quotes add column if not exists history jsonb not null default '[]'::jsonb;
 alter table public.tracking_entries add column if not exists invoice_number text;
 alter table public.tracking_entries add column if not exists correios_update_failed boolean not null default false;
+alter table public.rotax_revenue_entries add column if not exists matriz_value numeric not null default 0;
+alter table public.rotax_revenue_entries add column if not exists campinas_value numeric not null default 0;
+alter table public.rotax_revenue_entries add column if not exists goiania_value numeric not null default 0;
 
 alter table public.quotes drop constraint if exists quotes_follow_up_amount_check;
 alter table public.quotes add constraint quotes_follow_up_amount_check check (follow_up_amount > 0);
