@@ -365,6 +365,27 @@ function formatCurrencyValue(value) {
   return Number(value || 0).toLocaleString('pt-BR', { currency: 'BRL', minimumFractionDigits: 2, style: 'currency' });
 }
 
+function compareQuoteNumbers(a, b) {
+  const normalizedA = normalizeUploadQuoteNumber(a);
+  const normalizedB = normalizeUploadQuoteNumber(b);
+  const digitsA = normalizedA.replace(/\D/g, '');
+  const digitsB = normalizedB.replace(/\D/g, '');
+  const numericA = Number(digitsA);
+  const numericB = Number(digitsB);
+
+  if (digitsA && digitsB && Number.isFinite(numericA) && Number.isFinite(numericB) && numericA !== numericB) {
+    return numericA - numericB;
+  }
+
+  return normalizedA.localeCompare(normalizedB, 'pt-BR', { numeric: true, sensitivity: 'base' });
+}
+
+function getQuoteSortDate(quote) {
+  const dateValue = quote.closeDetails?.closedAt || (quote.quoteDate ? `${quote.quoteDate}T12:00:00` : quote.createdAt);
+  const timestamp = new Date(dateValue).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 function getLossReasonLabel(value) {
   return lossReasons.find((reason) => reason.value === value)?.label || value || 'Sem retorno';
 }
@@ -721,6 +742,7 @@ export function App() {
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
   const [sortByRelevance, setSortByRelevance] = useState(false);
+  const [quoteSort, setQuoteSort] = useState({ direction: 'desc', key: '' });
   const [grandpaForm, setGrandpaForm] = useState(initialGrandpaForm);
   const [grandpaErrors, setGrandpaErrors] = useState({});
   const [isUpdatingCorreios, setIsUpdatingCorreios] = useState(false);
@@ -1081,6 +1103,17 @@ export function App() {
         return normalize(quote.clientName).includes(query) || normalize(quote.quoteNumber).includes(query);
       })
       .sort((a, b) => {
+        if (quoteSort.key) {
+          const directionFactor = quoteSort.direction === 'asc' ? 1 : -1;
+          let sortResult = 0;
+
+          if (quoteSort.key === 'quoteNumber') sortResult = compareQuoteNumbers(a.quoteNumber, b.quoteNumber);
+          if (quoteSort.key === 'value') sortResult = getQuoteNumericValue(a) - getQuoteNumericValue(b);
+          if (quoteSort.key === 'date') sortResult = getQuoteSortDate(a) - getQuoteSortDate(b);
+
+          if (sortResult !== 0) return sortResult * directionFactor;
+        }
+
         if (sortByRelevance) {
           const relevanceDiff = getQuoteInterestStars(b) - getQuoteInterestStars(a);
           if (relevanceDiff !== 0) return relevanceDiff;
@@ -1088,7 +1121,7 @@ export function App() {
 
         return new Date(b.createdAt) - new Date(a.createdAt);
       });
-  }, [activeTab, now, quotes, searchTerm, selectedSellers, sortByRelevance]);
+  }, [activeTab, now, quoteSort, quotes, searchTerm, selectedSellers, sortByRelevance]);
 
   const visibleTrackingEntries = useMemo(
     () => {
@@ -2550,6 +2583,14 @@ export function App() {
     setSelectedSellers(value ? [value] : []);
   }
 
+  function changeQuoteSort(key) {
+    const defaultDirection = key === 'quoteNumber' ? 'asc' : 'desc';
+    setQuoteSort((current) => {
+      if (current.key !== key) return { key, direction: defaultDirection };
+      return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+    });
+  }
+
   function updateTrackingForm(field, value) {
     setTrackingForm((current) => {
       if (field === 'deliverySituation' && value === 'Entregue') {
@@ -2966,12 +3007,14 @@ export function App() {
           now={now}
           onArchiveQuote={archiveQuote}
           onChangeStatus={changeStatus}
+          onChangeQuoteSort={changeQuoteSort}
           onEditQuote={openQuoteEditModal}
           onRemoveQuote={removeQuote}
           onRestartFollowUp={restartFollowUp}
           onSubmit={handleSubmit}
           onUpdateForm={updateForm}
           openCloseModal={openCloseModal}
+          quoteSort={quoteSort}
           topOpportunities={topOpportunities}
           expandedQuoteIds={expandedQuoteIds}
           searchTerm={searchTerm}
@@ -4013,6 +4056,7 @@ function QuotesWorkspace({
   metrics,
   now,
   onArchiveQuote,
+  onChangeQuoteSort,
   onChangeStatus,
   onEditQuote,
   onRemoveQuote,
@@ -4020,6 +4064,7 @@ function QuotesWorkspace({
   onSubmit,
   onUpdateForm,
   openCloseModal,
+  quoteSort,
   topOpportunities,
   expandedQuoteIds,
   searchTerm,
@@ -4069,6 +4114,11 @@ function QuotesWorkspace({
 
   function syncTopScrollFromTable(event) {
     if (topScrollRef.current) topScrollRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
+
+  function getSortDirectionLabel(key) {
+    if (quoteSort.key !== key) return '';
+    return quoteSort.direction === 'asc' ? 'Asc' : 'Desc';
   }
 
   return (
@@ -4351,10 +4401,25 @@ function QuotesWorkspace({
             <thead>
               <tr>
                 <th>Status</th>
-                <th>Nº cotação</th>
+                <th>
+                  <button className="sortable-header-button" type="button" onClick={() => onChangeQuoteSort('quoteNumber')}>
+                    Nº cotação
+                    <span>{getSortDirectionLabel('quoteNumber')}</span>
+                  </button>
+                </th>
                 <th>Cliente</th>
-                <th>Valor</th>
-                <th>Data cotação</th>
+                <th>
+                  <button className="sortable-header-button" type="button" onClick={() => onChangeQuoteSort('value')}>
+                    Valor
+                    <span>{getSortDirectionLabel('value')}</span>
+                  </button>
+                </th>
+                <th>
+                  <button className="sortable-header-button" type="button" onClick={() => onChangeQuoteSort('date')}>
+                    Data cotação
+                    <span>{getSortDirectionLabel('date')}</span>
+                  </button>
+                </th>
                 <th>Vendedor</th>
                 <th>Follow-up</th>
                 <th>Ações</th>
