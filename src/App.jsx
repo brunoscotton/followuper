@@ -1456,11 +1456,16 @@ export function App() {
     const query = normalize(customerSearchTerm);
     if (!query) return customers;
 
-    return customers.filter((customer) =>
-      [customer.clientName, customer.clientCode, customer.seller, customer.document, customer.phone, customer.email]
+    return customers.filter((customer) => {
+      const purchaseSearchValues = (customer.purchases || []).flatMap((purchase) => [
+        purchase.productPartNumber,
+        purchase.productDescription,
+      ]);
+
+      return [customer.clientName, customer.clientCode, customer.seller, customer.document, customer.phone, customer.email, ...purchaseSearchValues]
         .filter(Boolean)
-        .some((value) => normalize(value).includes(query)),
-    );
+        .some((value) => normalize(value).includes(query));
+    });
   }, [customerSearchTerm, customers]);
 
   const visibleQuotes = useMemo(() => {
