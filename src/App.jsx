@@ -801,6 +801,7 @@ export function App() {
   const [layoutMode, setLayoutMode] = useState(getStoredLayoutMode);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
+  const [sideQuoteFormOpen, setSideQuoteFormOpen] = useState(false);
   const [isUploadingQuotes, setIsUploadingQuotes] = useState(false);
   const [uploadPreview, setUploadPreview] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -2999,6 +3000,17 @@ export function App() {
     setLayoutMenuOpen(false);
   }
 
+  function navigateFromSideMenu(view) {
+    setActiveView(view);
+    if (view !== 'quotes') setSideQuoteFormOpen(false);
+  }
+
+  function openOpportunityQuote(quote) {
+    setActiveView('quotes');
+    setActiveTab(isFollowUpDue(quote, now) ? 'followup' : 'abertas');
+    setExpandedQuoteIds((current) => (current.includes(quote.id) ? current : [...current, quote.id]));
+  }
+
   if (!authChecked || isLoading) {
     return (
       <main className="app-shell center-shell">
@@ -3014,10 +3026,12 @@ export function App() {
     return <LoginScreen error={appError} onLogin={handleLogin} />;
   }
 
+  const useSideMenu = layoutMode === 'complete' || layoutMode === 'simple';
+
   return (
-    <main className={`app-shell${layoutMode === 'dashboard' ? ' dashboard-shell' : ''}`}>
+    <main className={`app-shell${layoutMode === 'dashboard' ? ' dashboard-shell' : ''}${useSideMenu ? ' side-menu-shell' : ''}`}>
       <section className="topbar">
-        {layoutMode !== 'dashboard' && (
+        {layoutMode !== 'dashboard' && !useSideMenu && (
           <div className="topbar-brand">
           <p className="eyebrow">Dashboard comercial</p>
           <button className="logo-button" type="button" aria-label="Voltar para cotações" onClick={() => setActiveView('quotes')}>
@@ -3026,7 +3040,37 @@ export function App() {
         </div>
         )}
         <div className="top-stack">
-          {layoutMode !== 'complete' ? (
+          {useSideMenu ? (
+            <div className="session-actions compact-top-actions">
+              <div className="menu-dropdown-wrap">
+                <button className="view-button" type="button" onClick={() => setLayoutMenuOpen((current) => !current)}>
+                  Layout
+                </button>
+                {layoutMenuOpen && (
+                  <div className="top-dropdown-menu compact">
+                    <button type="button" onClick={() => changeLayoutMode('simple')}>
+                      Simples
+                    </button>
+                    <button type="button" onClick={() => changeLayoutMode('vovo')}>
+                      Vovô
+                    </button>
+                    <button type="button" onClick={() => changeLayoutMode('dashboard')}>
+                      Dashboard
+                    </button>
+                    <button type="button" onClick={() => changeLayoutMode('complete')}>
+                      Completa
+                    </button>
+                  </div>
+                )}
+              </div>
+              {isSupabaseConfigured && (
+                <button className="logout-button" type="button" onClick={handleSignOut}>
+                  <LogOut size={16} />
+                  Sair
+                </button>
+              )}
+            </div>
+          ) : layoutMode !== 'complete' ? (
             <div className="session-actions">
               <div className="menu-dropdown-wrap">
                 <button className="view-button" type="button" onClick={() => setMainMenuOpen((current) => !current)}>
@@ -3220,6 +3264,29 @@ export function App() {
 
       {appError && <div className="app-alert">{appError}</div>}
 
+      <div className={useSideMenu ? 'app-main-with-sidebar' : 'app-main-without-sidebar'}>
+        {useSideMenu && (
+          <SideNavigation
+            activeView={activeView}
+            dataStatus={dataStatus}
+            errors={errors}
+            form={form}
+            isMasterUser={isMasterUser}
+            isUploadingQuotes={isUploadingQuotes}
+            metrics={metrics}
+            onNavigate={navigateFromSideMenu}
+            onSubmitQuote={handleSubmit}
+            onUpdateForm={updateForm}
+            onUploadClick={() => uploadInputRef.current?.click()}
+            quoteFormOpen={sideQuoteFormOpen}
+            setActiveTab={setActiveTab}
+            setActiveTrackingTab={setActiveTrackingTab}
+            setQuoteFormOpen={setSideQuoteFormOpen}
+            smartAlerts={metrics.smartAlerts}
+            trackingMetrics={trackingMetrics}
+          />
+        )}
+        <div className={useSideMenu ? 'app-content-area' : undefined}>
       {layoutMode === 'dashboard' ? (
         <SalesDashboard quotes={quotes} saleCelebration={saleCelebration} />
       ) : layoutMode === 'vovo' ? (
@@ -3259,6 +3326,8 @@ export function App() {
           onChangeSellerFilter={changeSellerFilter}
           onToggleSellerFilter={toggleSellerFilter}
           onToggleQuoteDetails={toggleQuoteDetails}
+          onOpenOpportunityQuote={openOpportunityQuote}
+          hideQuoteForm={useSideMenu}
           visibleQuotes={visibleQuotes}
         />
       ) : activeView === 'tracking' ? (
@@ -3326,6 +3395,8 @@ export function App() {
           setActiveView={setActiveView}
         />
       )}
+        </div>
+      </div>
 
       {closeModal && (
         <CloseQuoteModal
@@ -4289,6 +4360,232 @@ function GrandpaWorkspace({ errors, form, onSubmit, onUpdate }) {
   );
 }
 
+function SideNavigation({
+  activeView,
+  dataStatus,
+  errors,
+  form,
+  isMasterUser,
+  isUploadingQuotes,
+  metrics,
+  onNavigate,
+  onSubmitQuote,
+  onUpdateForm,
+  onUploadClick,
+  quoteFormOpen,
+  setActiveTab,
+  setActiveTrackingTab,
+  setQuoteFormOpen,
+  smartAlerts,
+  trackingMetrics,
+}) {
+  function navigateQuotes(tab) {
+    onNavigate('quotes');
+    setActiveTab(tab);
+  }
+
+  return (
+    <aside className="side-navigation">
+      <button className="side-logo-button" type="button" aria-label="Voltar para cotações" onClick={() => navigateQuotes('abertas')}>
+        <img className="app-logo side-logo" src="/followuper-logo.png" alt="FollowUper" />
+      </button>
+
+      <div className="side-status">
+        <Database size={15} />
+        {dataStatus}
+      </div>
+
+      <section className={quoteFormOpen ? 'side-quote-create open' : 'side-quote-create'}>
+        <button className="side-nav-button primary" type="button" onClick={() => setQuoteFormOpen((current) => !current)}>
+          <Plus size={17} />
+          Nova cotação
+          <ChevronRight size={16} />
+        </button>
+        {quoteFormOpen && (
+          <form className="side-quote-form" onSubmit={onSubmitQuote} noValidate>
+            <label>
+              Nº cotação
+              <input
+                value={form.quoteNumber}
+                onChange={(event) => onUpdateForm('quoteNumber', event.target.value)}
+                placeholder="Ex: 10482"
+              />
+              {errors.quoteNumber && <small>{errors.quoteNumber}</small>}
+            </label>
+
+            <label>
+              Cliente
+              <input
+                value={form.clientName}
+                onChange={(event) => onUpdateForm('clientName', event.target.value)}
+                placeholder="Nome do cliente"
+              />
+              {errors.clientName && <small>{errors.clientName}</small>}
+            </label>
+
+            <label>
+              Telefone
+              <input value={form.phone} onChange={(event) => onUpdateForm('phone', event.target.value)} placeholder="Telefone" />
+            </label>
+
+            <label>
+              Valor
+              <input
+                inputMode="numeric"
+                value={form.quoteValue}
+                onChange={(event) => onUpdateForm('quoteValue', event.target.value)}
+                placeholder="R$ 0,00"
+              />
+            </label>
+
+            <label>
+              Pagamento
+              <input
+                value={form.paymentTerms}
+                onChange={(event) => onUpdateForm('paymentTerms', event.target.value)}
+                placeholder="Opcional"
+              />
+            </label>
+
+            <label>
+              Data
+              <input type="date" value={form.quoteDate} onChange={(event) => onUpdateForm('quoteDate', event.target.value)} />
+              {errors.quoteDate && <small>{errors.quoteDate}</small>}
+            </label>
+
+            <div className="side-followup-grid">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={form.followUpUsesTime}
+                  onChange={(event) => onUpdateForm('followUpUsesTime', event.target.checked)}
+                />
+                Tempo
+              </label>
+              <label>
+                Follow-up
+                <div className="inline-field-pair">
+                  <input
+                    min="1"
+                    type="number"
+                    value={form.followUpAmount}
+                    onChange={(event) => onUpdateForm('followUpAmount', event.target.value)}
+                  />
+                  {form.followUpUsesTime && (
+                    <select value={form.followUpUnit} onChange={(event) => onUpdateForm('followUpUnit', event.target.value)}>
+                      <option value="hours">Horas</option>
+                      <option value="minutes">Min.</option>
+                    </select>
+                  )}
+                </div>
+                {errors.followUpAmount && <small>{errors.followUpAmount}</small>}
+              </label>
+            </div>
+
+            <label>
+              Vendedor
+              <select value={form.seller} onChange={(event) => onUpdateForm('seller', event.target.value)}>
+                {sellers.map((seller) => (
+                  <option key={seller} value={seller}>
+                    {seller}
+                  </option>
+                ))}
+              </select>
+              {errors.seller && <small>{errors.seller}</small>}
+            </label>
+
+            <label className="checkbox-label interest-checkbox">
+              <input
+                type="checkbox"
+                checked={form.isInterest}
+                onChange={(event) => onUpdateForm('isInterest', event.target.checked)}
+              />
+              Cotação de interesse
+            </label>
+
+            <label>
+              Obs.
+              <textarea
+                value={form.notes}
+                onChange={(event) => onUpdateForm('notes', event.target.value)}
+                placeholder="Observações"
+                rows="3"
+              />
+            </label>
+
+            <button className="primary-button compact" type="submit">
+              <Plus size={16} />
+              Adicionar
+            </button>
+          </form>
+        )}
+      </section>
+
+      <nav className="side-nav-list" aria-label="Menu principal">
+        <button className={activeView === 'quotes' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => navigateQuotes('abertas')}>
+          <FileText size={17} />
+          Cotações
+        </button>
+        <button className="side-nav-button" type="button" disabled={isUploadingQuotes} onClick={onUploadClick}>
+          <Upload size={17} />
+          {isUploadingQuotes ? 'Importando' : 'Upload'}
+        </button>
+        <button className={activeView === 'tracking' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('tracking')}>
+          <Truck size={17} />
+          Rastreio
+        </button>
+        <button className={activeView === 'info' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('info')}>
+          <BookOpenText size={17} />
+          Painel infos.
+        </button>
+        <button className={activeView === 'rotax' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('rotax')}>
+          <GraduationCap size={17} />
+          Trein. Rotax
+        </button>
+        {isMasterUser && (
+          <button
+            className={activeView === 'rotaxRevenue' ? 'side-nav-button active' : 'side-nav-button'}
+            type="button"
+            onClick={() => onNavigate('rotaxRevenue')}
+          >
+            <ShieldCheck size={17} />
+            Fat. Rotax
+          </button>
+        )}
+      </nav>
+
+      <div className="side-alerts" aria-live="polite">
+        <button type="button" onClick={() => navigateQuotes('followup')}>
+          <Bell size={16} />
+          ({metrics.followUpDue}) Follow-up
+        </button>
+        <button type="button" onClick={() => navigateQuotes('abertas')}>
+          <AlertTriangle size={16} />
+          ({metrics.unchangedStatus}) Sem alt.
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            onNavigate('tracking');
+            setActiveTrackingTab('Em andamento');
+          }}
+        >
+          <PackageSearch size={16} />
+          ({trackingMetrics.withoutCode}) S/ rastreio
+        </button>
+      </div>
+
+      {smartAlerts.length > 0 && (
+        <div className="side-smart-alerts">
+          {smartAlerts.map((alert) => (
+            <span key={alert}>{alert}</span>
+          ))}
+        </div>
+      )}
+    </aside>
+  );
+}
+
 function QuotesWorkspace({
   activeTab,
   errors,
@@ -4318,6 +4615,8 @@ function QuotesWorkspace({
   onChangeSellerFilter,
   onToggleSellerFilter,
   onToggleQuoteDetails,
+  onOpenOpportunityQuote,
+  hideQuoteForm,
   visibleQuotes,
 }) {
   const tableWrapRef = useRef(null);
@@ -4363,7 +4662,8 @@ function QuotesWorkspace({
   }
 
   return (
-    <section className="workspace-grid">
+    <section className={hideQuoteForm ? 'workspace-grid no-quote-form' : 'workspace-grid'}>
+      {!hideQuoteForm && (
       <form className="quote-form" onSubmit={onSubmit} noValidate>
         <div className="section-title">
           <FileText size={20} />
@@ -4491,6 +4791,7 @@ function QuotesWorkspace({
           Adicionar cotação
         </button>
       </form>
+      )}
 
       <section className="quotes-panel">
         <div className="panel-toolbar">
@@ -4619,7 +4920,7 @@ function QuotesWorkspace({
                     className="opportunity-item"
                     key={quote.id}
                     type="button"
-                    onClick={() => onToggleQuoteDetails(quote.id)}
+                    onClick={() => onOpenOpportunityQuote(quote)}
                   >
                     <span>
                       <b>{quote.quoteNumber}</b>

@@ -39,6 +39,10 @@ button {
   padding: 12px 18px;
 }
 
+.side-menu-shell {
+  padding: 16px 18px 24px;
+}
+
 .topbar {
   align-items: center;
   display: flex;
@@ -46,6 +50,12 @@ button {
   justify-content: space-between;
   margin: 0 auto 22px;
   max-width: 1440px;
+}
+
+.side-menu-shell .topbar {
+  justify-content: flex-end;
+  margin-bottom: 12px;
+  max-width: 1680px;
 }
 
 .dashboard-shell .topbar {
@@ -152,6 +162,158 @@ h2 {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+}
+
+.compact-top-actions {
+  justify-content: flex-end;
+}
+
+.app-main-with-sidebar {
+  align-items: start;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 282px minmax(0, 1fr);
+  margin: 0 auto;
+  max-width: 1680px;
+}
+
+.app-content-area {
+  min-width: 0;
+}
+
+.side-navigation {
+  align-self: start;
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(31, 48, 65, 0.08);
+  display: grid;
+  gap: 12px;
+  max-height: calc(100vh - 92px);
+  overflow: auto;
+  padding: 14px;
+  position: sticky;
+  top: 16px;
+}
+
+.side-logo-button {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.side-logo {
+  height: 52px;
+  max-width: 220px;
+  object-position: left center;
+}
+
+.side-status {
+  align-items: center;
+  background: #e8f5f3;
+  border: 1px solid #b7deda;
+  border-radius: 8px;
+  color: #0f4f4a;
+  display: flex;
+  font-size: 0.78rem;
+  font-weight: 900;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 9px;
+}
+
+.side-nav-list,
+.side-alerts,
+.side-smart-alerts,
+.side-quote-create {
+  display: grid;
+  gap: 8px;
+}
+
+.side-nav-button,
+.side-alerts button {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  color: #354353;
+  display: inline-flex;
+  font-weight: 900;
+  gap: 8px;
+  justify-content: flex-start;
+  min-height: 38px;
+  padding: 8px 10px;
+  text-align: left;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.side-nav-button:hover,
+.side-alerts button:hover,
+.side-nav-button.active {
+  background: #f7f9fb;
+  border-color: #0f766e;
+  color: #0f766e;
+}
+
+.side-nav-button.primary {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: #ffffff;
+  justify-content: space-between;
+}
+
+.side-nav-button.primary svg:last-child {
+  transition: transform 0.16s ease;
+}
+
+.side-quote-create.open .side-nav-button.primary svg:last-child {
+  transform: rotate(90deg);
+}
+
+.side-quote-form {
+  background: #f8fafc;
+  border: 1px solid #dbe3eb;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.side-quote-form label {
+  font-size: 0.78rem;
+}
+
+.side-quote-form input,
+.side-quote-form select,
+.side-quote-form textarea {
+  min-height: 36px;
+}
+
+.side-followup-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 0.7fr 1fr;
+}
+
+.side-alerts {
+  border-top: 1px solid #e6ebf0;
+  padding-top: 10px;
+}
+
+.side-alerts button {
+  font-size: 0.8rem;
+  min-height: 34px;
+}
+
+.side-smart-alerts span {
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  color: #9a3412;
+  font-size: 0.76rem;
+  font-weight: 900;
+  padding: 7px 8px;
 }
 
 .menu-dropdown-wrap {
@@ -274,6 +436,11 @@ h2 {
   grid-template-columns: minmax(300px, 370px) minmax(0, 1fr);
   margin: 0 auto;
   max-width: 1440px;
+}
+
+.workspace-grid.no-quote-form {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: none;
 }
 
 .app-alert {
@@ -2661,6 +2828,15 @@ button:disabled {
 }
 
 @media (max-width: 1100px) {
+  .app-main-with-sidebar {
+    grid-template-columns: 1fr;
+  }
+
+  .side-navigation {
+    max-height: none;
+    position: static;
+  }
+
   .workspace-grid {
     grid-template-columns: 1fr;
   }
