@@ -89,6 +89,14 @@ function fileNameSafe(value) {
   return safeText(value).replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'contrato';
 }
 
+function htmlEscape(value) {
+  return safeText(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 async function preparePdf(template) {
   const pdf = await PDFDocument.load(dataUrlToBytes(template.fileData));
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -205,10 +213,111 @@ async function generateReturnContract(template, form) {
   };
 }
 
+async function generateReturnWordContract(template, form) {
+  if (!template?.fileData) throw new Error('Faca upload do modelo de devolucao em Word antes de gerar o arquivo.');
+
+  const total = (form.items || []).reduce((sum, item) => {
+    const quantity = Number(item.quantity || 0);
+    const unitValue = Number(item.unitValue || 0);
+    return sum + Number(item.totalValue || quantity * unitValue || 0);
+  }, 0);
+  const rows = (form.items || [])
+    .filter((item) => item.productCode || item.description)
+    .map((item) => {
+      const quantity = Number(item.quantity || 0);
+      const unitValue = Number(item.unitValue || 0);
+      const lineTotal = Number(item.totalValue || quantity * unitValue || 0);
+      return `
+        <tr>
+          <td>${htmlEscape(item.productCode)}</td>
+          <td>${htmlEscape(item.description)}</td>
+          <td class="center">${htmlEscape(quantity || '')}</td>
+          <td class="money">${htmlEscape(brl(unitValue))}</td>
+          <td class="money">${htmlEscape(brl(lineTotal))}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Devolucao de Mercadoria</title>
+  <style>
+    @page { margin: 2.2cm 2.4cm; }
+    body { color: #111827; font-family: Arial, sans-serif; font-size: 11pt; line-height: 1.35; }
+    p { margin: 0 0 10px; }
+    .date { margin-bottom: 30px; }
+    .recipient { margin-bottom: 28px; }
+    h1 { font-size: 14pt; margin: 24px 0 16px; text-align: center; }
+    table { border-collapse: collapse; margin: 14px 0 18px; width: 100%; }
+    th, td { border: 1px solid #111827; padding: 6px 7px; vertical-align: top; }
+    th { background: #f3f4f6; font-size: 9.5pt; text-align: left; }
+    .center { text-align: center; }
+    .money { text-align: right; white-space: nowrap; }
+    .total { font-weight: bold; text-align: right; }
+    .signature { margin-top: 48px; }
+    .signature-line { border-top: 1px solid #111827; margin: 0 0 8px; width: 280px; }
+  </style>
+</head>
+<body>
+  <p class="date">${htmlEscape(form.city || 'CIDADE')}, ${htmlEscape(form.date || getTodayLabel())}</p>
+
+  <div class="recipient">
+    <p>A</p>
+    <p>Cruzeiro do Sul Aviacao Ltda.</p>
+    <p>CNPJ: 03.144928/0001-38 - I.E.: 115.549.885.110</p>
+    <p>Rua Lucrecia Maciel, 91 - Vila Guarani</p>
+    <p>Sao Paulo - SP</p>
+    <p>CEP: 04314-130</p>
+  </div>
+
+  <h1>Devolucao de Mercadoria</h1>
+
+  <p>Estamos lhes devolvendo os produtos descriminados abaixo adquiridos atraves de vossa nota fiscal no ${htmlEscape(form.invoiceNumber)}, de ${htmlEscape(form.date || getTodayLabel())}, por estarem em desacordo com nosso pedido.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 18%;">Cod. Produto</th>
+        <th>Descricao do Produto</th>
+        <th style="width: 10%;">Quant.</th>
+        <th style="width: 16%;">V. Unitario</th>
+        <th style="width: 16%;">Vlr Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows || '<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>'}
+      <tr>
+        <td class="total" colspan="4">Valor total dos produtos</td>
+        <td class="money"><strong>${htmlEscape(brl(total))}</strong></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="signature">
+    <div class="signature-line">&nbsp;</div>
+    <p>${htmlEscape(form.name)}</p>
+    <p>${htmlEscape(form.document)}</p>
+    <p>${htmlEscape(form.address)}</p>
+    <p>${htmlEscape(form.city)} - ${htmlEscape(form.state)}</p>
+    <p>${htmlEscape(form.zipCode)}</p>
+  </div>
+</body>
+</html>`;
+
+  return {
+    bytes: new TextEncoder().encode(html),
+    fileName: `Devolucao_${fileNameSafe(form.name)}.doc`,
+    mimeType: 'application/msword',
+  };
+}
+
 export async function generateContractPdf(type, template, form) {
-  if (!template?.fileData) throw new Error('Faca upload do modelo de contrato antes de gerar o PDF.');
+  if (!template?.fileData) throw new Error('Faca upload do modelo de contrato antes de gerar o arquivo.');
   if (type === 'motor') return generateMotorContract(template, form);
   if (type === 'training') return generateTrainingContract(template, form);
-  if (type === 'return') return generateReturnContract(template, form);
+  if (type === 'return') return generateReturnWordContract(template, form);
   throw new Error('Tipo de contrato invalido.');
 }

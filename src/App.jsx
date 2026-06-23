@@ -353,7 +353,7 @@ const initialContractForms = {
     zipCode: '',
     invoiceNumber: '',
     date: getTodayInputValue(),
-    items: [{ productCode: '', description: '', quantity: '', unitValue: '', totalValue: '' }],
+    items: [{ id: crypto.randomUUID(), productCode: '', description: '', quantity: '', unitValue: '', totalValue: '' }],
   },
 };
 
@@ -2718,7 +2718,10 @@ export function App() {
       ...current,
       return: {
         ...current.return,
-        items: [...current.return.items, { productCode: '', description: '', quantity: '', unitValue: '', totalValue: '' }],
+        items: [
+          ...current.return.items,
+          { id: crypto.randomUUID(), productCode: '', description: '', quantity: '', unitValue: '', totalValue: '' },
+        ],
       },
     }));
   }
@@ -2782,7 +2785,7 @@ export function App() {
 
     try {
       const result = await generateContractPdf(type, template, form);
-      const blob = new Blob([result.bytes], { type: 'application/pdf' });
+      const blob = new Blob([result.bytes], { type: result.mimeType || 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -7066,9 +7069,9 @@ function ContractsWorkspace({
         <div className="panel-actions">
           <label className="secondary-button compact file-button">
             <Upload size={16} />
-            {isSavingTemplate ? 'Salvando...' : 'Upload modelo'}
+            {isSavingTemplate ? 'Salvando...' : activeType === 'return' ? 'Upload modelo Word' : 'Upload modelo PDF'}
             <input
-              accept="application/pdf,.pdf"
+              accept={activeType === 'return' ? ".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" : 'application/pdf,.pdf'}
               hidden
               type="file"
               onChange={(event) => {
@@ -7080,7 +7083,7 @@ function ContractsWorkspace({
           </label>
           <button className="primary-button compact" type="button" disabled={isGenerating} onClick={() => onGenerate(activeType)}>
             <Save size={16} />
-            {isGenerating ? 'Gerando...' : 'Gerar PDF'}
+            {isGenerating ? 'Gerando...' : activeType === 'return' ? 'Gerar Word' : 'Gerar PDF'}
           </button>
         </div>
       </div>
@@ -7206,9 +7209,9 @@ function ContractsWorkspace({
 
           <div className="contract-return-items">
             {form.items.map((item, index) => (
-              <div className="contract-return-item" key={`${index}-${item.productCode}`}>
+              <div className="contract-return-item" key={item.id || index}>
                 <label>
-                  Cod. Produto
+                  PN
                   <input value={item.productCode} onChange={(event) => onUpdateReturnItem(index, 'productCode', event.target.value)} />
                 </label>
                 <label>
