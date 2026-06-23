@@ -2198,18 +2198,21 @@ td {
 }
 
 .customers-table th:nth-child(1) {
-  width: 110px;
+  width: 92px;
 }
 
 .customers-table {
-  min-width: 1180px;
+  min-width: 1040px;
 }
 
 .customers-table th:nth-child(4),
+.customers-table th:nth-child(7) {
+  width: 96px;
+}
+
 .customers-table th:nth-child(5),
-.customers-table th:nth-child(7),
 .customers-table th:nth-child(8) {
-  width: 120px;
+  width: 76px;
 }
 
 .customers-table th:last-child,
@@ -2279,7 +2282,7 @@ td {
   color: #354353;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(180px, 340px) 122px 112px 72px;
+  grid-template-columns: minmax(160px, 300px) 72px 112px 104px;
   justify-content: start;
   min-height: 48px;
   padding: 9px 10px;
@@ -2301,6 +2304,11 @@ td {
 }
 
 .customer-product-card > button span:nth-child(2) {
+  color: #17212b;
+  font-weight: 900;
+}
+
+.customer-product-card > button span:nth-child(3) {
   color: #0f766e;
   font-weight: 900;
 }
@@ -2324,7 +2332,7 @@ td {
 .customer-product-history table {
   border-collapse: collapse;
   max-width: 100%;
-  min-width: 500px;
+  min-width: 420px;
   width: max-content;
 }
 

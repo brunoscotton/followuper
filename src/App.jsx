@@ -7476,9 +7476,9 @@ function CustomersWorkspace({
                                         <b>{product.productPartNumber}</b>
                                         {product.productDescription}
                                       </span>
+                                      <span>{Number(product.totalQuantity || 0).toLocaleString('pt-BR')} un.</span>
                                       <span>{formatCurrencyValue(product.latestPurchase.totalValue)}</span>
                                       <span>{formatDate(`${product.latestPurchase.purchaseDate}T12:00:00`)}</span>
-                                      <span>{Number(product.totalQuantity || 0).toLocaleString('pt-BR')} un.</span>
                                     </button>
                                     {productExpanded && (
                                       <div className="customer-product-history">
@@ -7489,18 +7489,18 @@ function CustomersWorkspace({
                                           <thead>
                                             <tr>
                                               <th>Data</th>
+                                              <th>Qtd.</th>
                                               <th>Valor pago</th>
                                               <th>Unitário</th>
-                                              <th>Qtd.</th>
                                             </tr>
                                           </thead>
                                           <tbody>
                                             {product.purchases.map((purchase) => (
                                               <tr key={purchase.id}>
                                                 <td>{purchase.purchaseDate ? formatDate(`${purchase.purchaseDate}T12:00:00`) : '—'}</td>
+                                                <td>{Number(purchase.quantity || 0).toLocaleString('pt-BR')}</td>
                                                 <td>{formatCurrencyValue(purchase.totalValue)}</td>
                                                 <td>{formatCurrencyValue(purchase.unitValue)}</td>
-                                                <td>{Number(purchase.quantity || 0).toLocaleString('pt-BR')}</td>
                                               </tr>
                                             ))}
                                           </tbody>
