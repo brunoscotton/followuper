@@ -65,6 +65,48 @@ function toRow(customer) {
   return row;
 }
 
+function mergePurchases(existingPurchases = [], nextPurchases = []) {
+  const byId = new Map();
+  [...existingPurchases, ...nextPurchases].forEach((purchase) => {
+    if (!purchase?.id) return;
+    byId.set(purchase.id, { ...byId.get(purchase.id), ...purchase });
+  });
+
+  return [...byId.values()].sort((a, b) => new Date(b.purchaseDate || 0) - new Date(a.purchaseDate || 0));
+}
+
+function mergeCustomerRecords(existing, next) {
+  if (!existing) return next;
+
+  return {
+    ...existing,
+    ...next,
+    clientCode: next.clientCode || existing.clientCode || '',
+    clientName: next.clientName || existing.clientName || '',
+    document: next.document || existing.document || '',
+    phone: next.phone || existing.phone || '',
+    fiscalAddress: next.fiscalAddress || existing.fiscalAddress || '',
+    deliveryAddress: next.deliveryAddress || existing.deliveryAddress || '',
+    state: next.state || existing.state || '',
+    email: next.email || existing.email || '',
+    zipCode: next.zipCode || existing.zipCode || '',
+    purchases: mergePurchases(existing.purchases, next.purchases),
+    createdAt: existing.createdAt || next.createdAt,
+    updatedAt: next.updatedAt || existing.updatedAt,
+  };
+}
+
+function dedupeCustomersById(customers) {
+  const byId = new Map();
+
+  customers.forEach((customer) => {
+    if (!customer?.id) return;
+    byId.set(customer.id, mergeCustomerRecords(byId.get(customer.id), customer));
+  });
+
+  return sortCustomers([...byId.values()]);
+}
+
 export async function loadCustomers() {
   if (!supabase) {
     return { customers: sortCustomers(loadLocalCustomers()), mode: 'local' };
@@ -114,10 +156,12 @@ export async function updateCustomer(id, changes) {
 }
 
 export async function upsertCustomers(nextCustomers) {
+  const dedupedCustomers = dedupeCustomersById(nextCustomers);
+
   if (!supabase) {
     const existing = loadLocalCustomers();
     const existingById = new Map(existing.map((customer) => [customer.id, customer]));
-    nextCustomers.forEach((customer) => existingById.set(customer.id, customer));
+    dedupedCustomers.forEach((customer) => existingById.set(customer.id, mergeCustomerRecords(existingById.get(customer.id), customer)));
     const customers = sortCustomers([...existingById.values()]);
     saveLocalCustomers(customers);
     return customers;
@@ -125,7 +169,7 @@ export async function upsertCustomers(nextCustomers) {
 
   const { data, error } = await supabase
     .from('customers')
-    .upsert(nextCustomers.map(toRow), { onConflict: 'id' })
+    .upsert(dedupedCustomers.map(toRow), { onConflict: 'id' })
     .select('*');
   if (error) throw error;
 
