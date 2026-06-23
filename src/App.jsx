@@ -535,6 +535,12 @@ function getSellerFromUploadCode(value) {
   return '';
 }
 
+function getCustomerSellerFromUploadRow(row, sellerIndex) {
+  if (sellerIndex < 0) return '';
+  const value = normalizeUploadValue(row[sellerIndex]);
+  return getSellerFromUploadCode(value) || value;
+}
+
 async function parseQuotesUploadFile(file) {
   const rows = await readSheet(file, 2);
   const headerIndex = rows.findIndex((row) => {
@@ -621,6 +627,8 @@ function buildCustomersFromUploadRows(rows, existingCustomers = []) {
     return headers.includes('cliente') && headers.includes('nome') && headers.includes('vlrtotal');
   });
   const startIndex = headerIndex >= 0 ? headerIndex + 1 : 1;
+  const headers = headerIndex >= 0 ? rows[headerIndex].map(normalizeUploadHeader) : [];
+  const sellerIndex = headers.findIndex((header) => header.includes('vendedor'));
   const existingByKey = new Map();
   existingCustomers.forEach((customer) => {
     if (customer.clientCode) existingByKey.set(normalizeCustomerKey(customer.clientCode), customer);
@@ -642,6 +650,7 @@ function buildCustomersFromUploadRows(rows, existingCustomers = []) {
           id: crypto.randomUUID(),
           clientCode,
           clientName,
+          seller: '',
           document: '',
           phone: '',
           fiscalAddress: '',
@@ -656,6 +665,7 @@ function buildCustomersFromUploadRows(rows, existingCustomers = []) {
 
     customer.clientCode = clientCode || customer.clientCode || '';
     customer.clientName = clientName || customer.clientName || '';
+    customer.seller = getCustomerSellerFromUploadRow(row, sellerIndex) || customer.seller || '';
     customer.document = normalizeUploadValue(row[13]) || customer.document || '';
     customer.phone = normalizeUploadValue(row[15]) || customer.phone || '';
     customer.fiscalAddress = normalizeUploadValue(row[16]) || customer.fiscalAddress || '';
@@ -1300,7 +1310,7 @@ export function App() {
     if (!query) return customers;
 
     return customers.filter((customer) =>
-      [customer.clientName, customer.clientCode, customer.document, customer.phone, customer.email]
+      [customer.clientName, customer.clientCode, customer.seller, customer.document, customer.phone, customer.email]
         .filter(Boolean)
         .some((value) => normalize(value).includes(query)),
     );
@@ -2837,10 +2847,15 @@ export function App() {
 
     const existingCustomer = findCustomerByName(quote.clientName);
     const phone = quote.phone || details?.phone || '';
+    const seller = quote.seller || '';
 
     if (existingCustomer) {
-      if (phone && existingCustomer.phone !== phone) {
-        const savedCustomer = await updateCustomer(existingCustomer.id, { phone });
+      const changes = {};
+      if (phone && existingCustomer.phone !== phone) changes.phone = phone;
+      if (seller && existingCustomer.seller !== seller) changes.seller = seller;
+
+      if (Object.keys(changes).length > 0) {
+        const savedCustomer = await updateCustomer(existingCustomer.id, changes);
         setCustomers((current) => sortCustomers(current.map((customer) => (customer.id === savedCustomer.id ? savedCustomer : customer))));
       }
       return;
@@ -2851,6 +2866,7 @@ export function App() {
       id: crypto.randomUUID(),
       clientCode: '',
       clientName: quote.clientName.trim(),
+      seller,
       document: '',
       phone,
       fiscalAddress: '',
@@ -6688,6 +6704,10 @@ function CustomersWorkspace({
                         <div className="customer-details">
                           <div className="customer-address-grid">
                             <span>
+                              <b>Vendedor</b>
+                              {customer.seller || '—'}
+                            </span>
+                            <span>
                               <b>End. Cadastro</b>
                               {customer.fiscalAddress || '—'}
                             </span>
@@ -6718,9 +6738,9 @@ function CustomersWorkspace({
                                         <b>{product.productPartNumber}</b>
                                         {product.productDescription}
                                       </span>
+                                      <span>{formatCurrencyValue(product.latestPurchase.totalValue)}</span>
                                       <span>{formatDate(`${product.latestPurchase.purchaseDate}T12:00:00`)}</span>
                                       <span>{Number(product.totalQuantity || 0).toLocaleString('pt-BR')} un.</span>
-                                      <span>{formatCurrencyValue(product.latestPurchase.totalValue)}</span>
                                     </button>
                                     {productExpanded && (
                                       <div className="customer-product-history">
@@ -6731,18 +6751,18 @@ function CustomersWorkspace({
                                           <thead>
                                             <tr>
                                               <th>Data</th>
-                                              <th>Qtd.</th>
                                               <th>Valor pago</th>
                                               <th>Unitário</th>
+                                              <th>Qtd.</th>
                                             </tr>
                                           </thead>
                                           <tbody>
                                             {product.purchases.map((purchase) => (
                                               <tr key={purchase.id}>
                                                 <td>{purchase.purchaseDate ? formatDate(`${purchase.purchaseDate}T12:00:00`) : '—'}</td>
-                                                <td>{Number(purchase.quantity || 0).toLocaleString('pt-BR')}</td>
                                                 <td>{formatCurrencyValue(purchase.totalValue)}</td>
                                                 <td>{formatCurrencyValue(purchase.unitValue)}</td>
+                                                <td>{Number(purchase.quantity || 0).toLocaleString('pt-BR')}</td>
                                               </tr>
                                             ))}
                                           </tbody>

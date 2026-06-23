@@ -32,6 +32,7 @@ function toCustomer(row) {
     id: row.id,
     clientCode: row.client_code || '',
     clientName: row.client_name || '',
+    seller: row.seller || '',
     document: row.document || '',
     phone: row.phone || '',
     fiscalAddress: row.fiscal_address || '',
@@ -51,6 +52,7 @@ function toRow(customer) {
   if ('id' in customer) row.id = customer.id;
   if ('clientCode' in customer) row.client_code = customer.clientCode || '';
   if ('clientName' in customer) row.client_name = customer.clientName || '';
+  if ('seller' in customer) row.seller = customer.seller || '';
   if ('document' in customer) row.document = customer.document || '';
   if ('phone' in customer) row.phone = customer.phone || '';
   if ('fiscalAddress' in customer) row.fiscal_address = customer.fiscalAddress || '';
@@ -83,6 +85,7 @@ function mergeCustomerRecords(existing, next) {
     ...next,
     clientCode: next.clientCode || existing.clientCode || '',
     clientName: next.clientName || existing.clientName || '',
+    seller: next.seller || existing.seller || '',
     document: next.document || existing.document || '',
     phone: next.phone || existing.phone || '',
     fiscalAddress: next.fiscalAddress || existing.fiscalAddress || '',

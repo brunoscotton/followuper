@@ -125,6 +125,7 @@ create table if not exists public.customers (
   id uuid primary key,
   client_code text,
   client_name text not null,
+  seller text,
   document text,
   phone text,
   fiscal_address text,
@@ -170,6 +171,7 @@ alter table public.quotes add column if not exists history jsonb not null defaul
 alter table public.tracking_entries add column if not exists invoice_number text;
 alter table public.tracking_entries add column if not exists phone text;
 alter table public.tracking_entries add column if not exists correios_update_failed boolean not null default false;
+alter table public.customers add column if not exists seller text;
 alter table public.rotax_revenue_entries add column if not exists matriz_value numeric not null default 0;
 alter table public.rotax_revenue_entries add column if not exists campinas_value numeric not null default 0;
 alter table public.rotax_revenue_entries add column if not exists goiania_value numeric not null default 0;
