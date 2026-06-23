@@ -120,6 +120,22 @@ create table if not exists public.upload_audits (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.customers (
+  id uuid primary key,
+  client_code text,
+  client_name text not null,
+  document text,
+  phone text,
+  fiscal_address text,
+  delivery_address text,
+  state text,
+  email text,
+  zip_code text,
+  purchases jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.rotax_revenue_entries (
   id uuid primary key,
   entry_year integer not null check (entry_year >= 2020),
@@ -177,6 +193,7 @@ alter table public.rotax_training_sessions replica identity full;
 alter table public.rotax_training_students replica identity full;
 alter table public.rotax_training_contacts replica identity full;
 alter table public.upload_audits replica identity full;
+alter table public.customers replica identity full;
 alter table public.rotax_revenue_entries replica identity full;
 
 alter table public.quotes enable row level security;
@@ -187,6 +204,7 @@ alter table public.rotax_training_sessions enable row level security;
 alter table public.rotax_training_students enable row level security;
 alter table public.rotax_training_contacts enable row level security;
 alter table public.upload_audits enable row level security;
+alter table public.customers enable row level security;
 alter table public.rotax_revenue_entries enable row level security;
 
 drop policy if exists "Authenticated users can read quotes" on public.quotes;
@@ -219,6 +237,10 @@ drop policy if exists "Authenticated users can update rotax training contacts" o
 drop policy if exists "Authenticated users can delete rotax training contacts" on public.rotax_training_contacts;
 drop policy if exists "Authenticated users can read upload audits" on public.upload_audits;
 drop policy if exists "Authenticated users can insert upload audits" on public.upload_audits;
+drop policy if exists "Authenticated users can read customers" on public.customers;
+drop policy if exists "Authenticated users can insert customers" on public.customers;
+drop policy if exists "Authenticated users can update customers" on public.customers;
+drop policy if exists "Authenticated users can delete customers" on public.customers;
 drop policy if exists "Master user can read rotax revenue entries" on public.rotax_revenue_entries;
 drop policy if exists "Master user can insert rotax revenue entries" on public.rotax_revenue_entries;
 drop policy if exists "Master user can update rotax revenue entries" on public.rotax_revenue_entries;
@@ -411,6 +433,31 @@ create policy "Authenticated users can insert upload audits"
   to authenticated
   with check (true);
 
+create policy "Authenticated users can read customers"
+  on public.customers
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert customers"
+  on public.customers
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update customers"
+  on public.customers
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete customers"
+  on public.customers
+  for delete
+  to authenticated
+  using (true);
+
 create policy "Master user can read rotax revenue entries"
   on public.rotax_revenue_entries
   for select
@@ -516,6 +563,16 @@ begin
       and tablename = 'upload_audits'
   ) then
     alter publication supabase_realtime add table public.upload_audits;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'customers'
+  ) then
+    alter publication supabase_realtime add table public.customers;
   end if;
 
   if not exists (

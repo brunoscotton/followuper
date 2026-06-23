@@ -32,6 +32,7 @@ import {
   Truck,
   Type,
   Upload,
+  Users,
   X,
 } from 'lucide-react';
 import React from 'react';
@@ -96,6 +97,15 @@ import {
   subscribeToRotaxRevenueChanges,
   updateRotaxRevenueEntry,
 } from './services/rotaxRevenueRepository';
+import {
+  cacheCustomers,
+  createCustomer,
+  loadCustomers,
+  sortCustomers,
+  subscribeToCustomerChanges,
+  updateCustomer,
+  upsertCustomers,
+} from './services/customersRepository';
 import { createUploadAudit, loadUploadAudits } from './services/uploadAuditsRepository';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
@@ -580,6 +590,115 @@ async function parseQuotesUploadFile(file) {
   };
 }
 
+function normalizeCustomerKey(value) {
+  return normalizeUploadText(value).replace(/[^A-Z0-9]/g, '');
+}
+
+function formatUploadDateValue(value) {
+  if (!value) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10);
+
+  return normalizeUploadValue(value);
+}
+
+function mergeCustomerPurchases(existingPurchases, newPurchases) {
+  const byId = new Map();
+  [...(existingPurchases || []), ...(newPurchases || [])].forEach((purchase) => {
+    if (!purchase?.id) return;
+    byId.set(purchase.id, purchase);
+  });
+
+  return [...byId.values()].sort((a, b) => new Date(b.purchaseDate || 0) - new Date(a.purchaseDate || 0));
+}
+
+function buildCustomersFromUploadRows(rows, existingCustomers = []) {
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('cliente') && headers.includes('nome') && headers.includes('vlrtotal');
+  });
+  const startIndex = headerIndex >= 0 ? headerIndex + 1 : 1;
+  const existingByKey = new Map();
+  existingCustomers.forEach((customer) => {
+    if (customer.clientCode) existingByKey.set(normalizeCustomerKey(customer.clientCode), customer);
+    if (customer.clientName) existingByKey.set(normalizeCustomerKey(customer.clientName), customer);
+  });
+  const grouped = new Map();
+
+  for (const row of rows.slice(startIndex)) {
+    const clientCode = normalizeUploadValue(row[1]);
+    const clientName = normalizeUploadValue(row[2]);
+    if (!clientCode && !clientName) continue;
+
+    const key = clientCode ? normalizeCustomerKey(clientCode) : normalizeCustomerKey(clientName);
+    const existing = grouped.get(key) || existingByKey.get(key) || existingByKey.get(normalizeCustomerKey(clientName));
+    const nowIso = new Date().toISOString();
+    const customer = existing
+      ? { ...existing, purchases: [...(existing.purchases || [])] }
+      : {
+          id: crypto.randomUUID(),
+          clientCode,
+          clientName,
+          document: '',
+          phone: '',
+          fiscalAddress: '',
+          deliveryAddress: '',
+          state: '',
+          email: '',
+          zipCode: '',
+          purchases: [],
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+
+    customer.clientCode = clientCode || customer.clientCode || '';
+    customer.clientName = clientName || customer.clientName || '';
+    customer.document = normalizeUploadValue(row[13]) || customer.document || '';
+    customer.phone = normalizeUploadValue(row[15]) || customer.phone || '';
+    customer.fiscalAddress = normalizeUploadValue(row[16]) || customer.fiscalAddress || '';
+    customer.deliveryAddress = normalizeUploadValue(row[17]) || customer.deliveryAddress || '';
+    customer.state = normalizeUploadValue(row[18]) || customer.state || '';
+    customer.email = normalizeUploadValue(row[19]) || customer.email || '';
+    customer.zipCode = normalizeUploadValue(row[21]) || customer.zipCode || '';
+    customer.updatedAt = nowIso;
+
+    const productPartNumber = normalizeUploadValue(row[7]) || normalizeUploadValue(row[9]);
+    const productDescription = normalizeUploadValue(row[10]);
+    const normalizedProduct = normalizeUploadText(productPartNumber || productDescription);
+    if (productPartNumber && normalizedProduct !== 'FRETE') {
+      const quantity = Number(row[8] || 0) || 0;
+      const totalValue = parseUploadCurrency(row[3]);
+      const purchaseDate = formatUploadDateValue(row[12]);
+      const quoteItem = normalizeUploadValue(row[0]);
+      const purchase = {
+        id: `${quoteItem || productPartNumber}-${purchaseDate}-${totalValue}-${quantity}`,
+        quoteItem,
+        orderNumber: normalizeUploadValue(row[6]),
+        productPartNumber,
+        productDescription,
+        quantity,
+        totalValue,
+        unitValue: quantity ? Math.round((totalValue / quantity) * 100) / 100 : totalValue,
+        purchaseDate,
+      };
+      customer.purchases = mergeCustomerPurchases(customer.purchases, [purchase]);
+    }
+
+    grouped.set(key, customer);
+  }
+
+  return sortCustomers([...grouped.values()]);
+}
+
+async function parseCustomersUploadFile(file, existingCustomers) {
+  const rows = await readSheet(file, 2);
+  const customers = buildCustomersFromUploadRows(rows, existingCustomers);
+  if (customers.length === 0) throw new Error('Nao encontrei clientes validos na segunda aba da planilha.');
+  return customers;
+}
+
 function addDays(dateValue, days) {
   const date = new Date(dateValue);
   date.setDate(date.getDate() + Number(days || 0));
@@ -757,6 +876,7 @@ export function App() {
   const [rotaxContacts, setRotaxContacts] = useState([]);
   const [rotaxRevenueEntries, setRotaxRevenueEntries] = useState([]);
   const [activeRotaxRevenueYear, setActiveRotaxRevenueYear] = useState(2026);
+  const [customers, setCustomers] = useState([]);
   const [uploadAudits, setUploadAudits] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [activeView, setActiveView] = useState('quotes');
@@ -771,7 +891,11 @@ export function App() {
   const [layoutMenuOpen, setLayoutMenuOpen] = useState(false);
   const [sideQuoteFormOpen, setSideQuoteFormOpen] = useState(false);
   const [isUploadingQuotes, setIsUploadingQuotes] = useState(false);
+  const [isUploadingCustomers, setIsUploadingCustomers] = useState(false);
   const [uploadPreview, setUploadPreview] = useState(null);
+  const [customerSearchTerm, setCustomerSearchTerm] = useState('');
+  const [expandedCustomerIds, setExpandedCustomerIds] = useState([]);
+  const [expandedCustomerProductKeys, setExpandedCustomerProductKeys] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
@@ -811,6 +935,7 @@ export function App() {
   const [now, setNow] = useState(new Date());
   const [saleCelebration, setSaleCelebration] = useState(null);
   const uploadInputRef = useRef(null);
+  const customerUploadInputRef = useRef(null);
   const previousClosedQuoteIdsRef = useRef(null);
   const autoArchiveRunningRef = useRef(false);
   const closedUnarchiveRunningRef = useRef(false);
@@ -865,6 +990,7 @@ export function App() {
       setRotaxStudents([]);
       setRotaxContacts([]);
       setRotaxRevenueEntries([]);
+      setCustomers([]);
       setUploadAudits([]);
       setIsLoading(false);
       return () => {
@@ -873,8 +999,8 @@ export function App() {
     }
 
     setIsLoading(true);
-    Promise.all([loadStoredQuotes(), loadTrackingEntries(), loadInfoBlocks(), loadRotaxTrainingData(), loadUploadAudits()])
-      .then(([quoteResult, trackingResult, infoResult, rotaxResult, uploadAuditResult]) => {
+    Promise.all([loadStoredQuotes(), loadTrackingEntries(), loadInfoBlocks(), loadRotaxTrainingData(), loadUploadAudits(), loadCustomers()])
+      .then(([quoteResult, trackingResult, infoResult, rotaxResult, uploadAuditResult, customerResult]) => {
         if (!active) return;
         setQuotes(quoteResult.quotes);
         setTrackingEntries(trackingResult.entries);
@@ -884,6 +1010,7 @@ export function App() {
         setRotaxStudents(rotaxResult.students);
         setRotaxContacts(rotaxResult.contacts);
         setUploadAudits(uploadAuditResult.audits);
+        setCustomers(customerResult.customers);
         setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
         setDataStatus(quoteResult.mode === 'supabase' ? 'Supabase · tempo real' : 'Local');
         setAppError('');
@@ -920,12 +1047,16 @@ export function App() {
               );
             }
           });
+          const unsubscribeCustomers = subscribeToCustomerChanges(({ eventType, customer, oldId }) => {
+            setCustomers((current) => syncCollection(current, eventType, customer, oldId, sortCustomers, cacheCustomers));
+          });
 
           unsubscribeRealtime = () => {
             unsubscribeQuotes();
             unsubscribeTracking();
             unsubscribeInfoBlocks();
             unsubscribeRotax();
+            unsubscribeCustomers();
           };
         }
       })
@@ -1161,6 +1292,17 @@ export function App() {
     }),
     [trackingEntries],
   );
+
+  const visibleCustomers = useMemo(() => {
+    const query = normalize(customerSearchTerm);
+    if (!query) return customers;
+
+    return customers.filter((customer) =>
+      [customer.clientName, customer.clientCode, customer.document, customer.phone, customer.email]
+        .filter(Boolean)
+        .some((value) => normalize(value).includes(query)),
+    );
+  }, [customerSearchTerm, customers]);
 
   const visibleQuotes = useMemo(() => {
     const query = normalize(searchTerm);
@@ -1657,9 +1799,24 @@ export function App() {
         return { ...current, followUpUsesTime: nextValue, followUpUnit: nextValue ? 'hours' : 'days' };
       }
 
+      if (field === 'clientName') {
+        const customer = findCustomerByName(nextValue);
+        return {
+          ...current,
+          clientName: nextValue,
+          phone: customer?.phone || current.phone,
+        };
+      }
+
       return { ...current, [field]: nextValue };
     });
     setErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  function findCustomerByName(value) {
+    const normalized = normalize(value || '');
+    if (!normalized) return null;
+    return customers.find((customer) => normalize(customer.clientName || '') === normalized) || null;
   }
 
   function updateGrandpaForm(field, value) {
@@ -1982,6 +2139,7 @@ export function App() {
         if (isClosedUpload && savedQuote.closeDetails) {
           if (existingQuote.status !== 'fechada') closedCount += 1;
           await ensureTrackingEntry(savedQuote, savedQuote.closeDetails);
+          await ensureCustomerFromClosedQuote(savedQuote, savedQuote.closeDetails);
         }
       }
 
@@ -2037,6 +2195,7 @@ export function App() {
         if (isClosedUpload && savedQuote.closeDetails) {
           closedCount += 1;
           await ensureTrackingEntry(savedQuote, savedQuote.closeDetails);
+          await ensureCustomerFromClosedQuote(savedQuote, savedQuote.closeDetails);
         }
       }
 
@@ -2139,6 +2298,7 @@ export function App() {
         if (isClosedUpload && savedQuote.closeDetails) {
           if (existingQuote.status !== 'fechada') closedCount += 1;
           await ensureTrackingEntry(savedQuote, savedQuote.closeDetails);
+          await ensureCustomerFromClosedQuote(savedQuote, savedQuote.closeDetails);
         }
       }
 
@@ -2202,6 +2362,7 @@ export function App() {
         if (isClosedUpload && savedQuote.closeDetails) {
           closedCount += 1;
           await ensureTrackingEntry(savedQuote, savedQuote.closeDetails);
+          await ensureCustomerFromClosedQuote(savedQuote, savedQuote.closeDetails);
         }
       }
 
@@ -2244,14 +2405,39 @@ export function App() {
     setUploadPreview(null);
   }
 
+  async function handleCustomersUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setIsUploadingCustomers(true);
+
+    try {
+      const importedCustomers = await parseCustomersUploadFile(file, customers);
+      const savedCustomers = await upsertCustomers(importedCustomers);
+      setCustomers((current) => {
+        const byId = new Map(current.map((customer) => [customer.id, customer]));
+        savedCustomers.forEach((customer) => byId.set(customer.id, customer));
+        return sortCustomers([...byId.values()]);
+      });
+      setActiveView('customers');
+      setAppError(`Clientes atualizados: ${savedCustomers.length} cadastro(s) processado(s).`);
+    } catch (error) {
+      setAppError(error.message || 'Nao foi possivel importar a base de clientes.');
+    } finally {
+      setIsUploadingCustomers(false);
+    }
+  }
+
   function openCloseModal(quote) {
     setCloseModal({ quoteId: quote.id, quoteNumber: quote.quoteNumber, clientName: quote.clientName });
     const totalValue = quote.closeDetails?.totalValue || quote.quoteValue || '';
+    const customer = findCustomerByName(quote.clientName);
     setCloseDetails({
       ...initialCloseDetails,
       ...quote.closeDetails,
       carrier: quote.closeDetails?.carrier || quote.closeDetails?.freight || '',
-      phone: quote.phone || '',
+      phone: quote.phone || customer?.phone || '',
       totalValue,
     });
     setCloseErrors({});
@@ -2352,6 +2538,7 @@ export function App() {
       const savedQuote = await updateQuote(closeModal.quoteId, changes);
       setQuotes((current) => current.map((quote) => (quote.id === closeModal.quoteId ? savedQuote : quote)));
       await ensureTrackingEntry(savedQuote, changes.closeDetails);
+      await ensureCustomerFromClosedQuote(savedQuote, changes.closeDetails);
       setCloseModal(null);
       setCloseDetails(initialCloseDetails);
       setCloseErrors({});
@@ -2396,6 +2583,15 @@ export function App() {
     setQuoteEditForm((current) => {
       if (field === 'followUpUsesTime') {
         return { ...current, followUpUsesTime: nextValue, followUpUnit: nextValue ? 'hours' : 'days' };
+      }
+
+      if (field === 'clientName') {
+        const customer = findCustomerByName(nextValue);
+        return {
+          ...current,
+          clientName: nextValue,
+          phone: customer?.phone || current.phone,
+        };
       }
 
       return { ...current, [field]: nextValue };
@@ -2626,6 +2822,41 @@ export function App() {
       setTrackingEntries(previousTrackingEntries);
       setAppError(error.message || 'Não foi possível remover a cotação.');
     }
+  }
+
+  async function ensureCustomerFromClosedQuote(quote, details) {
+    if (!quote?.clientName?.trim()) return;
+
+    const existingCustomer = findCustomerByName(quote.clientName);
+    const phone = quote.phone || details?.phone || '';
+
+    if (existingCustomer) {
+      if (phone && existingCustomer.phone !== phone) {
+        const savedCustomer = await updateCustomer(existingCustomer.id, { phone });
+        setCustomers((current) => sortCustomers(current.map((customer) => (customer.id === savedCustomer.id ? savedCustomer : customer))));
+      }
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const customer = {
+      id: crypto.randomUUID(),
+      clientCode: '',
+      clientName: quote.clientName.trim(),
+      document: '',
+      phone,
+      fiscalAddress: '',
+      deliveryAddress: '',
+      state: '',
+      email: '',
+      zipCode: '',
+      purchases: [],
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    const savedCustomer = await createCustomer(customer);
+    setCustomers((current) => sortCustomers([savedCustomer, ...current.filter((item) => item.id !== savedCustomer.id)]));
   }
 
   async function removeTrackingEntry(id) {
@@ -3221,6 +3452,12 @@ export function App() {
         </div>
       </section>
       <input ref={uploadInputRef} accept=".xlsx" hidden type="file" onChange={handleQuotesUpload} />
+      <input ref={customerUploadInputRef} accept=".xlsx" hidden type="file" onChange={handleCustomersUpload} />
+      <datalist id="customer-name-options">
+        {customers.map((customer) => (
+          <option key={customer.id} value={customer.clientName} />
+        ))}
+      </datalist>
 
       {appError && <div className="app-alert">{appError}</div>}
 
@@ -3232,10 +3469,12 @@ export function App() {
             errors={errors}
             form={form}
             isMasterUser={isMasterUser}
+            isUploadingCustomers={isUploadingCustomers}
             isUploadingQuotes={isUploadingQuotes}
             metrics={metrics}
             onNavigate={navigateFromSideMenu}
             onSubmitQuote={handleSubmit}
+            onUploadCustomersClick={() => customerUploadInputRef.current?.click()}
             onUpdateForm={updateForm}
             onUploadClick={() => uploadInputRef.current?.click()}
             quoteFormOpen={sideQuoteFormOpen}
@@ -3303,6 +3542,24 @@ export function App() {
           setActiveView={setActiveView}
           searchTerm={trackingSearchTerm}
           setSearchTerm={setTrackingSearchTerm}
+        />
+      ) : activeView === 'customers' ? (
+        <CustomersWorkspace
+          customers={visibleCustomers}
+          expandedCustomerIds={expandedCustomerIds}
+          expandedProductKeys={expandedCustomerProductKeys}
+          isUploading={isUploadingCustomers}
+          onToggleCustomer={(id) =>
+            setExpandedCustomerIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
+          }
+          onToggleProduct={(key) =>
+            setExpandedCustomerProductKeys((current) =>
+              current.includes(key) ? current.filter((item) => item !== key) : [...current, key],
+            )
+          }
+          onUploadClick={() => customerUploadInputRef.current?.click()}
+          searchTerm={customerSearchTerm}
+          setSearchTerm={setCustomerSearchTerm}
         />
       ) : activeView === 'rotax' ? (
         <RotaxTrainingWorkspace
@@ -4324,10 +4581,12 @@ function SideNavigation({
   errors,
   form,
   isMasterUser,
+  isUploadingCustomers,
   isUploadingQuotes,
   metrics,
   onNavigate,
   onSubmitQuote,
+  onUploadCustomersClick,
   onUpdateForm,
   onUploadClick,
   quoteFormOpen,
@@ -4374,6 +4633,7 @@ function SideNavigation({
             <label>
               Cliente
               <input
+                list="customer-name-options"
                 value={form.clientName}
                 onChange={(event) => onUpdateForm('clientName', event.target.value)}
                 placeholder="Nome do cliente"
@@ -4491,6 +4751,14 @@ function SideNavigation({
         <button className={activeView === 'tracking' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('tracking')}>
           <Truck size={17} />
           Rastreio
+        </button>
+        <button className={activeView === 'customers' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('customers')}>
+          <Users size={17} />
+          Clientes
+        </button>
+        <button className="side-nav-button" type="button" disabled={isUploadingCustomers} onClick={onUploadCustomersClick}>
+          <Upload size={17} />
+          {isUploadingCustomers ? 'Importando' : 'Upload clientes'}
         </button>
         <button className={activeView === 'info' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('info')}>
           <BookOpenText size={17} />
@@ -4638,6 +4906,7 @@ function QuotesWorkspace({
         <label>
           Nome do cliente
           <input
+            list="customer-name-options"
             value={form.clientName}
             onChange={(event) => onUpdateForm('clientName', event.target.value)}
             placeholder="Ex: ACME Ltda."
@@ -6296,6 +6565,187 @@ function RotaxContactsTable({ contacts, onAdd, onEdit, onRemove }) {
   );
 }
 
+function getCustomerProductGroups(customer) {
+  const grouped = new Map();
+
+  (customer.purchases || []).forEach((purchase) => {
+    const key = `${purchase.productPartNumber || 'produto'}-${purchase.productDescription || ''}`;
+    const current = grouped.get(key) || {
+      key,
+      productPartNumber: purchase.productPartNumber || '',
+      productDescription: purchase.productDescription || '',
+      totalQuantity: 0,
+      totalValue: 0,
+      purchases: [],
+      latestPurchase: purchase,
+    };
+
+    current.totalQuantity += Number(purchase.quantity || 0);
+    current.totalValue += Number(purchase.totalValue || 0);
+    current.purchases.push(purchase);
+    if (new Date(purchase.purchaseDate || 0) > new Date(current.latestPurchase.purchaseDate || 0)) {
+      current.latestPurchase = purchase;
+    }
+    grouped.set(key, current);
+  });
+
+  return [...grouped.values()].sort(
+    (a, b) => new Date(b.latestPurchase.purchaseDate || 0) - new Date(a.latestPurchase.purchaseDate || 0),
+  );
+}
+
+function CustomersWorkspace({
+  customers,
+  expandedCustomerIds,
+  expandedProductKeys,
+  isUploading,
+  onToggleCustomer,
+  onToggleProduct,
+  onUploadClick,
+  searchTerm,
+  setSearchTerm,
+}) {
+  return (
+    <section className="customers-panel">
+      <div className="panel-toolbar">
+        <div className="section-title">
+          <Users size={20} />
+          <h2>Clientes</h2>
+        </div>
+        <div className="panel-actions">
+          <button className="secondary-button compact" type="button" disabled={isUploading} onClick={onUploadClick}>
+            <Upload size={16} />
+            {isUploading ? 'Importando...' : 'Upload planilha'}
+          </button>
+          <label className="search-box">
+            <Search size={18} />
+            <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Buscar por nome do cliente" />
+          </label>
+        </div>
+      </div>
+
+      <div className="table-wrap">
+        <table className="quote-table customers-table">
+          <thead>
+            <tr>
+              <th>Cod.</th>
+              <th>Cliente</th>
+              <th>CNPJ/CPF</th>
+              <th>Telefone</th>
+              <th>UF</th>
+              <th>E-mail</th>
+              <th>Compras</th>
+            </tr>
+          </thead>
+          <tbody>
+            {customers.map((customer) => {
+              const expanded = expandedCustomerIds.includes(customer.id);
+              const productGroups = getCustomerProductGroups(customer);
+
+              return (
+                <React.Fragment key={customer.id}>
+                  <tr className="quote-row expandable" onClick={() => onToggleCustomer(customer.id)}>
+                    <td className="strong-text">{customer.clientCode || '—'}</td>
+                    <td>{customer.clientName}</td>
+                    <td>{customer.document || '—'}</td>
+                    <td>{customer.phone || '—'}</td>
+                    <td>{customer.state || '—'}</td>
+                    <td>{customer.email || '—'}</td>
+                    <td>{customer.purchases?.length || 0}</td>
+                  </tr>
+                  {expanded && (
+                    <tr className="closed-details-row">
+                      <td colSpan="7">
+                        <div className="customer-details">
+                          <div className="customer-address-grid">
+                            <span>
+                              <b>End. Cadastro</b>
+                              {customer.fiscalAddress || '—'}
+                            </span>
+                            <span>
+                              <b>End. Entrega</b>
+                              {customer.deliveryAddress || '—'}
+                            </span>
+                            <span>
+                              <b>CEP</b>
+                              {customer.zipCode || '—'}
+                            </span>
+                          </div>
+
+                          <div className="customer-products">
+                            <strong>Últimos produtos comprados</strong>
+                            {productGroups.length === 0 ? (
+                              <p>Nenhuma compra de produto cadastrada.</p>
+                            ) : (
+                              productGroups.map((product) => {
+                                const productKey = `${customer.id}-${product.key}`;
+                                const productExpanded = expandedProductKeys.includes(productKey);
+                                const averageUnitValue = product.totalQuantity ? product.totalValue / product.totalQuantity : 0;
+
+                                return (
+                                  <div className="customer-product-card" key={productKey}>
+                                    <button type="button" onClick={() => onToggleProduct(productKey)}>
+                                      <span>
+                                        <b>{product.productPartNumber}</b>
+                                        {product.productDescription}
+                                      </span>
+                                      <span>{formatDate(`${product.latestPurchase.purchaseDate}T12:00:00`)}</span>
+                                      <span>{Number(product.totalQuantity || 0).toLocaleString('pt-BR')} un.</span>
+                                      <span>{formatCurrencyValue(product.latestPurchase.totalValue)}</span>
+                                    </button>
+                                    {productExpanded && (
+                                      <div className="customer-product-history">
+                                        <div className="customer-product-average">
+                                          Média de preço de venda: <b>{formatCurrencyValue(averageUnitValue)}</b>
+                                        </div>
+                                        <table>
+                                          <thead>
+                                            <tr>
+                                              <th>Data</th>
+                                              <th>Qtd.</th>
+                                              <th>Valor pago</th>
+                                              <th>Unitário</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {product.purchases.map((purchase) => (
+                                              <tr key={purchase.id}>
+                                                <td>{purchase.purchaseDate ? formatDate(`${purchase.purchaseDate}T12:00:00`) : '—'}</td>
+                                                <td>{Number(purchase.quantity || 0).toLocaleString('pt-BR')}</td>
+                                                <td>{formatCurrencyValue(purchase.totalValue)}</td>
+                                                <td>{formatCurrencyValue(purchase.unitValue)}</td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {customers.length === 0 && (
+        <div className="empty-state">
+          <Users size={28} />
+          <p>Nenhum cliente encontrado.</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function TrackingWorkspace({
   activeTrackingTab,
   correiosCandidateCount,
@@ -6686,6 +7136,7 @@ function QuoteEditModal({ errors, form, onCancel, onSubmit, onUpdate }) {
         <label>
           Nome do cliente
           <input
+            list="customer-name-options"
             value={form.clientName}
             onChange={(event) => onUpdate('clientName', event.target.value)}
             placeholder="Ex: ACME Ltda."
