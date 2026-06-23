@@ -516,38 +516,6 @@ function shouldRequestLossReason(quote, now) {
   return !isClosed(quote) && !isArchived(quote) && (isFollowUpDue(quote, now) || getQuoteAgeInDays(quote, now) >= 15);
 }
 
-function getOpportunityScore(quote, now) {
-  if (isClosed(quote) || isArchived(quote)) return 0;
-
-  const value = getQuoteNumericValue(quote);
-  const inactiveDays = getQuoteInactiveDays(quote, now);
-  let score = 0;
-
-  if (value >= 100000) score += 45;
-  else if (value >= 50000) score += 35;
-  else if (value >= 10000) score += 25;
-  else if (value >= 5000) score += 15;
-
-  if (!isFinalClientName(quote.clientName)) score += 12;
-  if (quote.seller) score += 5;
-  if (quote.status === 'negociacao') score += 22;
-  if (isFollowUpDue(quote, now)) score += 28;
-  if (inactiveDays >= 7) score += 18;
-  else if (inactiveDays >= 3) score += 10;
-  if (getQuoteInterestStars(quote) >= 2) score += 12;
-
-  return score;
-}
-
-function getTopOpportunities(quotes, now, limit = 10) {
-  return quotes
-    .filter((quote) => !isClosed(quote) && !isArchived(quote))
-    .map((quote) => ({ quote, score: getOpportunityScore(quote, now) }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || getQuoteNumericValue(b.quote) - getQuoteNumericValue(a.quote))
-    .slice(0, limit);
-}
-
 function getSellerFromUploadCode(value) {
   const code = normalizeUploadValue(value).replace(/\D/g, '').padStart(6, '0');
   if (code === '000022') return 'Bruno';
@@ -1184,8 +1152,6 @@ export function App() {
       ].filter(Boolean),
     };
   }, [quotes, now]);
-
-  const topOpportunities = useMemo(() => getTopOpportunities(quotes, now, 10), [now, quotes]);
 
   const trackingMetrics = useMemo(
     () => ({
@@ -3005,12 +2971,6 @@ export function App() {
     if (view !== 'quotes') setSideQuoteFormOpen(false);
   }
 
-  function openOpportunityQuote(quote) {
-    setActiveView('quotes');
-    setActiveTab(isFollowUpDue(quote, now) ? 'followup' : 'abertas');
-    setExpandedQuoteIds((current) => (current.includes(quote.id) ? current : [...current, quote.id]));
-  }
-
   if (!authChecked || isLoading) {
     return (
       <main className="app-shell center-shell">
@@ -3314,7 +3274,6 @@ export function App() {
           onUpdateForm={updateForm}
           openCloseModal={openCloseModal}
           quoteSort={quoteSort}
-          topOpportunities={topOpportunities}
           expandedQuoteIds={expandedQuoteIds}
           searchTerm={searchTerm}
           selectedSellers={selectedSellers}
@@ -3326,7 +3285,6 @@ export function App() {
           onChangeSellerFilter={changeSellerFilter}
           onToggleSellerFilter={toggleSellerFilter}
           onToggleQuoteDetails={toggleQuoteDetails}
-          onOpenOpportunityQuote={openOpportunityQuote}
           hideQuoteForm={useSideMenu}
           visibleQuotes={visibleQuotes}
         />
@@ -4603,7 +4561,6 @@ function QuotesWorkspace({
   onUpdateForm,
   openCloseModal,
   quoteSort,
-  topOpportunities,
   expandedQuoteIds,
   searchTerm,
   selectedSellers,
@@ -4615,7 +4572,6 @@ function QuotesWorkspace({
   onChangeSellerFilter,
   onToggleSellerFilter,
   onToggleQuoteDetails,
-  onOpenOpportunityQuote,
   hideQuoteForm,
   visibleQuotes,
 }) {
@@ -4623,7 +4579,6 @@ function QuotesWorkspace({
   const tableRef = useRef(null);
   const topScrollRef = useRef(null);
   const [tableScrollWidth, setTableScrollWidth] = useState(0);
-  const [isOpportunityPanelCollapsed, setIsOpportunityPanelCollapsed] = useState(false);
 
   useEffect(() => {
     function updateScrollWidth() {
@@ -4646,7 +4601,7 @@ function QuotesWorkspace({
       window.removeEventListener('resize', updateScrollWidth);
       resizeObserver.disconnect();
     };
-  }, [activeTab, isSimpleLayout, topOpportunities.length, visibleQuotes.length]);
+  }, [activeTab, isSimpleLayout, visibleQuotes.length]);
 
   function syncTableScrollFromTop(event) {
     if (tableWrapRef.current) tableWrapRef.current.scrollLeft = event.currentTarget.scrollLeft;
@@ -4897,42 +4852,6 @@ function QuotesWorkspace({
               </div>
             </div>
           </>
-        )}
-
-        {topOpportunities.length > 0 && (
-          <div className={isOpportunityPanelCollapsed ? 'opportunity-panel collapsed' : 'opportunity-panel'}>
-            <div className="opportunity-header">
-              <strong>Top 10 oportunidades para atacar hoje</strong>
-              <button
-                className="opportunity-collapse-button"
-                type="button"
-                aria-expanded={!isOpportunityPanelCollapsed}
-                onClick={() => setIsOpportunityPanelCollapsed((current) => !current)}
-              >
-                <ChevronRight size={16} />
-                {isOpportunityPanelCollapsed ? `Mostrar (${topOpportunities.length})` : 'Minimizar'}
-              </button>
-            </div>
-            {!isOpportunityPanelCollapsed && (
-              <div className="opportunity-list">
-                {topOpportunities.map(({ quote, score }) => (
-                  <button
-                    className="opportunity-item"
-                    key={quote.id}
-                    type="button"
-                    onClick={() => onOpenOpportunityQuote(quote)}
-                  >
-                    <span>
-                      <b>{quote.quoteNumber}</b>
-                      {quote.clientName}
-                    </span>
-                    <strong>{formatCurrencyValue(getQuoteNumericValue(quote))}</strong>
-                    <em>{score} pts</em>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
         )}
 
         <div className="table-top-scroll" ref={topScrollRef} onScroll={syncTableScrollFromTop} aria-label="Mover tabela lateralmente">

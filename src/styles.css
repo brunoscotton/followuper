@@ -172,7 +172,7 @@ h2 {
   align-items: start;
   display: grid;
   gap: 18px;
-  grid-template-columns: 282px minmax(0, 1fr);
+  grid-template-columns: 360px minmax(0, 1fr);
   margin: 0 auto;
   max-width: 1680px;
 }
@@ -1050,109 +1050,6 @@ small {
   font-weight: 700;
   gap: 14px;
   margin: 0 0 12px;
-}
-
-.opportunity-panel {
-  background: #f8fafc;
-  border: 1px solid #dbe3eb;
-  border-radius: 8px;
-  display: grid;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 10px;
-}
-
-.opportunity-panel.collapsed {
-  background: #ffffff;
-}
-
-.opportunity-header {
-  align-items: center;
-  display: flex;
-  gap: 10px;
-  justify-content: space-between;
-}
-
-.opportunity-header strong {
-  color: #17212b;
-  font-size: 0.9rem;
-}
-
-.opportunity-collapse-button {
-  align-items: center;
-  background: #ffffff;
-  border: 1px solid #d9e0e7;
-  border-radius: 7px;
-  color: #354353;
-  display: inline-flex;
-  font-size: 0.8rem;
-  font-weight: 900;
-  gap: 5px;
-  min-height: 32px;
-  padding: 5px 9px;
-  white-space: nowrap;
-}
-
-.opportunity-collapse-button:hover {
-  border-color: #0f766e;
-  color: #0f766e;
-}
-
-.opportunity-collapse-button svg {
-  transform: rotate(90deg);
-  transition: transform 0.16s ease;
-}
-
-.opportunity-panel.collapsed .opportunity-collapse-button svg {
-  transform: rotate(0deg);
-}
-
-.opportunity-list {
-  display: grid;
-  gap: 7px;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-}
-
-.opportunity-item {
-  align-items: center;
-  background: #ffffff;
-  border: 1px solid #d9e0e7;
-  border-radius: 8px;
-  color: #344252;
-  display: grid;
-  gap: 6px;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  min-height: 52px;
-  padding: 8px 10px;
-  text-align: left;
-}
-
-.opportunity-item:hover {
-  border-color: #0f766e;
-}
-
-.opportunity-item span {
-  display: grid;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.opportunity-item span b,
-.opportunity-item strong {
-  color: #17212b;
-  font-weight: 900;
-}
-
-.opportunity-item em {
-  background: #e8f5f3;
-  border-radius: 999px;
-  color: #0f766e;
-  font-size: 0.76rem;
-  font-style: normal;
-  font-weight: 900;
-  padding: 3px 7px;
 }
 
 .legend span,
