@@ -470,6 +470,13 @@ function formatCurrencyValue(value) {
   return Number(value || 0).toLocaleString('pt-BR', { currency: 'BRL', minimumFractionDigits: 2, style: 'currency' });
 }
 
+function formatDocumentNumber(value) {
+  const digits = normalizeUploadValue(value).replace(/\D/g, '');
+  if (digits.length === 11) return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  if (digits.length === 14) return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+  return normalizeUploadValue(value);
+}
+
 function isBusinessDay(date) {
   const day = date.getDay();
   return day !== 0 && day !== 6;
@@ -7319,6 +7326,42 @@ function CustomersWorkspace({
   searchTerm,
   setSearchTerm,
 }) {
+  const tableWrapRef = useRef(null);
+  const tableRef = useRef(null);
+  const topScrollRef = useRef(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
+
+  useEffect(() => {
+    function updateScrollWidth() {
+      const nextWidth = tableRef.current?.scrollWidth || tableWrapRef.current?.scrollWidth || 0;
+      setTableScrollWidth(nextWidth);
+    }
+
+    updateScrollWidth();
+    window.addEventListener('resize', updateScrollWidth);
+
+    if (typeof ResizeObserver === 'undefined') {
+      return () => window.removeEventListener('resize', updateScrollWidth);
+    }
+
+    const resizeObserver = new ResizeObserver(updateScrollWidth);
+    if (tableRef.current) resizeObserver.observe(tableRef.current);
+    if (tableWrapRef.current) resizeObserver.observe(tableWrapRef.current);
+
+    return () => {
+      window.removeEventListener('resize', updateScrollWidth);
+      resizeObserver.disconnect();
+    };
+  }, [customers.length]);
+
+  function syncTableScrollFromTop(event) {
+    if (tableWrapRef.current) tableWrapRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
+
+  function syncTopScrollFromTable(event) {
+    if (topScrollRef.current) topScrollRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
+
   return (
     <section className="customers-panel">
       <div className="panel-toolbar">
@@ -7338,8 +7381,12 @@ function CustomersWorkspace({
         </div>
       </div>
 
-      <div className="table-wrap">
-        <table className="quote-table customers-table">
+      <div className="table-top-scroll" ref={topScrollRef} onScroll={syncTableScrollFromTop} aria-label="Mover tabela lateralmente">
+        <div style={{ width: `${tableScrollWidth}px` }} />
+      </div>
+
+      <div className="table-wrap customers-table-wrap" ref={tableWrapRef} onScroll={syncTopScrollFromTable}>
+        <table className="quote-table customers-table" ref={tableRef}>
           <thead>
             <tr>
               <th>Cod.</th>
@@ -7362,7 +7409,7 @@ function CustomersWorkspace({
                   <tr className="quote-row expandable" onClick={() => onToggleCustomer(customer.id)}>
                     <td className="strong-text">{customer.clientCode || '—'}</td>
                     <td>{customer.clientName}</td>
-                    <td>{customer.document || '—'}</td>
+                    <td>{formatDocumentNumber(customer.document) || '—'}</td>
                     <td>{customer.phone || '—'}</td>
                     <td>{customer.state || '—'}</td>
                     <td>{customer.email || '—'}</td>

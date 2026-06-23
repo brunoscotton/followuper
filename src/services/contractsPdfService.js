@@ -15,9 +15,23 @@ function safeText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function parseContractCurrency(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+
+  const normalized = safeText(value).replace(/R\$/gi, '').trim();
+  const decimalNormalized = normalized.includes(',')
+    ? normalized.replace(/\./g, '').replace(',', '.')
+    : normalized;
+  const numeric = Number(decimalNormalized.replace(/[^\d.-]/g, ''));
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
 function brl(value) {
-  const numeric = Number(String(value || '').replace(/R\$/gi, '').replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, '')) || 0;
-  return numeric.toLocaleString('pt-BR', { currency: 'BRL', minimumFractionDigits: 2, style: 'currency' });
+  return parseContractCurrency(value).toLocaleString('pt-BR', {
+    currency: 'BRL',
+    minimumFractionDigits: 2,
+    style: 'currency',
+  });
 }
 
 function extensoAte999(number) {
@@ -35,7 +49,7 @@ function extensoAte999(number) {
 }
 
 function numeroPorExtenso(value) {
-  const numeric = Number(String(value || '').replace(/R\$/gi, '').replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, '')) || 0;
+  const numeric = parseContractCurrency(value);
   const inteiro = Math.floor(numeric);
   const centavos = Math.round((numeric - inteiro) * 100);
   const parts = [];

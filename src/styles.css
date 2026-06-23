@@ -2201,11 +2201,29 @@ td {
   width: 110px;
 }
 
+.customers-table {
+  min-width: 1180px;
+}
+
 .customers-table th:nth-child(4),
 .customers-table th:nth-child(5),
 .customers-table th:nth-child(7),
 .customers-table th:nth-child(8) {
   width: 120px;
+}
+
+.customers-table th:last-child,
+.customers-table td:last-child {
+  background: #ffffff;
+  box-shadow: -10px 0 18px rgba(15, 23, 42, 0.08);
+  position: sticky;
+  right: 0;
+  text-align: center;
+  z-index: 2;
+}
+
+.customers-table th:last-child {
+  z-index: 3;
 }
 
 .customer-details {
