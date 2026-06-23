@@ -158,6 +158,16 @@ export async function updateCustomer(id, changes) {
   return toCustomer(data);
 }
 
+export async function deleteCustomer(id) {
+  if (!supabase) {
+    saveLocalCustomers(loadLocalCustomers().filter((customer) => customer.id !== id));
+    return;
+  }
+
+  const { error } = await supabase.from('customers').delete().eq('id', id);
+  if (error) throw error;
+}
+
 export async function upsertCustomers(nextCustomers) {
   const dedupedCustomers = dedupeCustomersById(nextCustomers);
 

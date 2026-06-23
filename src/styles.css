@@ -947,6 +947,25 @@ small {
   background: #115e59;
 }
 
+.danger-button {
+  align-items: center;
+  background: #be123c;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 900;
+  gap: 8px;
+  justify-content: center;
+  min-height: 46px;
+  padding: 10px 14px;
+}
+
+.danger-button:hover {
+  background: #9f1239;
+}
+
 .panel-toolbar {
   align-items: center;
   display: flex;

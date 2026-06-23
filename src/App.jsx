@@ -100,6 +100,7 @@ import {
 import {
   cacheCustomers,
   createCustomer,
+  deleteCustomer,
   loadCustomers,
   sortCustomers,
   subscribeToCustomerChanges,
@@ -554,6 +555,28 @@ function getCustomerSellerFromUploadRow(row, sellerIndex) {
   return getSellerFromUploadCode(value) || value;
 }
 
+function findCustomerUploadColumn(headers, aliases, fallbackIndex) {
+  const index = aliases
+    .map(normalizeUploadHeader)
+    .map((alias) => headers.indexOf(alias))
+    .find((columnIndex) => columnIndex >= 0);
+
+  return index ?? fallbackIndex;
+}
+
+function formatUploadPhoneWithDdd(dddValue, phoneValue) {
+  const ddd = normalizeUploadValue(dddValue);
+  const phone = normalizeUploadValue(phoneValue);
+  if (!phone) return '';
+  if (!ddd) return phone;
+
+  const dddDigits = ddd.replace(/\D/g, '');
+  const phoneDigits = phone.replace(/\D/g, '');
+  if (dddDigits && phoneDigits.startsWith(dddDigits)) return phone;
+
+  return `(${ddd}) ${phone}`;
+}
+
 async function parseQuotesUploadFile(file) {
   const rows = await readSheet(file, 2);
   const headerIndex = rows.findIndex((row) => {
@@ -642,6 +665,26 @@ function buildCustomersFromUploadRows(rows, existingCustomers = []) {
   const startIndex = headerIndex >= 0 ? headerIndex + 1 : 1;
   const headers = headerIndex >= 0 ? rows[headerIndex].map(normalizeUploadHeader) : [];
   const sellerIndex = headers.findIndex((header) => header.includes('vendedor'));
+  const columnIndex = {
+    quoteItem: findCustomerUploadColumn(headers, ['Numero It'], 0),
+    clientCode: findCustomerUploadColumn(headers, ['Cliente'], 1),
+    clientName: findCustomerUploadColumn(headers, ['Nome'], 2),
+    totalValue: findCustomerUploadColumn(headers, ['Vlr.Total'], 3),
+    orderNumber: findCustomerUploadColumn(headers, ['Pedido Venda'], 6),
+    product: findCustomerUploadColumn(headers, ['Produto'], 7),
+    quantity: findCustomerUploadColumn(headers, ['Quantidade'], 8),
+    partNumber: findCustomerUploadColumn(headers, ['PART NUMBER'], 9),
+    description: findCustomerUploadColumn(headers, ['Descricao', 'Descrição'], 10),
+    purchaseDate: findCustomerUploadColumn(headers, ['DT Emissao', 'DT Emissão'], 12),
+    document: findCustomerUploadColumn(headers, ['CNPJ/CPF'], 13),
+    ddd: findCustomerUploadColumn(headers, ['DDD'], -1),
+    phone: findCustomerUploadColumn(headers, ['Telefone'], 15),
+    fiscalAddress: findCustomerUploadColumn(headers, ['End Fiscal', 'End. Cadastro'], 16),
+    deliveryAddress: findCustomerUploadColumn(headers, ['End.Entrega', 'End. Entrega'], 17),
+    state: findCustomerUploadColumn(headers, ['UF Entrega', 'Estado'], 18),
+    email: findCustomerUploadColumn(headers, ['Email-Boleto', 'E-mail', 'Email'], 19),
+    zipCode: findCustomerUploadColumn(headers, ['Cep Fiscal', 'CEP'], 21),
+  };
   const existingByKey = new Map();
   existingCustomers.forEach((customer) => {
     if (customer.clientCode) existingByKey.set(normalizeCustomerKey(customer.clientCode), customer);
@@ -650,8 +693,10 @@ function buildCustomersFromUploadRows(rows, existingCustomers = []) {
   const grouped = new Map();
 
   for (const row of rows.slice(startIndex)) {
-    const clientCode = normalizeUploadValue(row[1]);
-    const clientName = normalizeUploadValue(row[2]);
+    const orderNumber = normalizeUploadOrderNumber(row[columnIndex.orderNumber]);
+    const clientCode = normalizeUploadValue(row[columnIndex.clientCode]);
+    const clientName = normalizeUploadValue(row[columnIndex.clientName]);
+    if (!orderNumber || isFinalClientName(clientName)) continue;
     if (!clientCode && !clientName) continue;
 
     const key = clientCode ? normalizeCustomerKey(clientCode) : normalizeCustomerKey(clientName);
@@ -679,27 +724,26 @@ function buildCustomersFromUploadRows(rows, existingCustomers = []) {
     customer.clientCode = clientCode || customer.clientCode || '';
     customer.clientName = clientName || customer.clientName || '';
     customer.seller = getCustomerSellerFromUploadRow(row, sellerIndex) || customer.seller || '';
-    customer.document = normalizeUploadValue(row[13]) || customer.document || '';
-    customer.phone = normalizeUploadValue(row[15]) || customer.phone || '';
-    customer.fiscalAddress = normalizeUploadValue(row[16]) || customer.fiscalAddress || '';
-    customer.deliveryAddress = normalizeUploadValue(row[17]) || customer.deliveryAddress || '';
-    customer.state = normalizeUploadValue(row[18]) || customer.state || '';
-    customer.email = normalizeUploadValue(row[19]) || customer.email || '';
-    customer.zipCode = normalizeUploadValue(row[21]) || customer.zipCode || '';
+    customer.document = normalizeUploadValue(row[columnIndex.document]) || customer.document || '';
+    customer.phone = formatUploadPhoneWithDdd(row[columnIndex.ddd], row[columnIndex.phone]) || customer.phone || '';
+    customer.fiscalAddress = normalizeUploadValue(row[columnIndex.fiscalAddress]) || customer.fiscalAddress || '';
+    customer.deliveryAddress = normalizeUploadValue(row[columnIndex.deliveryAddress]) || customer.deliveryAddress || '';
+    customer.state = normalizeUploadValue(row[columnIndex.state]) || customer.state || '';
+    customer.email = normalizeUploadValue(row[columnIndex.email]) || customer.email || '';
+    customer.zipCode = normalizeUploadValue(row[columnIndex.zipCode]) || customer.zipCode || '';
     customer.updatedAt = nowIso;
 
-    const productPartNumber = normalizeUploadValue(row[7]) || normalizeUploadValue(row[9]);
-    const productDescription = normalizeUploadValue(row[10]);
-    const normalizedProduct = normalizeUploadText(productPartNumber || productDescription);
-    if (productPartNumber && normalizedProduct !== 'FRETE') {
-      const quantity = Number(row[8] || 0) || 0;
-      const totalValue = parseUploadCurrency(row[3]);
-      const purchaseDate = formatUploadDateValue(row[12]);
-      const quoteItem = normalizeUploadValue(row[0]);
+    const productPartNumber = normalizeUploadValue(row[columnIndex.product]) || normalizeUploadValue(row[columnIndex.partNumber]);
+    const productDescription = normalizeUploadValue(row[columnIndex.description]);
+    if (productPartNumber) {
+      const quantity = Number(row[columnIndex.quantity] || 0) || 0;
+      const totalValue = parseUploadCurrency(row[columnIndex.totalValue]);
+      const purchaseDate = formatUploadDateValue(row[columnIndex.purchaseDate]);
+      const quoteItem = normalizeUploadValue(row[columnIndex.quoteItem]);
       const purchase = {
         id: `${quoteItem || productPartNumber}-${purchaseDate}-${totalValue}-${quantity}`,
         quoteItem,
-        orderNumber: normalizeUploadValue(row[6]),
+        orderNumber,
         productPartNumber,
         productDescription,
         quantity,
@@ -2521,6 +2565,28 @@ export function App() {
     }
   }
 
+  async function removeCustomerFromModal() {
+    if (!customerEditModal) return;
+    const confirmed = window.confirm(`Excluir o cliente ${customerEditModal.clientName}?`);
+    if (!confirmed) return;
+
+    const previousCustomers = customers;
+    setCustomers((current) => current.filter((customer) => customer.id !== customerEditModal.id));
+    setExpandedCustomerIds((current) => current.filter((id) => id !== customerEditModal.id));
+    setExpandedCustomerProductKeys((current) => current.filter((key) => !key.startsWith(`${customerEditModal.id}-`)));
+
+    try {
+      await deleteCustomer(customerEditModal.id);
+      setCustomerEditModal(null);
+      setCustomerEditForm(initialCustomerEditForm);
+      setCustomerEditErrors({});
+      setAppError('');
+    } catch (error) {
+      setCustomers(previousCustomers);
+      setAppError(error.message || 'Nao foi possivel excluir o cliente.');
+    }
+  }
+
   function cancelCustomerEditModal() {
     setCustomerEditModal(null);
     setCustomerEditForm(initialCustomerEditForm);
@@ -3793,6 +3859,7 @@ export function App() {
           errors={customerEditErrors}
           form={customerEditForm}
           onCancel={cancelCustomerEditModal}
+          onDelete={removeCustomerFromModal}
           onSubmit={saveCustomerEditForm}
           onUpdate={updateCustomerEditForm}
         />
@@ -6911,7 +6978,7 @@ function CustomersWorkspace({
   );
 }
 
-function CustomerEditModal({ errors = {}, form, onCancel, onSubmit, onUpdate }) {
+function CustomerEditModal({ errors = {}, form, onCancel, onDelete, onSubmit, onUpdate }) {
   return (
     <div className="modal-backdrop" role="presentation">
       <form className="close-modal customer-edit-modal" onSubmit={onSubmit} noValidate>
@@ -6983,6 +7050,10 @@ function CustomerEditModal({ errors = {}, form, onCancel, onSubmit, onUpdate }) 
         </label>
 
         <div className="modal-actions">
+          <button className="danger-button" type="button" onClick={onDelete}>
+            <Trash2 size={16} />
+            Excluir
+          </button>
           <button className="secondary-button" type="button" onClick={onCancel}>
             Cancelar
           </button>
