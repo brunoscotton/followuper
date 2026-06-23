@@ -2184,7 +2184,8 @@ td {
 
 .customers-table th:nth-child(4),
 .customers-table th:nth-child(5),
-.customers-table th:nth-child(7) {
+.customers-table th:nth-child(7),
+.customers-table th:nth-child(8) {
   width: 120px;
 }
 
@@ -2241,7 +2242,8 @@ td {
   color: #354353;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(260px, 1fr) 130px 130px 90px;
+  grid-template-columns: minmax(180px, 340px) 122px 112px 72px;
+  justify-content: start;
   min-height: 48px;
   padding: 9px 10px;
   text-align: left;
@@ -2284,7 +2286,9 @@ td {
 
 .customer-product-history table {
   border-collapse: collapse;
-  width: 100%;
+  max-width: 100%;
+  min-width: 500px;
+  width: max-content;
 }
 
 .customer-product-history th,
@@ -2292,6 +2296,10 @@ td {
   border-bottom: 1px solid #e6ebf0;
   padding: 7px 8px;
   text-align: left;
+}
+
+.customer-edit-modal {
+  max-width: 760px;
 }
 
 .rotax-panel {

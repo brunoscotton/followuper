@@ -293,6 +293,19 @@ const initialTrackingForm = {
   status: 'Em andamento',
 };
 
+const initialCustomerEditForm = {
+  clientCode: '',
+  clientName: '',
+  seller: '',
+  document: '',
+  phone: '',
+  fiscalAddress: '',
+  deliveryAddress: '',
+  state: '',
+  email: '',
+  zipCode: '',
+};
+
 const initialRotaxSessionForm = {
   trainingDate: getTodayInputValue(),
 };
@@ -907,6 +920,9 @@ export function App() {
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
   const [expandedCustomerIds, setExpandedCustomerIds] = useState([]);
   const [expandedCustomerProductKeys, setExpandedCustomerProductKeys] = useState([]);
+  const [customerEditModal, setCustomerEditModal] = useState(null);
+  const [customerEditForm, setCustomerEditForm] = useState(initialCustomerEditForm);
+  const [customerEditErrors, setCustomerEditErrors] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
@@ -2443,6 +2459,74 @@ export function App() {
     }
   }
 
+  function openCustomerEditModal(customer) {
+    setCustomerEditModal(customer);
+    setCustomerEditForm({
+      clientCode: customer.clientCode || '',
+      clientName: customer.clientName || '',
+      seller: customer.seller || '',
+      document: customer.document || '',
+      phone: customer.phone || '',
+      fiscalAddress: customer.fiscalAddress || '',
+      deliveryAddress: customer.deliveryAddress || '',
+      state: customer.state || '',
+      email: customer.email || '',
+      zipCode: customer.zipCode || '',
+    });
+    setCustomerEditErrors({});
+  }
+
+  function updateCustomerEditForm(field, value) {
+    setCustomerEditForm((current) => ({ ...current, [field]: value }));
+    setCustomerEditErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  async function saveCustomerEditForm(event) {
+    event.preventDefault();
+    if (!customerEditModal) return;
+
+    const nextErrors = {};
+    if (!customerEditForm.clientName.trim()) nextErrors.clientName = 'Informe o nome do cliente.';
+    setCustomerEditErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    const previousCustomers = customers;
+    const changes = {
+      clientCode: customerEditForm.clientCode.trim(),
+      clientName: customerEditForm.clientName.trim(),
+      seller: customerEditForm.seller.trim(),
+      document: customerEditForm.document.trim(),
+      phone: customerEditForm.phone.trim(),
+      fiscalAddress: customerEditForm.fiscalAddress.trim(),
+      deliveryAddress: customerEditForm.deliveryAddress.trim(),
+      state: customerEditForm.state.trim(),
+      email: customerEditForm.email.trim(),
+      zipCode: customerEditForm.zipCode.trim(),
+    };
+
+    setCustomers((current) =>
+      sortCustomers(current.map((customer) => (customer.id === customerEditModal.id ? { ...customer, ...changes } : customer))),
+    );
+
+    try {
+      const savedCustomer = await updateCustomer(customerEditModal.id, changes);
+      setCustomers((current) => sortCustomers(current.map((customer) => (customer.id === savedCustomer.id ? savedCustomer : customer))));
+      setCustomerEditModal(null);
+      setCustomerEditForm(initialCustomerEditForm);
+      setCustomerEditErrors({});
+      setAppError('');
+    } catch (error) {
+      setCustomers(previousCustomers);
+      setAppError(error.message || 'Nao foi possivel atualizar o cliente.');
+    }
+  }
+
+  function cancelCustomerEditModal() {
+    setCustomerEditModal(null);
+    setCustomerEditForm(initialCustomerEditForm);
+    setCustomerEditErrors({});
+  }
+
   function openCloseModal(quote) {
     setCloseModal({ quoteId: quote.id, quoteNumber: quote.quoteNumber, clientName: quote.clientName });
     const totalValue = quote.closeDetails?.totalValue || quote.quoteValue || '';
@@ -3496,6 +3580,11 @@ export function App() {
           <option key={customer.id} value={customer.clientName} />
         ))}
       </datalist>
+      <datalist id="seller-options">
+        {sellers.map((seller) => (
+          <option key={seller} value={seller} />
+        ))}
+      </datalist>
 
       {appError && <div className="app-alert">{appError}</div>}
 
@@ -3594,6 +3683,7 @@ export function App() {
           expandedCustomerIds={expandedCustomerIds}
           expandedProductKeys={expandedCustomerProductKeys}
           isUploading={isUploadingCustomers}
+          onEditCustomer={openCustomerEditModal}
           onToggleCustomer={(id) =>
             setExpandedCustomerIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
           }
@@ -3695,6 +3785,16 @@ export function App() {
           onCancel={cancelQuotesUploadPreview}
           onConfirm={confirmQuotesUpload}
           preview={uploadPreview}
+        />
+      )}
+
+      {customerEditModal && (
+        <CustomerEditModal
+          errors={customerEditErrors}
+          form={customerEditForm}
+          onCancel={cancelCustomerEditModal}
+          onSubmit={saveCustomerEditForm}
+          onUpdate={updateCustomerEditForm}
         />
       )}
 
@@ -6644,6 +6744,7 @@ function CustomersWorkspace({
   expandedCustomerIds,
   expandedProductKeys,
   isUploading,
+  onEditCustomer,
   onToggleCustomer,
   onToggleProduct,
   onUploadClick,
@@ -6680,6 +6781,7 @@ function CustomersWorkspace({
               <th>UF</th>
               <th>E-mail</th>
               <th>Compras</th>
+              <th>Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -6697,10 +6799,24 @@ function CustomersWorkspace({
                     <td>{customer.state || '—'}</td>
                     <td>{customer.email || '—'}</td>
                     <td>{customer.purchases?.length || 0}</td>
+                    <td>
+                      <button
+                        className="icon-button neutral"
+                        type="button"
+                        title="Editar cliente"
+                        aria-label="Editar cliente"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onEditCustomer(customer);
+                        }}
+                      >
+                        <Pencil size={17} />
+                      </button>
+                    </td>
                   </tr>
                   {expanded && (
                     <tr className="closed-details-row">
-                      <td colSpan="7">
+                      <td colSpan="8">
                         <div className="customer-details">
                           <div className="customer-address-grid">
                             <span>
@@ -6792,6 +6908,90 @@ function CustomersWorkspace({
         </div>
       )}
     </section>
+  );
+}
+
+function CustomerEditModal({ errors = {}, form, onCancel, onSubmit, onUpdate }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="close-modal customer-edit-modal" onSubmit={onSubmit} noValidate>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Cliente</p>
+            <h2>Editar cadastro</h2>
+          </div>
+          <button className="modal-close" type="button" aria-label="Fechar janela" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="form-pair wide">
+          <label>
+            Cod. Cliente
+            <input value={form.clientCode} onChange={(event) => onUpdate('clientCode', event.target.value)} placeholder="Código" />
+          </label>
+
+          <label>
+            Vendedor
+            <input list="seller-options" value={form.seller} onChange={(event) => onUpdate('seller', event.target.value)} placeholder="Vendedor" />
+          </label>
+        </div>
+
+        <label>
+          Nome do cliente
+          <input value={form.clientName} onChange={(event) => onUpdate('clientName', event.target.value)} placeholder="Nome do cliente" />
+          {errors.clientName && <small>{errors.clientName}</small>}
+        </label>
+
+        <div className="form-pair wide">
+          <label>
+            CNPJ/CPF
+            <input value={form.document} onChange={(event) => onUpdate('document', event.target.value)} placeholder="Documento" />
+          </label>
+
+          <label>
+            Telefone
+            <input value={form.phone} onChange={(event) => onUpdate('phone', event.target.value)} placeholder="Telefone" />
+          </label>
+        </div>
+
+        <div className="form-pair wide">
+          <label>
+            Estado
+            <input value={form.state} onChange={(event) => onUpdate('state', event.target.value)} placeholder="UF" />
+          </label>
+
+          <label>
+            E-mail
+            <input value={form.email} onChange={(event) => onUpdate('email', event.target.value)} placeholder="E-mail" />
+          </label>
+        </div>
+
+        <label>
+          End. Cadastro
+          <input value={form.fiscalAddress} onChange={(event) => onUpdate('fiscalAddress', event.target.value)} placeholder="Endereço de cadastro" />
+        </label>
+
+        <label>
+          End. Entrega
+          <input value={form.deliveryAddress} onChange={(event) => onUpdate('deliveryAddress', event.target.value)} placeholder="Endereço de entrega" />
+        </label>
+
+        <label>
+          CEP
+          <input value={form.zipCode} onChange={(event) => onUpdate('zipCode', event.target.value)} placeholder="CEP" />
+        </label>
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button className="primary-button" type="submit">
+            Salvar
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
