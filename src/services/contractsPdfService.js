@@ -97,6 +97,17 @@ function htmlEscape(value) {
     .replace(/"/g, '&quot;');
 }
 
+function formatDocumentNumber(value) {
+  const digits = safeText(value).replace(/\D/g, '');
+  if (digits.length === 11) {
+    return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  }
+  if (digits.length === 14) {
+    return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+  }
+  return safeText(value);
+}
+
 async function preparePdf(template) {
   const pdf = await PDFDocument.load(dataUrlToBytes(template.fileData));
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -216,6 +227,9 @@ async function generateReturnContract(template, form) {
 async function generateReturnWordContract(template, form) {
   if (!template?.fileData) throw new Error('Faca upload do modelo de devolucao em Word antes de gerar o arquivo.');
 
+  const generatedDate = getTodayLabel();
+  const invoiceDate = form.date || generatedDate;
+  const documentNumber = formatDocumentNumber(form.document);
   const total = (form.items || []).reduce((sum, item) => {
     const quantity = Number(item.quantity || 0);
     const unitValue = Number(item.unitValue || 0);
@@ -262,7 +276,7 @@ async function generateReturnWordContract(template, form) {
   </style>
 </head>
 <body>
-  <p class="date">${htmlEscape(form.city || 'CIDADE')}, ${htmlEscape(form.date || getTodayLabel())}</p>
+  <p class="date">${htmlEscape(form.city || 'Campinas')}, ${htmlEscape(generatedDate)}</p>
 
   <div class="recipient">
     <p>A</p>
@@ -275,7 +289,7 @@ async function generateReturnWordContract(template, form) {
 
   <h1>Devolucao de Mercadoria</h1>
 
-  <p>Estamos lhes devolvendo os produtos descriminados abaixo adquiridos atraves de vossa nota fiscal no ${htmlEscape(form.invoiceNumber)}, de ${htmlEscape(form.date || getTodayLabel())}, por estarem em desacordo com nosso pedido.</p>
+  <p>Estamos lhes devolvendo os produtos descriminados abaixo adquiridos atraves de vossa nota fiscal Nº ${htmlEscape(form.invoiceNumber)}, de ${htmlEscape(invoiceDate)}, por estarem em desacordo com nosso pedido.</p>
 
   <table>
     <thead>
@@ -299,7 +313,7 @@ async function generateReturnWordContract(template, form) {
   <div class="signature">
     <div class="signature-line">&nbsp;</div>
     <p>${htmlEscape(form.name)}</p>
-    <p>${htmlEscape(form.document)}</p>
+    <p>${htmlEscape(documentNumber)}</p>
     <p>${htmlEscape(form.address)}</p>
     <p>${htmlEscape(form.city)} - ${htmlEscape(form.state)}</p>
     <p>${htmlEscape(form.zipCode)}</p>
