@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import JSZip from 'jszip';
 
 const white = rgb(1, 1, 1);
 const black = rgb(0.04, 0.08, 0.13);
@@ -111,6 +112,17 @@ function htmlEscape(value) {
     .replace(/"/g, '&quot;');
 }
 
+function xmlEscape(value) {
+  return safeText(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function formatDocumentNumber(value) {
   const digits = safeText(value).replace(/\D/g, '');
   if (digits.length === 11) {
@@ -120,6 +132,17 @@ function formatDocumentNumber(value) {
     return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
   }
   return safeText(value);
+}
+
+function replaceNext(xml, search, replacement) {
+  const index = xml.indexOf(search);
+  if (index < 0) return xml;
+  return `${xml.slice(0, index)}${xmlEscape(replacement)}${xml.slice(index + search.length)}`;
+}
+
+function replaceNextTextNode(xml, search, replacement) {
+  const pattern = new RegExp(`(<w:t[^>]*>)${escapeRegExp(search)}(<\\/w:t>)`);
+  return xml.replace(pattern, `$1${xmlEscape(replacement)}$2`);
 }
 
 async function preparePdf(template) {
@@ -169,6 +192,45 @@ async function generateMotorContract(template, form) {
   };
 }
 
+async function generateMotorWordContract(template, form) {
+  if (!template?.fileData) throw new Error('Faca upload do modelo de contrato motor em Word antes de gerar o arquivo.');
+
+  const zip = await JSZip.loadAsync(dataUrlToBytes(template.fileData));
+  const documentFile = zip.file('word/document.xml');
+  if (!documentFile) throw new Error('O modelo de contrato motor precisa estar em formato DOCX.');
+
+  let xml = await documentFile.async('string');
+  xml = xml.replace(/<w:highlight w:val="yellow"\/>/g, '');
+
+  [
+    ['VALOR E PAGAMENTO ACORDADO', `${brl(form.value)} - ${form.paymentTerms}`],
+    ['TIPO MOTOR', form.motorModel],
+    ['N SERIE', form.motorSerial],
+    ['XXXXXXXXXXXXXX', form.aircraftModel],
+    ['XXXXXXXXXXXXXXXXX', form.aircraftManufacturer],
+    ['XXXXXXXXXXXXXX', form.aircraftModel],
+    ['XXXXXXXX', form.aircraftSerial],
+    ['XXXXXXXXXXXX', form.aircraftPrefix],
+    ['XXXXXXXXXXXXXXXXXXXXXXXXXXX', form.name],
+    ['XXXXXXXXXXXXXXXXX', formatDocumentNumber(form.document)],
+    ['XXXXXXXXXXXXXXX', form.email],
+    ['XXXXXXXXXXXXXX', form.phone],
+    ['XXXXXXXXXXXXXXXXXXX', form.city],
+    ['XXXXXXXXXXXXXXX', form.date || getTodayLabel()],
+  ].forEach(([search, replacement]) => {
+    xml = replaceNext(xml, search, replacement);
+  });
+
+  zip.file('word/document.xml', xml);
+  const bytes = await zip.generateAsync({ type: 'uint8array' });
+
+  return {
+    bytes,
+    fileName: `Contrato_motor_${fileNameSafe(form.name)}.docx`,
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  };
+}
+
 async function generateTrainingContract(template, form) {
   const { pdf, font, bold } = await preparePdf(template);
   const pages = pdf.getPages();
@@ -194,6 +256,43 @@ async function generateTrainingContract(template, form) {
   return {
     bytes: await pdf.save(),
     fileName: `Contrato_treinamento_${fileNameSafe(form.name)}.pdf`,
+  };
+}
+
+async function generateTrainingWordContract(template, form) {
+  if (!template?.fileData) throw new Error('Faca upload do modelo de contrato treinamento em Word antes de gerar o arquivo.');
+
+  const zip = await JSZip.loadAsync(dataUrlToBytes(template.fileData));
+  const documentFile = zip.file('word/document.xml');
+  if (!documentFile) throw new Error('O modelo de contrato treinamento precisa estar em formato DOCX.');
+
+  let xml = await documentFile.async('string');
+  const value = brl(form.totalValue);
+  const valueInWords = numeroPorExtenso(form.totalValue);
+
+  [
+    ['NOME CLIENTE', form.name],
+    ['ENDEREÇO CLIENTE ', `${safeText(form.address)} `],
+    ['xxxxxxxxxxxxxxxxxxxxxxxxxxx', formatDocumentNumber(form.document)],
+    ['-CURSOS - DURAÇÃO', `${safeText(form.courses)} - ${safeText(form.duration)}`],
+    ['VALOR', value],
+    ['(VALOR POR EXTENSO)', `(${valueInWords})`],
+    ['FORMA DE PAGAMENTO', form.paymentTerms],
+    ['DATA DE HOJE', form.date || getTodayLabel()],
+    ['NOME CLIENTE', form.name],
+    ['CPF/CNPJ CLIENTE', formatDocumentNumber(form.document)],
+  ].forEach(([search, replacement]) => {
+    xml = replaceNextTextNode(xml, search, replacement);
+  });
+
+  xml = xml.replace(/<w:highlight w:val="yellow"\/>/g, '');
+  zip.file('word/document.xml', xml);
+  const bytes = await zip.generateAsync({ type: 'uint8array' });
+
+  return {
+    bytes,
+    fileName: `Contrato_treinamento_${fileNameSafe(form.name)}.docx`,
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   };
 }
 
@@ -344,8 +443,8 @@ async function generateReturnWordContract(template, form) {
 
 export async function generateContractPdf(type, template, form) {
   if (!template?.fileData) throw new Error('Faca upload do modelo de contrato antes de gerar o arquivo.');
-  if (type === 'motor') return generateMotorContract(template, form);
-  if (type === 'training') return generateTrainingContract(template, form);
+  if (type === 'motor') return generateMotorWordContract(template, form);
+  if (type === 'training') return generateTrainingWordContract(template, form);
   if (type === 'return') return generateReturnWordContract(template, form);
   throw new Error('Tipo de contrato invalido.');
 }

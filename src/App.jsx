@@ -7065,6 +7065,13 @@ function ContractsWorkspace({
 }) {
   const form = forms[activeType];
   const template = templates.find((item) => item.type === activeType);
+  const isWordTemplate = activeType === 'motor' || activeType === 'training' || activeType === 'return';
+  const templateAccept =
+    activeType === 'motor' || activeType === 'training'
+      ? '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      : activeType === 'return'
+        ? '.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        : 'application/pdf,.pdf';
 
   return (
     <section className="contracts-panel">
@@ -7076,9 +7083,9 @@ function ContractsWorkspace({
         <div className="panel-actions">
           <label className="secondary-button compact file-button">
             <Upload size={16} />
-            {isSavingTemplate ? 'Salvando...' : activeType === 'return' ? 'Upload modelo Word' : 'Upload modelo PDF'}
+            {isSavingTemplate ? 'Salvando...' : isWordTemplate ? 'Upload modelo Word' : 'Upload modelo PDF'}
             <input
-              accept={activeType === 'return' ? ".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" : 'application/pdf,.pdf'}
+              accept={templateAccept}
               hidden
               type="file"
               onChange={(event) => {
@@ -7090,7 +7097,7 @@ function ContractsWorkspace({
           </label>
           <button className="primary-button compact" type="button" disabled={isGenerating} onClick={() => onGenerate(activeType)}>
             <Save size={16} />
-            {isGenerating ? 'Gerando...' : activeType === 'return' ? 'Gerar Word' : 'Gerar PDF'}
+            {isGenerating ? 'Gerando...' : isWordTemplate ? 'Gerar Word' : 'Gerar PDF'}
           </button>
         </div>
       </div>
