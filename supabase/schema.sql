@@ -27,6 +27,7 @@ create table if not exists public.tracking_entries (
   quote_id uuid references public.quotes(id) on delete cascade,
   quote_number text not null,
   client_name text not null,
+  phone text,
   order_number text,
   invoice_number text,
   carrier text,
@@ -167,6 +168,7 @@ alter table public.quotes add column if not exists quote_value text;
 alter table public.quotes add column if not exists loss_reason jsonb;
 alter table public.quotes add column if not exists history jsonb not null default '[]'::jsonb;
 alter table public.tracking_entries add column if not exists invoice_number text;
+alter table public.tracking_entries add column if not exists phone text;
 alter table public.tracking_entries add column if not exists correios_update_failed boolean not null default false;
 alter table public.rotax_revenue_entries add column if not exists matriz_value numeric not null default 0;
 alter table public.rotax_revenue_entries add column if not exists campinas_value numeric not null default 0;

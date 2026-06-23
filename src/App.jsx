@@ -283,6 +283,7 @@ const initialQuoteEditForm = {
 
 const initialTrackingForm = {
   clientName: '',
+  phone: '',
   carrier: '',
   trackingCode: '',
   invoiceNumber: '',
@@ -927,6 +928,7 @@ export function App() {
   const [rotaxContactForm, setRotaxContactForm] = useState(initialRotaxContactForm);
   const [rotaxContactErrors, setRotaxContactErrors] = useState({});
   const [expandedQuoteIds, setExpandedQuoteIds] = useState([]);
+  const [expandedTrackingEntryIds, setExpandedTrackingEntryIds] = useState([]);
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -1349,10 +1351,12 @@ export function App() {
         .filter((entry) => entry.status === activeTrackingTab)
         .filter((entry) => {
           if (!query) return true;
+          const customer = customers.find((item) => normalize(item.clientName || '') === normalize(entry.clientName || ''));
 
           return [
             entry.quoteNumber,
             entry.clientName,
+            entry.phone || customer?.phone,
             entry.orderNumber,
             entry.invoiceNumber,
             entry.carrier,
@@ -1364,7 +1368,7 @@ export function App() {
           ].some((value) => normalize(value || '').includes(query));
         });
     },
-    [activeTrackingTab, trackingEntries, trackingSearchTerm],
+    [activeTrackingTab, customers, trackingEntries, trackingSearchTerm],
   );
 
   const correiosTrackingCandidates = useMemo(
@@ -2765,11 +2769,14 @@ export function App() {
   async function ensureTrackingEntry(quote, details) {
     const existingEntry = trackingEntries.find((entry) => entry.quoteId === quote.id);
     const nowIso = new Date().toISOString();
+    const customer = findCustomerByName(quote.clientName);
+    const phone = quote.phone || customer?.phone || '';
 
     if (existingEntry) {
       const savedEntry = await updateTrackingEntry(existingEntry.id, {
         quoteNumber: quote.quoteNumber,
         clientName: quote.clientName,
+        phone,
         orderNumber: details.orderNumber,
         carrier: details.carrier,
       });
@@ -2784,6 +2791,7 @@ export function App() {
       quoteId: quote.id,
       quoteNumber: quote.quoteNumber,
       clientName: quote.clientName,
+      phone,
       orderNumber: details.orderNumber,
       invoiceNumber: '',
       carrier: details.carrier,
@@ -2873,8 +2881,11 @@ export function App() {
   }
 
   function openTrackingModal(entry) {
+    const customer = findCustomerByName(entry.clientName);
     setTrackingModal(entry);
     setTrackingForm({
+      clientName: entry.clientName || '',
+      phone: entry.phone || customer?.phone || '',
       carrier: entry.carrier || '',
       trackingCode: entry.trackingCode || '',
       invoiceNumber: entry.invoiceNumber || '',
@@ -2909,6 +2920,11 @@ export function App() {
         return { ...current, deliverySituation: value, status: 'Finalizado' };
       }
 
+      if (field === 'clientName') {
+        const customer = findCustomerByName(value);
+        return { ...current, clientName: value, phone: customer?.phone || current.phone };
+      }
+
       return { ...current, [field]: value };
     });
     setTrackingFormErrors((current) => ({ ...current, [field]: '' }));
@@ -2930,7 +2946,10 @@ export function App() {
 
     const previousEntries = trackingEntries;
     const nextStatus = trackingForm.deliverySituation === 'Entregue' ? 'Finalizado' : trackingForm.status;
+    const customer = findCustomerByName(trackingModal.clientName);
+    const phone = trackingForm.phone.trim() || customer?.phone || '';
     const changes = {
+      phone,
       carrier: trackingForm.carrier.trim(),
       trackingCode: trackingForm.trackingCode.trim(),
       invoiceNumber: trackingForm.invoiceNumber.trim(),
@@ -2988,11 +3007,14 @@ export function App() {
     const previousEntries = trackingEntries;
     const nowIso = new Date().toISOString();
     const nextStatus = trackingForm.deliverySituation === 'Entregue' ? 'Finalizado' : trackingForm.status;
+    const customer = findCustomerByName(trackingForm.clientName);
+    const phone = trackingForm.phone.trim() || customer?.phone || '';
     const nextEntry = {
       id: crypto.randomUUID(),
       quoteId: null,
       quoteNumber: 'Avulso',
       clientName: trackingForm.clientName.trim(),
+      phone,
       orderNumber: '',
       invoiceNumber: trackingForm.invoiceNumber.trim(),
       carrier: trackingForm.carrier.trim(),
@@ -3530,7 +3552,9 @@ export function App() {
       ) : activeView === 'tracking' ? (
         <TrackingWorkspace
           activeTrackingTab={activeTrackingTab}
+          customers={customers}
           entries={visibleTrackingEntries}
+          expandedEntryIds={expandedTrackingEntryIds}
           metrics={trackingMetrics}
           correiosCandidateCount={correiosTrackingCandidates.length}
           isUpdatingCorreios={isUpdatingCorreios}
@@ -3542,6 +3566,11 @@ export function App() {
           setActiveView={setActiveView}
           searchTerm={trackingSearchTerm}
           setSearchTerm={setTrackingSearchTerm}
+          onToggleDetails={(id) =>
+            setExpandedTrackingEntryIds((current) =>
+              current.includes(id) ? current.filter((entryId) => entryId !== id) : [...current, id],
+            )
+          }
         />
       ) : activeView === 'customers' ? (
         <CustomersWorkspace
@@ -6749,18 +6778,63 @@ function CustomersWorkspace({
 function TrackingWorkspace({
   activeTrackingTab,
   correiosCandidateCount,
+  customers = [],
   entries,
+  expandedEntryIds = [],
   isUpdatingCorreios,
   metrics,
   onAddStandalone,
   onEdit,
   onRemove,
+  onToggleDetails,
   onUpdateCorreiosStatuses,
   searchTerm,
   setActiveTrackingTab,
   setActiveView,
   setSearchTerm,
 }) {
+  const tableWrapRef = useRef(null);
+  const tableRef = useRef(null);
+  const topScrollRef = useRef(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
+
+  useEffect(() => {
+    function updateScrollWidth() {
+      const nextWidth = tableRef.current?.scrollWidth || tableWrapRef.current?.scrollWidth || 0;
+      setTableScrollWidth(nextWidth);
+    }
+
+    updateScrollWidth();
+    window.addEventListener('resize', updateScrollWidth);
+
+    if (typeof ResizeObserver === 'undefined') {
+      return () => window.removeEventListener('resize', updateScrollWidth);
+    }
+
+    const resizeObserver = new ResizeObserver(updateScrollWidth);
+    if (tableRef.current) resizeObserver.observe(tableRef.current);
+    if (tableWrapRef.current) resizeObserver.observe(tableWrapRef.current);
+
+    return () => {
+      window.removeEventListener('resize', updateScrollWidth);
+      resizeObserver.disconnect();
+    };
+  }, [activeTrackingTab, entries.length]);
+
+  function syncTableScrollFromTop(event) {
+    if (tableWrapRef.current) tableWrapRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
+
+  function syncTopScrollFromTable(event) {
+    if (topScrollRef.current) topScrollRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
+
+  function getCustomerPhone(clientName) {
+    const normalizedClientName = normalize(clientName || '');
+    if (!normalizedClientName) return '';
+    return customers.find((customer) => normalize(customer.clientName || '') === normalizedClientName)?.phone || '';
+  }
+
   return (
     <section className="tracking-panel">
       <div className="panel-toolbar">
@@ -6825,21 +6899,24 @@ function TrackingWorkspace({
         <span className="situation blue">Postado / etiqueta</span>
       </div>
 
-      <div className="table-wrap">
-        <table className="tracking-table">
+      <div className="table-top-scroll" ref={topScrollRef} onScroll={syncTableScrollFromTop} aria-label="Mover tabela lateralmente">
+        <div style={{ width: `${tableScrollWidth}px` }} />
+      </div>
+
+      <div className="table-wrap" ref={tableWrapRef} onScroll={syncTopScrollFromTable}>
+        <table className="tracking-table" ref={tableRef}>
           <thead>
             <tr>
               <th>Cotação</th>
               <th>Cliente</th>
+              <th>Telefone</th>
               <th>Nº pedido</th>
               <th>Nº Nota Fiscal</th>
               <th>Transportadora</th>
               <th>Cod. Rastreio</th>
               <th>Situação entrega</th>
               <th>Previsão de entrega</th>
-              <th>Observações</th>
               <th>Status</th>
-              <th>Data Finalização</th>
               <th>Ações</th>
             </tr>
           </thead>
@@ -6847,59 +6924,84 @@ function TrackingWorkspace({
             {entries.map((entry) => {
               const colorClass = situationColorClass[entry.deliverySituation] || 'blue';
               const hasTrackingCode = entry.trackingCode.trim();
+              const isExpanded = expandedEntryIds.includes(entry.id);
+              const phone = entry.phone || getCustomerPhone(entry.clientName);
               return (
-                <tr className={`tracking-row ${colorClass}`} key={entry.id}>
-                  <td className="strong-text">{entry.quoteNumber}</td>
-                  <td>{entry.clientName}</td>
-                  <td>{entry.orderNumber || '—'}</td>
-                  <td>{entry.invoiceNumber || '—'}</td>
-                  <td>{entry.carrier || '—'}</td>
-                  <td>
-                    <span className={entry.trackingCode ? 'tracking-code' : 'tracking-code missing'}>
-                      {entry.trackingCode || 'Sem rastreio'}
-                    </span>
-                  </td>
-                  <td>
-                    {hasTrackingCode ? (
-                      <span className="situation-cell">
-                        <span className={`situation ${colorClass}`}>{entry.deliverySituation}</span>
-                        {entry.correiosUpdateFailed && (
-                          <span className="update-failed-indicator" title="Rastreio Correios sem retorno na ultima atualizacao">
-                            !
-                          </span>
-                        )}
+                <React.Fragment key={entry.id}>
+                  <tr className={`tracking-row ${colorClass}`} onClick={() => onToggleDetails(entry.id)}>
+                    <td className="strong-text">{entry.quoteNumber}</td>
+                    <td>{entry.clientName}</td>
+                    <td>{phone || '—'}</td>
+                    <td>{entry.orderNumber || '—'}</td>
+                    <td>{entry.invoiceNumber || '—'}</td>
+                    <td>{entry.carrier || '—'}</td>
+                    <td>
+                      <span className={entry.trackingCode ? 'tracking-code' : 'tracking-code missing'}>
+                        {entry.trackingCode || 'Sem rastreio'}
                       </span>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td>{formatDateWithWeekday(entry.expectedDeliveryDate)}</td>
-                  <td className="notes-cell">{entry.notes || '—'}</td>
-                  <td>{entry.status}</td>
-                  <td>{entry.finalizedAt ? formatDateTime(entry.finalizedAt) : '—'}</td>
-                  <td>
-                    <div className="row-actions">
-                      <button
-                        className="icon-button neutral"
-                        type="button"
-                        title="Editar rastreio"
-                        aria-label="Editar rastreio"
-                        onClick={() => onEdit(entry)}
-                      >
-                        <Pencil size={17} />
-                      </button>
-                      <button
-                        className="icon-button"
-                        type="button"
-                        title="Excluir rastreio"
-                        aria-label="Excluir rastreio"
-                        onClick={() => onRemove(entry.id)}
-                      >
-                        <Trash2 size={17} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+                    </td>
+                    <td>
+                      {hasTrackingCode ? (
+                        <span className="situation-cell">
+                          <span className={`situation ${colorClass}`}>{entry.deliverySituation}</span>
+                          {entry.correiosUpdateFailed && (
+                            <span className="update-failed-indicator" title="Rastreio Correios sem retorno na ultima atualizacao">
+                              !
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td>{formatDateWithWeekday(entry.expectedDeliveryDate)}</td>
+                    <td>{entry.status}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          className="icon-button neutral"
+                          type="button"
+                          title="Editar rastreio"
+                          aria-label="Editar rastreio"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onEdit(entry);
+                          }}
+                        >
+                          <Pencil size={17} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          title="Excluir rastreio"
+                          aria-label="Excluir rastreio"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onRemove(entry.id);
+                          }}
+                        >
+                          <Trash2 size={17} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {isExpanded && (
+                    <tr className="tracking-details-row">
+                      <td colSpan="11">
+                        <div className="tracking-details">
+                          <div>
+                            <b>Observações</b>
+                            <p>{entry.notes || 'Sem observações.'}</p>
+                          </div>
+                          <div>
+                            <b>Data finalização</b>
+                            <p>{entry.finalizedAt ? formatDateTime(entry.finalizedAt) : 'Não finalizado.'}</p>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -7497,6 +7599,7 @@ function TrackingEditModal({ entry, errors = {}, form, isStandalone = false, onC
           <label>
             Nome
             <input
+              list="customer-name-options"
               value={form.clientName}
               onChange={(event) => onUpdate('clientName', event.target.value)}
               placeholder="Ex: Cliente antigo"
@@ -7504,6 +7607,15 @@ function TrackingEditModal({ entry, errors = {}, form, isStandalone = false, onC
             {errors.clientName && <small>{errors.clientName}</small>}
           </label>
         )}
+
+        <label>
+          Telefone
+          <input
+            value={form.phone}
+            onChange={(event) => onUpdate('phone', event.target.value)}
+            placeholder="Telefone do cliente"
+          />
+        </label>
 
         <label>
           Transportadora

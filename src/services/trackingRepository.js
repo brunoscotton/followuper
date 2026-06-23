@@ -24,6 +24,7 @@ function toTrackingEntry(row) {
     quoteId: row.quote_id,
     quoteNumber: row.quote_number,
     clientName: row.client_name,
+    phone: row.phone || '',
     orderNumber: row.order_number || '',
     invoiceNumber: row.invoice_number || '',
     carrier: row.carrier || '',
@@ -46,6 +47,7 @@ function toRow(entry) {
   if ('quoteId' in entry) row.quote_id = entry.quoteId;
   if ('quoteNumber' in entry) row.quote_number = entry.quoteNumber;
   if ('clientName' in entry) row.client_name = entry.clientName;
+  if ('phone' in entry) row.phone = entry.phone || null;
   if ('orderNumber' in entry) row.order_number = entry.orderNumber || null;
   if ('invoiceNumber' in entry) row.invoice_number = entry.invoiceNumber || null;
   if ('carrier' in entry) row.carrier = entry.carrier || null;

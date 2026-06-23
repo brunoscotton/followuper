@@ -2007,7 +2007,11 @@ td {
 }
 
 .tracking-table {
-  min-width: 1320px;
+  min-width: 1400px;
+}
+
+.tracking-row {
+  cursor: pointer;
 }
 
 .tracking-row.green {
@@ -2123,6 +2127,38 @@ td {
 
 .notes-cell {
   max-width: 260px;
+  white-space: pre-wrap;
+}
+
+.tracking-details-row td {
+  background: #f8fafc;
+  border-top: 1px solid #d9e0e7;
+  padding: 12px;
+}
+
+.tracking-details {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+}
+
+.tracking-details div {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.tracking-details b {
+  color: #17212b;
+  font-size: 0.84rem;
+}
+
+.tracking-details p {
+  color: #42526b;
+  margin: 0;
   white-space: pre-wrap;
 }
 
