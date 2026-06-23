@@ -107,6 +107,13 @@ import {
   updateCustomer,
   upsertCustomers,
 } from './services/customersRepository';
+import {
+  cacheContractTemplates,
+  loadContractTemplates,
+  subscribeToContractTemplateChanges,
+  upsertContractTemplate,
+} from './services/contractTemplatesRepository';
+import { generateContractPdf } from './services/contractsPdfService';
 import { createUploadAudit, loadUploadAudits } from './services/uploadAuditsRepository';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
@@ -305,6 +312,49 @@ const initialCustomerEditForm = {
   state: '',
   email: '',
   zipCode: '',
+};
+
+const initialContractForms = {
+  motor: {
+    value: '',
+    paymentTerms: '',
+    motorModel: '',
+    motorSerial: '',
+    aircraftManufacturer: '',
+    aircraftModel: '',
+    aircraftPrefix: '',
+    aircraftSerial: '',
+    name: '',
+    address: '',
+    city: '',
+    state: '',
+    zipCode: '',
+    document: '',
+    email: '',
+    phone: '',
+    date: getTodayInputValue(),
+  },
+  training: {
+    name: '',
+    address: '',
+    document: '',
+    courses: '',
+    duration: '',
+    totalValue: '',
+    paymentTerms: '',
+    date: getTodayInputValue(),
+  },
+  return: {
+    name: '',
+    document: '',
+    address: '',
+    city: '',
+    state: '',
+    zipCode: '',
+    invoiceNumber: '',
+    date: getTodayInputValue(),
+    items: [{ productCode: '', description: '', quantity: '', unitValue: '', totalValue: '' }],
+  },
 };
 
 const initialRotaxSessionForm = {
@@ -945,6 +995,11 @@ export function App() {
   const [rotaxRevenueEntries, setRotaxRevenueEntries] = useState([]);
   const [activeRotaxRevenueYear, setActiveRotaxRevenueYear] = useState(2026);
   const [customers, setCustomers] = useState([]);
+  const [contractTemplates, setContractTemplates] = useState([]);
+  const [activeContractType, setActiveContractType] = useState('motor');
+  const [contractForms, setContractForms] = useState(initialContractForms);
+  const [isSavingContractTemplate, setIsSavingContractTemplate] = useState(false);
+  const [isGeneratingContract, setIsGeneratingContract] = useState(false);
   const [uploadAudits, setUploadAudits] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [activeView, setActiveView] = useState('quotes');
@@ -1063,6 +1118,7 @@ export function App() {
       setRotaxContacts([]);
       setRotaxRevenueEntries([]);
       setCustomers([]);
+      setContractTemplates([]);
       setUploadAudits([]);
       setIsLoading(false);
       return () => {
@@ -1071,8 +1127,16 @@ export function App() {
     }
 
     setIsLoading(true);
-    Promise.all([loadStoredQuotes(), loadTrackingEntries(), loadInfoBlocks(), loadRotaxTrainingData(), loadUploadAudits(), loadCustomers()])
-      .then(([quoteResult, trackingResult, infoResult, rotaxResult, uploadAuditResult, customerResult]) => {
+    Promise.all([
+      loadStoredQuotes(),
+      loadTrackingEntries(),
+      loadInfoBlocks(),
+      loadRotaxTrainingData(),
+      loadUploadAudits(),
+      loadCustomers(),
+      loadContractTemplates(),
+    ])
+      .then(([quoteResult, trackingResult, infoResult, rotaxResult, uploadAuditResult, customerResult, contractTemplateResult]) => {
         if (!active) return;
         setQuotes(quoteResult.quotes);
         setTrackingEntries(trackingResult.entries);
@@ -1083,6 +1147,7 @@ export function App() {
         setRotaxContacts(rotaxResult.contacts);
         setUploadAudits(uploadAuditResult.audits);
         setCustomers(customerResult.customers);
+        setContractTemplates(contractTemplateResult.templates);
         setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
         setDataStatus(quoteResult.mode === 'supabase' ? 'Supabase · tempo real' : 'Local');
         setAppError('');
@@ -1122,6 +1187,20 @@ export function App() {
           const unsubscribeCustomers = subscribeToCustomerChanges(({ eventType, customer, oldId }) => {
             setCustomers((current) => syncCollection(current, eventType, customer, oldId, sortCustomers, cacheCustomers));
           });
+          const unsubscribeContractTemplates = subscribeToContractTemplateChanges(({ eventType, template, oldId }) => {
+            setContractTemplates((current) => {
+              let nextTemplates = current;
+              if ((eventType === 'INSERT' || eventType === 'UPDATE') && template) {
+                nextTemplates = [template, ...current.filter((item) => item.type !== template.type)];
+              }
+              if (eventType === 'DELETE' && oldId) {
+                nextTemplates = current.filter((item) => item.type !== oldId);
+              }
+              const sortedTemplates = [...nextTemplates].sort((a, b) => a.type.localeCompare(b.type));
+              cacheContractTemplates(sortedTemplates);
+              return sortedTemplates;
+            });
+          });
 
           unsubscribeRealtime = () => {
             unsubscribeQuotes();
@@ -1129,6 +1208,7 @@ export function App() {
             unsubscribeInfoBlocks();
             unsubscribeRotax();
             unsubscribeCustomers();
+            unsubscribeContractTemplates();
           };
         }
       })
@@ -2593,6 +2673,132 @@ export function App() {
     setCustomerEditErrors({});
   }
 
+  function getCustomerContractFields(clientName) {
+    const customer = findCustomerByName(clientName);
+    if (!customer) return {};
+    return {
+      name: customer.clientName || clientName,
+      address: customer.fiscalAddress || customer.deliveryAddress || '',
+      state: customer.state || '',
+      zipCode: customer.zipCode || '',
+      document: customer.document || '',
+      email: customer.email || '',
+      phone: customer.phone || '',
+    };
+  }
+
+  function updateContractForm(type, field, value) {
+    const nextValue = ['value', 'totalValue', 'unitValue', 'totalValue'].includes(field) ? formatCurrencyInput(value) : value;
+    setContractForms((current) => {
+      const nextForm = { ...current[type], [field]: nextValue };
+      if (field === 'name') return { ...current, [type]: { ...nextForm, ...getCustomerContractFields(value) } };
+      return { ...current, [type]: nextForm };
+    });
+  }
+
+  function updateReturnItem(index, field, value) {
+    setContractForms((current) => {
+      const items = current.return.items.map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+        const nextValue = ['unitValue', 'totalValue'].includes(field) ? formatCurrencyInput(value) : value;
+        const nextItem = { ...item, [field]: nextValue };
+        if (field === 'quantity' || field === 'unitValue') {
+          const quantity = Number(nextItem.quantity || 0);
+          const unitValue = parseUploadCurrency(nextItem.unitValue);
+          nextItem.totalValue = quantity && unitValue ? formatUploadCurrency(quantity * unitValue) : nextItem.totalValue;
+        }
+        return nextItem;
+      });
+      return { ...current, return: { ...current.return, items } };
+    });
+  }
+
+  function addReturnItem() {
+    setContractForms((current) => ({
+      ...current,
+      return: {
+        ...current.return,
+        items: [...current.return.items, { productCode: '', description: '', quantity: '', unitValue: '', totalValue: '' }],
+      },
+    }));
+  }
+
+  function removeReturnItem(index) {
+    setContractForms((current) => ({
+      ...current,
+      return: {
+        ...current.return,
+        items: current.return.items.filter((_, itemIndex) => itemIndex !== index),
+      },
+    }));
+  }
+
+  function formatContractDate(dateValue) {
+    if (!dateValue) return '';
+    return formatDate(`${dateValue}T12:00:00`);
+  }
+
+  async function handleContractTemplateUpload(type, file) {
+    if (!file) return;
+    setIsSavingContractTemplate(true);
+
+    try {
+      const fileData = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const savedTemplate = await upsertContractTemplate({
+        type,
+        fileName: file.name,
+        fileData,
+        mimeType: file.type || 'application/pdf',
+      });
+      setContractTemplates((current) => [savedTemplate, ...current.filter((template) => template.type !== savedTemplate.type)]);
+      setAppError('Modelo de contrato atualizado.');
+    } catch (error) {
+      setAppError(error.message || 'Nao foi possivel salvar o modelo de contrato.');
+    } finally {
+      setIsSavingContractTemplate(false);
+    }
+  }
+
+  async function generateContract(type) {
+    const template = contractTemplates.find((item) => item.type === type);
+    const form = {
+      ...contractForms[type],
+      date: formatContractDate(contractForms[type].date),
+    };
+    if (type === 'return') {
+      form.items = contractForms.return.items.map((item) => ({
+        ...item,
+        unitValue: parseUploadCurrency(item.unitValue),
+        totalValue: parseUploadCurrency(item.totalValue),
+      }));
+    }
+
+    setIsGeneratingContract(true);
+
+    try {
+      const result = await generateContractPdf(type, template, form);
+      const blob = new Blob([result.bytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = result.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setAppError('Contrato gerado para download.');
+    } catch (error) {
+      setAppError(error.message || 'Nao foi possivel gerar o contrato.');
+    } finally {
+      setIsGeneratingContract(false);
+    }
+  }
+
   function openCloseModal(quote) {
     setCloseModal({ quoteId: quote.id, quoteNumber: quote.quoteNumber, clientName: quote.clientName });
     const totalValue = quote.closeDetails?.totalValue || quote.quoteValue || '';
@@ -3761,6 +3967,22 @@ export function App() {
           onUploadClick={() => customerUploadInputRef.current?.click()}
           searchTerm={customerSearchTerm}
           setSearchTerm={setCustomerSearchTerm}
+        />
+      ) : activeView === 'contracts' ? (
+        <ContractsWorkspace
+          activeType={activeContractType}
+          customers={customers}
+          forms={contractForms}
+          isGenerating={isGeneratingContract}
+          isSavingTemplate={isSavingContractTemplate}
+          onAddReturnItem={addReturnItem}
+          onGenerate={generateContract}
+          onRemoveReturnItem={removeReturnItem}
+          onSelectType={setActiveContractType}
+          onTemplateUpload={handleContractTemplateUpload}
+          onUpdateField={updateContractForm}
+          onUpdateReturnItem={updateReturnItem}
+          templates={contractTemplates}
         />
       ) : activeView === 'rotax' ? (
         <RotaxTrainingWorkspace
@@ -4967,6 +5189,10 @@ function SideNavigation({
         <button className={activeView === 'customers' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('customers')}>
           <Users size={17} />
           Clientes
+        </button>
+        <button className={activeView === 'contracts' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('contracts')}>
+          <FileText size={17} />
+          Contratos
         </button>
         <button className="side-nav-button" type="button" disabled={isUploadingCustomers} onClick={onUploadCustomersClick}>
           <Upload size={17} />
@@ -6803,6 +7029,278 @@ function getCustomerProductGroups(customer) {
 
   return [...grouped.values()].sort(
     (a, b) => new Date(b.latestPurchase.purchaseDate || 0) - new Date(a.latestPurchase.purchaseDate || 0),
+  );
+}
+
+const contractTabs = [
+  { label: 'Contrato motor', value: 'motor' },
+  { label: 'Contrato Treinamento', value: 'training' },
+  { label: 'Devolução', value: 'return' },
+];
+
+function ContractsWorkspace({
+  activeType,
+  customers,
+  forms,
+  isGenerating,
+  isSavingTemplate,
+  onAddReturnItem,
+  onGenerate,
+  onRemoveReturnItem,
+  onSelectType,
+  onTemplateUpload,
+  onUpdateField,
+  onUpdateReturnItem,
+  templates,
+}) {
+  const form = forms[activeType];
+  const template = templates.find((item) => item.type === activeType);
+
+  return (
+    <section className="contracts-panel">
+      <div className="panel-toolbar">
+        <div className="section-title">
+          <FileText size={20} />
+          <h2>Contratos</h2>
+        </div>
+        <div className="panel-actions">
+          <label className="secondary-button compact file-button">
+            <Upload size={16} />
+            {isSavingTemplate ? 'Salvando...' : 'Upload modelo'}
+            <input
+              accept="application/pdf,.pdf"
+              hidden
+              type="file"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                onTemplateUpload(activeType, file);
+              }}
+            />
+          </label>
+          <button className="primary-button compact" type="button" disabled={isGenerating} onClick={() => onGenerate(activeType)}>
+            <Save size={16} />
+            {isGenerating ? 'Gerando...' : 'Gerar PDF'}
+          </button>
+        </div>
+      </div>
+
+      <div className="tabs contract-tabs" role="tablist" aria-label="Tipos de contrato">
+        {contractTabs.map((tab) => (
+          <button
+            className={activeType === tab.value ? 'tab active' : 'tab'}
+            key={tab.value}
+            type="button"
+            onClick={() => onSelectType(tab.value)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className={template ? 'template-status ready' : 'template-status'}>
+        {template ? `Modelo salvo: ${template.fileName}` : 'Nenhum modelo salvo para esta seção.'}
+      </div>
+
+      {activeType === 'motor' && (
+        <div className="contract-form">
+          <div className="form-pair wide">
+            <label>
+              Valor
+              <input value={form.value} onChange={(event) => onUpdateField('motor', 'value', event.target.value)} placeholder="R$ 0,00" />
+            </label>
+            <label>
+              Forma de pagamento
+              <input value={form.paymentTerms} onChange={(event) => onUpdateField('motor', 'paymentTerms', event.target.value)} />
+            </label>
+          </div>
+
+          <h3>Motor e equipamento</h3>
+          <div className="form-pair wide">
+            <label>
+              Motor modelo
+              <input value={form.motorModel} onChange={(event) => onUpdateField('motor', 'motorModel', event.target.value)} />
+            </label>
+            <label>
+              Nº de série
+              <input value={form.motorSerial} onChange={(event) => onUpdateField('motor', 'motorSerial', event.target.value)} />
+            </label>
+          </div>
+
+          <h3>Dados Anv.</h3>
+          <div className="form-grid-4">
+            <label>
+              Fabricante anv.
+              <input value={form.aircraftManufacturer} onChange={(event) => onUpdateField('motor', 'aircraftManufacturer', event.target.value)} />
+            </label>
+            <label>
+              Modelo
+              <input value={form.aircraftModel} onChange={(event) => onUpdateField('motor', 'aircraftModel', event.target.value)} />
+            </label>
+            <label>
+              Prefixo
+              <input value={form.aircraftPrefix} onChange={(event) => onUpdateField('motor', 'aircraftPrefix', event.target.value)} />
+            </label>
+            <label>
+              Nº de série anv.
+              <input value={form.aircraftSerial} onChange={(event) => onUpdateField('motor', 'aircraftSerial', event.target.value)} />
+            </label>
+          </div>
+
+          <ContractOwnerFields customers={customers} form={form} type="motor" onUpdateField={onUpdateField} />
+        </div>
+      )}
+
+      {activeType === 'training' && (
+        <div className="contract-form">
+          <ContractOwnerFields compact customers={customers} form={form} type="training" onUpdateField={onUpdateField} />
+          <h3>Treinamento</h3>
+          <div className="form-pair wide">
+            <label>
+              Cursos
+              <input value={form.courses} onChange={(event) => onUpdateField('training', 'courses', event.target.value)} />
+            </label>
+            <label>
+              Duração
+              <input value={form.duration} onChange={(event) => onUpdateField('training', 'duration', event.target.value)} />
+            </label>
+          </div>
+          <div className="form-pair wide">
+            <label>
+              Valor total
+              <input value={form.totalValue} onChange={(event) => onUpdateField('training', 'totalValue', event.target.value)} placeholder="R$ 0,00" />
+            </label>
+            <label>
+              Forma de pagamento
+              <input value={form.paymentTerms} onChange={(event) => onUpdateField('training', 'paymentTerms', event.target.value)} />
+            </label>
+          </div>
+          <label>
+            Data
+            <input type="date" value={form.date} onChange={(event) => onUpdateField('training', 'date', event.target.value)} />
+          </label>
+        </div>
+      )}
+
+      {activeType === 'return' && (
+        <div className="contract-form">
+          <ContractOwnerFields customers={customers} form={form} type="return" onUpdateField={onUpdateField} />
+          <div className="form-pair wide">
+            <label>
+              Nota fiscal
+              <input value={form.invoiceNumber} onChange={(event) => onUpdateField('return', 'invoiceNumber', event.target.value)} />
+            </label>
+            <label>
+              Data
+              <input type="date" value={form.date} onChange={(event) => onUpdateField('return', 'date', event.target.value)} />
+            </label>
+          </div>
+
+          <div className="contract-items-header">
+            <h3>Itens a serem devolvidos</h3>
+            <button className="secondary-button compact" type="button" onClick={onAddReturnItem}>
+              <Plus size={16} />
+              Adicionar linha
+            </button>
+          </div>
+
+          <div className="contract-return-items">
+            {form.items.map((item, index) => (
+              <div className="contract-return-item" key={`${index}-${item.productCode}`}>
+                <label>
+                  Cod. Produto
+                  <input value={item.productCode} onChange={(event) => onUpdateReturnItem(index, 'productCode', event.target.value)} />
+                </label>
+                <label>
+                  Descrição Produto
+                  <input value={item.description} onChange={(event) => onUpdateReturnItem(index, 'description', event.target.value)} />
+                </label>
+                <label>
+                  Quantidade
+                  <input value={item.quantity} onChange={(event) => onUpdateReturnItem(index, 'quantity', event.target.value)} />
+                </label>
+                <label>
+                  Valor unitário
+                  <input value={item.unitValue} onChange={(event) => onUpdateReturnItem(index, 'unitValue', event.target.value)} />
+                </label>
+                <label>
+                  Valor total
+                  <input value={item.totalValue} onChange={(event) => onUpdateReturnItem(index, 'totalValue', event.target.value)} />
+                </label>
+                <button className="icon-button" type="button" title="Remover item" onClick={() => onRemoveReturnItem(index)}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ContractOwnerFields({ compact = false, customers, form, onUpdateField, type }) {
+  return (
+    <>
+      <h3>{compact ? 'Contratante' : 'Proprietário'}</h3>
+      <div className="form-grid-3">
+        <label>
+          Nome
+          <input
+            list="customer-name-options"
+            value={form.name}
+            onChange={(event) => onUpdateField(type, 'name', event.target.value)}
+            placeholder="Nome do cliente"
+          />
+        </label>
+        <label>
+          CPF/CNPJ
+          <input value={form.document} onChange={(event) => onUpdateField(type, 'document', event.target.value)} />
+        </label>
+        {!compact && (
+          <label>
+            Telefone
+            <input value={form.phone} onChange={(event) => onUpdateField(type, 'phone', event.target.value)} />
+          </label>
+        )}
+      </div>
+      <label>
+        Endereço
+        <input value={form.address} onChange={(event) => onUpdateField(type, 'address', event.target.value)} />
+      </label>
+      <div className="form-grid-4">
+        {!compact && (
+          <label>
+            Cidade
+            <input value={form.city} onChange={(event) => onUpdateField(type, 'city', event.target.value)} />
+          </label>
+        )}
+        {!compact && (
+          <label>
+            Estado
+            <input value={form.state} onChange={(event) => onUpdateField(type, 'state', event.target.value)} />
+          </label>
+        )}
+        {!compact && (
+          <label>
+            CEP
+            <input value={form.zipCode} onChange={(event) => onUpdateField(type, 'zipCode', event.target.value)} />
+          </label>
+        )}
+        {type === 'motor' && (
+          <label>
+            Data
+            <input type="date" value={form.date} onChange={(event) => onUpdateField(type, 'date', event.target.value)} />
+          </label>
+        )}
+      </div>
+      {type === 'motor' && (
+        <label>
+          E-mail
+          <input value={form.email} onChange={(event) => onUpdateField(type, 'email', event.target.value)} />
+        </label>
+      )}
+    </>
   );
 }
 

@@ -138,6 +138,14 @@ create table if not exists public.customers (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.contract_templates (
+  template_type text primary key check (template_type in ('motor', 'training', 'return')),
+  file_name text not null,
+  file_data text not null,
+  mime_type text not null default 'application/pdf',
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.rotax_revenue_entries (
   id uuid primary key,
   entry_year integer not null check (entry_year >= 2020),
@@ -172,6 +180,7 @@ alter table public.tracking_entries add column if not exists invoice_number text
 alter table public.tracking_entries add column if not exists phone text;
 alter table public.tracking_entries add column if not exists correios_update_failed boolean not null default false;
 alter table public.customers add column if not exists seller text;
+alter table public.contract_templates add column if not exists mime_type text not null default 'application/pdf';
 alter table public.rotax_revenue_entries add column if not exists matriz_value numeric not null default 0;
 alter table public.rotax_revenue_entries add column if not exists campinas_value numeric not null default 0;
 alter table public.rotax_revenue_entries add column if not exists goiania_value numeric not null default 0;
@@ -198,6 +207,7 @@ alter table public.rotax_training_students replica identity full;
 alter table public.rotax_training_contacts replica identity full;
 alter table public.upload_audits replica identity full;
 alter table public.customers replica identity full;
+alter table public.contract_templates replica identity full;
 alter table public.rotax_revenue_entries replica identity full;
 
 alter table public.quotes enable row level security;
@@ -209,6 +219,7 @@ alter table public.rotax_training_students enable row level security;
 alter table public.rotax_training_contacts enable row level security;
 alter table public.upload_audits enable row level security;
 alter table public.customers enable row level security;
+alter table public.contract_templates enable row level security;
 alter table public.rotax_revenue_entries enable row level security;
 
 drop policy if exists "Authenticated users can read quotes" on public.quotes;
@@ -245,6 +256,10 @@ drop policy if exists "Authenticated users can read customers" on public.custome
 drop policy if exists "Authenticated users can insert customers" on public.customers;
 drop policy if exists "Authenticated users can update customers" on public.customers;
 drop policy if exists "Authenticated users can delete customers" on public.customers;
+drop policy if exists "Authenticated users can read contract templates" on public.contract_templates;
+drop policy if exists "Authenticated users can insert contract templates" on public.contract_templates;
+drop policy if exists "Authenticated users can update contract templates" on public.contract_templates;
+drop policy if exists "Authenticated users can delete contract templates" on public.contract_templates;
 drop policy if exists "Master user can read rotax revenue entries" on public.rotax_revenue_entries;
 drop policy if exists "Master user can insert rotax revenue entries" on public.rotax_revenue_entries;
 drop policy if exists "Master user can update rotax revenue entries" on public.rotax_revenue_entries;
@@ -462,6 +477,31 @@ create policy "Authenticated users can delete customers"
   to authenticated
   using (true);
 
+create policy "Authenticated users can read contract templates"
+  on public.contract_templates
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert contract templates"
+  on public.contract_templates
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update contract templates"
+  on public.contract_templates
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete contract templates"
+  on public.contract_templates
+  for delete
+  to authenticated
+  using (true);
+
 create policy "Master user can read rotax revenue entries"
   on public.rotax_revenue_entries
   for select
@@ -577,6 +617,16 @@ begin
       and tablename = 'customers'
   ) then
     alter publication supabase_realtime add table public.customers;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'contract_templates'
+  ) then
+    alter publication supabase_realtime add table public.contract_templates;
   end if;
 
   if not exists (

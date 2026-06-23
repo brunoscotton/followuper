@@ -2321,6 +2321,89 @@ td {
   max-width: 760px;
 }
 
+.contracts-panel {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(31, 48, 65, 0.08);
+  display: grid;
+  gap: 14px;
+  margin: 0 auto;
+  max-width: 1440px;
+  padding: 18px;
+}
+
+.contract-tabs {
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+}
+
+.template-status {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  color: #9a3412;
+  font-weight: 900;
+  padding: 10px 12px;
+}
+
+.template-status.ready {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #047857;
+}
+
+.file-button {
+  cursor: pointer;
+}
+
+.contract-form {
+  display: grid;
+  gap: 14px;
+}
+
+.contract-form h3,
+.contract-items-header h3 {
+  color: #102033;
+  font-size: 0.98rem;
+  margin: 8px 0 0;
+}
+
+.form-grid-3,
+.form-grid-4 {
+  display: grid;
+  gap: 12px;
+}
+
+.form-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.form-grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.contract-items-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.contract-return-items {
+  display: grid;
+  gap: 10px;
+}
+
+.contract-return-item {
+  align-items: end;
+  background: #f8fafc;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(100px, 130px) minmax(220px, 1fr) 90px 130px 130px 42px;
+  padding: 10px;
+}
+
 .rotax-panel {
   background: #ffffff;
   border: 1px solid #d9e0e7;
