@@ -3523,7 +3523,7 @@ export function App() {
   }
 
   async function saveRotaxRevenueEntry(entry, changes) {
-    if (!isMasterUser) return;
+    if (!isMasterUser) return false;
 
     const previousEntries = rotaxRevenueEntries;
     const nowIso = new Date().toISOString();
@@ -3567,9 +3567,11 @@ export function App() {
         ]),
       );
       setAppError('');
+      return true;
     } catch (error) {
       setRotaxRevenueEntries(previousEntries);
       setAppError(error.message || 'Nao foi possivel salvar o faturamento Rotax.');
+      return false;
     }
   }
 
@@ -6147,6 +6149,32 @@ function RotaxRevenueWorkspace({ activeYear, entries, onCreateYear, onSaveEntry,
   );
 }
 
+const ROTAX_REVENUE_DRAFTS_STORAGE_KEY = 'followuper.rotaxRevenueDrafts.v1';
+
+function loadRotaxRevenueDrafts() {
+  try {
+    return JSON.parse(localStorage.getItem(ROTAX_REVENUE_DRAFTS_STORAGE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveRotaxRevenueDrafts(drafts) {
+  localStorage.setItem(ROTAX_REVENUE_DRAFTS_STORAGE_KEY, JSON.stringify(drafts));
+}
+
+function saveRotaxRevenueDraft(key, draft) {
+  const drafts = loadRotaxRevenueDrafts();
+  drafts[key] = draft;
+  saveRotaxRevenueDrafts(drafts);
+}
+
+function removeRotaxRevenueDraft(key) {
+  const drafts = loadRotaxRevenueDrafts();
+  delete drafts[key];
+  saveRotaxRevenueDrafts(drafts);
+}
+
 function RotaxRevenueWorkspaceV2({ activeYear, entries, onCreateYear, onSaveEntry, setActiveView, setActiveYear }) {
   const years = useMemo(() => {
     const entryYears = [...new Set(entries.map((entry) => Number(entry.year)))].filter(Boolean);
@@ -6187,11 +6215,14 @@ function RotaxRevenueWorkspaceV2({ activeYear, entries, onCreateYear, onSaveEntr
       );
     });
   }, [activeYear, entries]);
-  const [drafts, setDrafts] = useState({});
+  const [drafts, setDrafts] = useState(() => loadRotaxRevenueDrafts());
 
   useEffect(() => {
-    setDrafts(
-      rows.reduce((acc, row) => {
+    const storedDrafts = loadRotaxRevenueDrafts();
+    setDrafts(() => {
+      const nextDrafts = rows.reduce((acc, row) => {
+        const key = `${row.year}-${row.month}`;
+        const savedDraft = storedDrafts[key] || {};
         acc[`${row.year}-${row.month}`] = {
           revenueValue: row.revenueValue ? formatUploadCurrency(row.revenueValue) : '',
           targetValue: row.targetValue ? formatUploadCurrency(row.targetValue) : '',
@@ -6199,10 +6230,13 @@ function RotaxRevenueWorkspaceV2({ activeYear, entries, onCreateYear, onSaveEntr
           campinasValue: row.campinasValue ? formatUploadCurrency(row.campinasValue) : '',
           goianiaValue: row.goianiaValue ? formatUploadCurrency(row.goianiaValue) : '',
           notes: row.notes || '',
+          ...savedDraft,
         };
         return acc;
-      }, {}),
-    );
+      }, {});
+
+      return nextDrafts;
+    });
   }, [rows]);
 
   function getEntry(year, month) {
@@ -6256,13 +6290,21 @@ function RotaxRevenueWorkspaceV2({ activeYear, entries, onCreateYear, onSaveEntr
   }
 
   function updateDraft(row, field, value) {
-    setDrafts((current) => ({
-      ...current,
-      [`${row.year}-${row.month}`]: {
-        ...getDraft(row),
+    const key = `${row.year}-${row.month}`;
+
+    setDrafts((current) => {
+      const nextDraft = {
+        ...(current[key] || getDraft(row)),
         [field]: field === 'notes' ? value : formatCurrencyInput(value),
-      },
-    }));
+      };
+      const nextDrafts = {
+        ...current,
+        [key]: nextDraft,
+      };
+
+      saveRotaxRevenueDraft(key, nextDraft);
+      return nextDrafts;
+    });
   }
 
   function toggleBranchRow(row) {
@@ -6270,14 +6312,15 @@ function RotaxRevenueWorkspaceV2({ activeYear, entries, onCreateYear, onSaveEntr
     setExpandedBranchRows((current) => (current.includes(key) ? current.filter((item) => item !== key) : [...current, key]));
   }
 
-  function saveRow(row, options = {}) {
+  async function saveRow(row, options = {}) {
+    const key = `${row.year}-${row.month}`;
     const draft = getDraft(row);
     const matrizValue = parseUploadCurrency(draft.matrizValue);
     const campinasValue = parseUploadCurrency(draft.campinasValue);
     const goianiaValue = parseUploadCurrency(draft.goianiaValue);
     const branchTotal = matrizValue + campinasValue + goianiaValue;
 
-    onSaveEntry(row, {
+    const saved = await onSaveEntry(row, {
       revenueValue: options.useBranchTotal ? branchTotal : parseUploadCurrency(draft.revenueValue),
       targetValue: parseUploadCurrency(draft.targetValue),
       matrizValue,
@@ -6285,6 +6328,7 @@ function RotaxRevenueWorkspaceV2({ activeYear, entries, onCreateYear, onSaveEntr
       goianiaValue,
       notes: draft.notes.trim(),
     });
+    if (saved) removeRotaxRevenueDraft(key);
   }
 
   function renderYearSelect(value, onChange) {
