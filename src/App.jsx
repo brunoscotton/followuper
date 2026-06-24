@@ -874,23 +874,28 @@ function buildBillingHeaders(rows) {
   return headers;
 }
 
-function getBillingIdentityValue(rowData, labelFragments) {
-  const normalizedFragments = labelFragments.map(normalize);
+function normalizeBillingSearchText(value) {
+  return normalizeFinalClientName(value).toLowerCase();
+}
+
+function getBillingIdentityValue(rowData, labelFragments, options = {}) {
+  const normalizer = options.ignoreAccents === false ? normalize : normalizeBillingSearchText;
+  const normalizedFragments = labelFragments.map(normalizer);
   const match = Object.entries(rowData).find(([label]) => {
-    const normalizedLabel = normalize(label);
+    const normalizedLabel = normalizer(label);
     return normalizedFragments.every((fragment) => normalizedLabel.includes(fragment));
   });
   return getBillingCellText(match?.[1]);
 }
 
-function buildBillingRowKey(rowData) {
+function buildBillingRowKey(rowData, options = {}) {
   const identityParts = [
-    getBillingIdentityValue(rowData, ['cliente']),
-    getBillingIdentityValue(rowData, ['pedido']),
-    getBillingIdentityValue(rowData, ['titulo', 'prefixo']),
-    getBillingIdentityValue(rowData, ['titulo', 'numero']),
-    getBillingIdentityValue(rowData, ['titulo', 'parcela']),
-    getBillingIdentityValue(rowData, ['vencimento']),
+    getBillingIdentityValue(rowData, ['cliente'], options),
+    getBillingIdentityValue(rowData, ['pedido'], options),
+    getBillingIdentityValue(rowData, ['titulo', 'prefixo'], options),
+    getBillingIdentityValue(rowData, ['titulo', 'numero'], options),
+    getBillingIdentityValue(rowData, ['titulo', 'parcela'], options),
+    getBillingIdentityValue(rowData, ['vencimento'], options),
   ].filter(Boolean);
 
   const identity = identityParts.length >= 3 ? identityParts.join('|') : JSON.stringify(rowData);
@@ -910,7 +915,14 @@ async function parseBillingUploadFile(file) {
 
     const clientName = getBillingIdentityValue(rowData, ['cliente']);
     if (!clientName) return acc;
-    acc.push({ rowData, rowKey: buildBillingRowKey(rowData) });
+    const baseRowKey = buildBillingRowKey(rowData);
+    const duplicateCount = acc.filter((entry) => entry.baseRowKey === baseRowKey).length;
+    acc.push({
+      baseRowKey,
+      legacyRowKey: buildBillingRowKey(rowData, { ignoreAccents: false }),
+      rowData,
+      rowKey: duplicateCount ? `${baseRowKey}-${duplicateCount + 1}` : baseRowKey,
+    });
     return acc;
   }, []);
 

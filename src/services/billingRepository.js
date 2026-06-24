@@ -60,9 +60,16 @@ function toRow(entry) {
 function mergeRowsWithNotes(seller, rows, existingRows) {
   const now = new Date().toISOString();
   const existingByKey = new Map(existingRows.map((entry) => [entry.rowKey, entry]));
+  const usedExistingIds = new Set();
 
   return rows.map((row, index) => {
-    const existing = existingByKey.get(row.rowKey);
+    let existing = existingByKey.get(row.rowKey);
+    if (!existing && row.legacyRowKey) {
+      const legacyEntry = existingByKey.get(row.legacyRowKey);
+      if (legacyEntry && !usedExistingIds.has(legacyEntry.id)) existing = legacyEntry;
+    }
+    if (existing?.id) usedExistingIds.add(existing.id);
+
     return {
       id: existing?.id || `${seller}-${row.rowKey}`,
       seller,
