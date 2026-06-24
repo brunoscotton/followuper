@@ -114,10 +114,19 @@ import {
   subscribeToContractTemplateChanges,
   upsertContractTemplate,
 } from './services/contractTemplatesRepository';
+import {
+  cacheBillingEntries,
+  loadBillingEntries,
+  replaceBillingEntriesForSeller,
+  sortBillingEntries,
+  subscribeToBillingChanges,
+  updateBillingEntry,
+} from './services/billingRepository';
 import { generateContractPdf } from './services/contractsPdfService';
 import { createUploadAudit, loadUploadAudits } from './services/uploadAuditsRepository';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
+const billingSellers = ['Bruno', 'Elton', 'Stephanie'];
 const LAYOUT_STORAGE_KEY = 'followuper.layoutMode.v1';
 const MASTER_USER_EMAIL = 'bruno.scotton@cdsav.com.br';
 const AUTO_ARCHIVE_INACTIVE_DAYS = 15;
@@ -825,6 +834,90 @@ async function parseCustomersUploadFile(file, existingCustomers) {
   return customers;
 }
 
+function getBillingCellValue(value) {
+  if (value instanceof Date) return formatUploadDateValue(value);
+  if (value === null || value === undefined) return '';
+  return value;
+}
+
+function getBillingCellText(value) {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return normalizeUploadValue(value);
+}
+
+function createBillingHash(value) {
+  let hash = 0;
+  const text = String(value || '');
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+function buildBillingHeaders(rows) {
+  const groupRow = rows[5] || [];
+  const labelRow = rows[6] || [];
+  const headers = [];
+  let activeGroup = '';
+
+  const maxColumns = Math.max(groupRow.length, labelRow.length);
+  for (let index = 0; index < maxColumns; index += 1) {
+    const group = normalizeUploadValue(groupRow[index]);
+    const label = normalizeUploadValue(labelRow[index]);
+    if (group) activeGroup = group;
+    if (!group && !label) continue;
+
+    const header = label && activeGroup && label !== activeGroup ? `${activeGroup} ${label}` : group || label;
+    headers.push({ index, label: header });
+  }
+
+  return headers;
+}
+
+function getBillingIdentityValue(rowData, labelFragments) {
+  const normalizedFragments = labelFragments.map(normalize);
+  const match = Object.entries(rowData).find(([label]) => {
+    const normalizedLabel = normalize(label);
+    return normalizedFragments.every((fragment) => normalizedLabel.includes(fragment));
+  });
+  return getBillingCellText(match?.[1]);
+}
+
+function buildBillingRowKey(rowData) {
+  const identityParts = [
+    getBillingIdentityValue(rowData, ['cliente']),
+    getBillingIdentityValue(rowData, ['pedido']),
+    getBillingIdentityValue(rowData, ['titulo', 'prefixo']),
+    getBillingIdentityValue(rowData, ['titulo', 'numero']),
+    getBillingIdentityValue(rowData, ['titulo', 'parcela']),
+    getBillingIdentityValue(rowData, ['vencimento']),
+  ].filter(Boolean);
+
+  const identity = identityParts.length >= 3 ? identityParts.join('|') : JSON.stringify(rowData);
+  return createBillingHash(identity);
+}
+
+async function parseBillingUploadFile(file) {
+  const rows = await readSheet(file);
+  const headers = buildBillingHeaders(rows);
+  if (headers.length === 0) throw new Error('Nao encontrei os cabecalhos da planilha de cobranca.');
+
+  const entries = rows.slice(7).reduce((acc, row) => {
+    const rowData = {};
+    headers.forEach(({ index, label }) => {
+      rowData[label] = getBillingCellValue(row[index]);
+    });
+
+    const clientName = getBillingIdentityValue(rowData, ['cliente']);
+    if (!clientName) return acc;
+    acc.push({ rowData, rowKey: buildBillingRowKey(rowData) });
+    return acc;
+  }, []);
+
+  if (entries.length === 0) throw new Error('Nao encontrei linhas validas na planilha de cobranca.');
+  return entries;
+}
+
 function addDays(dateValue, days) {
   const date = new Date(dateValue);
   date.setDate(date.getDate() + Number(days || 0));
@@ -1003,6 +1096,7 @@ export function App() {
   const [rotaxRevenueEntries, setRotaxRevenueEntries] = useState([]);
   const [activeRotaxRevenueYear, setActiveRotaxRevenueYear] = useState(2026);
   const [customers, setCustomers] = useState([]);
+  const [billingEntries, setBillingEntries] = useState([]);
   const [contractTemplates, setContractTemplates] = useState([]);
   const [activeContractType, setActiveContractType] = useState('motor');
   const [contractForms, setContractForms] = useState(initialContractForms);
@@ -1016,6 +1110,7 @@ export function App() {
   const [activeRotaxTab, setActiveRotaxTab] = useState('students');
   const [activeRotaxSessionId, setActiveRotaxSessionId] = useState('');
   const [activeRotaxInfoCategory, setActiveRotaxInfoCategory] = useState('internal');
+  const [activeBillingSeller, setActiveBillingSeller] = useState(billingSellers[0]);
   const [expandedRotaxStudentIds, setExpandedRotaxStudentIds] = useState([]);
   const [layoutMode, setLayoutMode] = useState(getStoredLayoutMode);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
@@ -1023,6 +1118,7 @@ export function App() {
   const [sideQuoteFormOpen, setSideQuoteFormOpen] = useState(false);
   const [isUploadingQuotes, setIsUploadingQuotes] = useState(false);
   const [isUploadingCustomers, setIsUploadingCustomers] = useState(false);
+  const [isUploadingBilling, setIsUploadingBilling] = useState(false);
   const [uploadPreview, setUploadPreview] = useState(null);
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
   const [expandedCustomerIds, setExpandedCustomerIds] = useState([]);
@@ -1030,6 +1126,7 @@ export function App() {
   const [customerEditModal, setCustomerEditModal] = useState(null);
   const [customerEditForm, setCustomerEditForm] = useState(initialCustomerEditForm);
   const [customerEditErrors, setCustomerEditErrors] = useState({});
+  const [billingNoteDrafts, setBillingNoteDrafts] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
@@ -1126,6 +1223,7 @@ export function App() {
       setRotaxContacts([]);
       setRotaxRevenueEntries([]);
       setCustomers([]);
+      setBillingEntries([]);
       setContractTemplates([]);
       setUploadAudits([]);
       setIsLoading(false);
@@ -1143,8 +1241,9 @@ export function App() {
       loadUploadAudits(),
       loadCustomers(),
       loadContractTemplates(),
+      loadBillingEntries(),
     ])
-      .then(([quoteResult, trackingResult, infoResult, rotaxResult, uploadAuditResult, customerResult, contractTemplateResult]) => {
+      .then(([quoteResult, trackingResult, infoResult, rotaxResult, uploadAuditResult, customerResult, contractTemplateResult, billingResult]) => {
         if (!active) return;
         setQuotes(quoteResult.quotes);
         setTrackingEntries(trackingResult.entries);
@@ -1156,6 +1255,7 @@ export function App() {
         setUploadAudits(uploadAuditResult.audits);
         setCustomers(customerResult.customers);
         setContractTemplates(contractTemplateResult.templates);
+        setBillingEntries(billingResult.entries);
         setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
         setDataStatus(quoteResult.mode === 'supabase' ? 'Supabase · tempo real' : 'Local');
         setAppError('');
@@ -1209,6 +1309,9 @@ export function App() {
               return sortedTemplates;
             });
           });
+          const unsubscribeBilling = subscribeToBillingChanges(({ eventType, entry, oldId }) => {
+            setBillingEntries((current) => syncCollection(current, eventType, entry, oldId, sortBillingEntries, cacheBillingEntries));
+          });
 
           unsubscribeRealtime = () => {
             unsubscribeQuotes();
@@ -1217,6 +1320,7 @@ export function App() {
             unsubscribeRotax();
             unsubscribeCustomers();
             unsubscribeContractTemplates();
+            unsubscribeBilling();
           };
         }
       })
@@ -2633,6 +2737,50 @@ export function App() {
     }
   }
 
+  async function handleBillingUpload(file, seller) {
+    if (!file || !seller) return;
+
+    setIsUploadingBilling(true);
+
+    try {
+      const importedRows = await parseBillingUploadFile(file);
+      const savedEntries = await replaceBillingEntriesForSeller(seller, importedRows);
+      setBillingEntries((current) => sortBillingEntries([...current.filter((entry) => entry.seller !== seller), ...savedEntries]));
+      setActiveView('billing');
+      setActiveBillingSeller(seller);
+      setAppError(`Cobrança de ${seller} atualizada: ${savedEntries.length} titulo(s) importado(s).`);
+    } catch (error) {
+      setAppError(error.message || 'Nao foi possivel importar a planilha de cobranca.');
+    } finally {
+      setIsUploadingBilling(false);
+    }
+  }
+
+  function updateBillingNoteDraft(id, value) {
+    setBillingNoteDrafts((current) => ({ ...current, [id]: value }));
+  }
+
+  async function saveBillingNote(entry) {
+    const nextNote = billingNoteDrafts[entry.id] ?? entry.notes ?? '';
+    if (nextNote === (entry.notes || '')) return;
+
+    const previousEntries = billingEntries;
+    setBillingEntries((current) => sortBillingEntries(current.map((item) => (item.id === entry.id ? { ...item, notes: nextNote } : item))));
+
+    try {
+      const savedEntry = await updateBillingEntry(entry.id, { notes: nextNote });
+      setBillingEntries((current) => sortBillingEntries(current.map((item) => (item.id === savedEntry.id ? savedEntry : item))));
+      setBillingNoteDrafts((current) => {
+        const nextDrafts = { ...current };
+        delete nextDrafts[entry.id];
+        return nextDrafts;
+      });
+    } catch (error) {
+      setBillingEntries(previousEntries);
+      setAppError(error.message || 'Nao foi possivel salvar a observacao da cobranca.');
+    }
+  }
+
   function openCustomerEditModal(customer) {
     setCustomerEditModal(customer);
     setCustomerEditForm({
@@ -4023,6 +4171,17 @@ export function App() {
           searchTerm={customerSearchTerm}
           setSearchTerm={setCustomerSearchTerm}
         />
+      ) : activeView === 'billing' ? (
+        <BillingWorkspace
+          activeSeller={activeBillingSeller}
+          entries={billingEntries}
+          isUploading={isUploadingBilling}
+          noteDrafts={billingNoteDrafts}
+          onChangeNote={updateBillingNoteDraft}
+          onSaveNote={saveBillingNote}
+          onSelectSeller={setActiveBillingSeller}
+          onUpload={handleBillingUpload}
+        />
       ) : activeView === 'contracts' ? (
         <ContractsWorkspace
           activeType={activeContractType}
@@ -5245,6 +5404,10 @@ function SideNavigation({
         <button className={activeView === 'customers' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('customers')}>
           <Users size={17} />
           Clientes
+        </button>
+        <button className={activeView === 'billing' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('billing')}>
+          <FileText size={17} />
+          Cobrança
         </button>
         <button className={activeView === 'contracts' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('contracts')}>
           <FileText size={17} />
@@ -7651,6 +7814,173 @@ function CustomersWorkspace({
         <div className="empty-state">
           <Users size={28} />
           <p>Nenhum cliente encontrado.</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function formatBillingDisplayValue(label, value) {
+  if (value === null || value === undefined || value === '') return '—';
+  const textLabel = normalize(label);
+
+  if (textLabel.includes('data')) {
+    const dateValue = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value;
+    const date = new Date(dateValue);
+    return Number.isNaN(date.getTime()) ? String(value) : formatDate(date);
+  }
+
+  if (textLabel.includes('valores')) {
+    return formatCurrencyValue(Number(value || 0));
+  }
+
+  if (textLabel.includes('%')) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${Math.round(numeric * 100)}%` : String(value);
+  }
+
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? value.toLocaleString('pt-BR') : value.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+  }
+
+  return String(value);
+}
+
+function BillingWorkspace({
+  activeSeller,
+  entries,
+  isUploading,
+  noteDrafts,
+  onChangeNote,
+  onSaveNote,
+  onSelectSeller,
+  onUpload,
+}) {
+  const tableWrapRef = useRef(null);
+  const tableRef = useRef(null);
+  const topScrollRef = useRef(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
+  const sellerEntries = useMemo(() => entries.filter((entry) => entry.seller === activeSeller), [activeSeller, entries]);
+  const columns = useMemo(() => {
+    const labels = [];
+    sellerEntries.forEach((entry) => {
+      Object.keys(entry.rowData || {}).forEach((label) => {
+        if (!labels.includes(label)) labels.push(label);
+      });
+    });
+    return labels;
+  }, [sellerEntries]);
+
+  useEffect(() => {
+    function updateScrollWidth() {
+      const nextWidth = tableRef.current?.scrollWidth || tableWrapRef.current?.scrollWidth || 0;
+      setTableScrollWidth(nextWidth);
+    }
+
+    updateScrollWidth();
+    window.addEventListener('resize', updateScrollWidth);
+
+    if (typeof ResizeObserver === 'undefined') {
+      return () => window.removeEventListener('resize', updateScrollWidth);
+    }
+
+    const resizeObserver = new ResizeObserver(updateScrollWidth);
+    if (tableRef.current) resizeObserver.observe(tableRef.current);
+    if (tableWrapRef.current) resizeObserver.observe(tableWrapRef.current);
+
+    return () => {
+      window.removeEventListener('resize', updateScrollWidth);
+      resizeObserver.disconnect();
+    };
+  }, [sellerEntries.length, columns.length]);
+
+  function syncTableScrollFromTop(event) {
+    if (tableWrapRef.current) tableWrapRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
+
+  function syncTopScrollFromTable(event) {
+    if (topScrollRef.current) topScrollRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
+
+  return (
+    <section className="billing-panel">
+      <div className="panel-toolbar">
+        <div className="section-title">
+          <FileText size={20} />
+          <h2>Cobrança</h2>
+        </div>
+        <div className="panel-actions">
+          <label className="secondary-button compact file-button">
+            <Upload size={16} />
+            {isUploading ? 'Importando...' : `Upload ${activeSeller}`}
+            <input
+              accept=".xlsx"
+              hidden
+              type="file"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                onUpload(file, activeSeller);
+              }}
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="tabs billing-tabs" role="tablist" aria-label="Vendedores cobrança">
+        {billingSellers.map((seller) => (
+          <button
+            className={activeSeller === seller ? 'tab active' : 'tab'}
+            key={seller}
+            type="button"
+            onClick={() => onSelectSeller(seller)}
+          >
+            {seller}
+            <strong>{entries.filter((entry) => entry.seller === seller).length}</strong>
+          </button>
+        ))}
+      </div>
+
+      <div className="table-top-scroll" ref={topScrollRef} onScroll={syncTableScrollFromTop} aria-label="Mover tabela lateralmente">
+        <div style={{ width: `${tableScrollWidth}px` }} />
+      </div>
+
+      <div className="table-wrap billing-table-wrap" ref={tableWrapRef} onScroll={syncTopScrollFromTable}>
+        <table className="quote-table billing-table" ref={tableRef}>
+          <thead>
+            <tr>
+              {columns.map((column) => (
+                <th key={column}>{column}</th>
+              ))}
+              <th>Observação</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sellerEntries.map((entry) => (
+              <tr className="quote-row" key={entry.id}>
+                {columns.map((column) => (
+                  <td key={column}>{formatBillingDisplayValue(column, entry.rowData?.[column])}</td>
+                ))}
+                <td>
+                  <textarea
+                    className="billing-note-input"
+                    value={noteDrafts[entry.id] ?? entry.notes ?? ''}
+                    onBlur={() => onSaveNote(entry)}
+                    onChange={(event) => onChangeNote(entry.id, event.target.value)}
+                    placeholder="Observação"
+                    rows="2"
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {sellerEntries.length === 0 && (
+        <div className="empty-state">
+          <FileText size={28} />
+          <p>Nenhuma cobrança importada para {activeSeller}.</p>
         </div>
       )}
     </section>

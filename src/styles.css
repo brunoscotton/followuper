@@ -2347,6 +2347,53 @@ td {
   max-width: 760px;
 }
 
+.billing-panel {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(31, 48, 65, 0.08);
+  display: grid;
+  gap: 14px;
+  margin: 0 auto;
+  max-width: 1440px;
+  padding: 18px;
+}
+
+.billing-tabs {
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+}
+
+.billing-table {
+  min-width: 1680px;
+}
+
+.billing-table th,
+.billing-table td {
+  max-width: 230px;
+  min-width: 110px;
+  white-space: nowrap;
+}
+
+.billing-table th:last-child,
+.billing-table td:last-child {
+  background: #ffffff;
+  box-shadow: -10px 0 18px rgba(15, 23, 42, 0.08);
+  min-width: 260px;
+  position: sticky;
+  right: 0;
+  z-index: 2;
+}
+
+.billing-table th:last-child {
+  z-index: 3;
+}
+
+.billing-note-input {
+  min-height: 54px;
+  min-width: 230px;
+  resize: vertical;
+}
+
 .contracts-panel {
   background: #ffffff;
   border: 1px solid #d9e0e7;

@@ -142,6 +142,17 @@ create table if not exists public.customers (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.billing_entries (
+  id text primary key,
+  seller text not null,
+  row_key text not null,
+  row_data jsonb not null default '{}'::jsonb,
+  notes text,
+  order_index integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.contract_templates (
   template_type text primary key check (template_type in ('motor', 'training', 'return')),
   file_name text not null,
@@ -211,6 +222,7 @@ alter table public.rotax_training_students replica identity full;
 alter table public.rotax_training_contacts replica identity full;
 alter table public.upload_audits replica identity full;
 alter table public.customers replica identity full;
+alter table public.billing_entries replica identity full;
 alter table public.contract_templates replica identity full;
 alter table public.rotax_revenue_entries replica identity full;
 
@@ -223,6 +235,7 @@ alter table public.rotax_training_students enable row level security;
 alter table public.rotax_training_contacts enable row level security;
 alter table public.upload_audits enable row level security;
 alter table public.customers enable row level security;
+alter table public.billing_entries enable row level security;
 alter table public.contract_templates enable row level security;
 alter table public.rotax_revenue_entries enable row level security;
 
@@ -260,6 +273,10 @@ drop policy if exists "Authenticated users can read customers" on public.custome
 drop policy if exists "Authenticated users can insert customers" on public.customers;
 drop policy if exists "Authenticated users can update customers" on public.customers;
 drop policy if exists "Authenticated users can delete customers" on public.customers;
+drop policy if exists "Authenticated users can read billing entries" on public.billing_entries;
+drop policy if exists "Authenticated users can insert billing entries" on public.billing_entries;
+drop policy if exists "Authenticated users can update billing entries" on public.billing_entries;
+drop policy if exists "Authenticated users can delete billing entries" on public.billing_entries;
 drop policy if exists "Authenticated users can read contract templates" on public.contract_templates;
 drop policy if exists "Authenticated users can insert contract templates" on public.contract_templates;
 drop policy if exists "Authenticated users can update contract templates" on public.contract_templates;
@@ -481,6 +498,31 @@ create policy "Authenticated users can delete customers"
   to authenticated
   using (true);
 
+create policy "Authenticated users can read billing entries"
+  on public.billing_entries
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert billing entries"
+  on public.billing_entries
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update billing entries"
+  on public.billing_entries
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete billing entries"
+  on public.billing_entries
+  for delete
+  to authenticated
+  using (true);
+
 create policy "Authenticated users can read contract templates"
   on public.contract_templates
   for select
@@ -621,6 +663,16 @@ begin
       and tablename = 'customers'
   ) then
     alter publication supabase_realtime add table public.customers;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'billing_entries'
+  ) then
+    alter publication supabase_realtime add table public.billing_entries;
   end if;
 
   if not exists (
