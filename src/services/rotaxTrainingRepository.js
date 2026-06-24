@@ -84,6 +84,7 @@ function toSession(row) {
   return {
     id: row.id,
     trainingDate: row.training_date,
+    archivedAt: row.archived_at || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -93,6 +94,7 @@ function toSessionRow(session) {
   const row = {};
   if ('id' in session) row.id = session.id;
   if ('trainingDate' in session) row.training_date = session.trainingDate;
+  if ('archivedAt' in session) row.archived_at = session.archivedAt || null;
   if ('createdAt' in session) row.created_at = session.createdAt;
   if ('updatedAt' in session) row.updated_at = session.updatedAt;
   return row;
@@ -256,6 +258,10 @@ export async function deleteRotaxBlock(id) {
 export async function createRotaxSession(session) {
   const row = await createItem(SESSIONS_STORAGE_KEY, 'rotax_training_sessions', toSessionRow, sortRotaxSessions, session);
   return supabase ? toSession(row) : row;
+}
+
+export async function updateRotaxSession(id, changes) {
+  return updateItem(SESSIONS_STORAGE_KEY, 'rotax_training_sessions', toSessionRow, toSession, sortRotaxSessions, id, changes);
 }
 
 export async function deleteRotaxSession(id) {

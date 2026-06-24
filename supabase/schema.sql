@@ -81,9 +81,13 @@ create table if not exists public.rotax_training_blocks (
 create table if not exists public.rotax_training_sessions (
   id uuid primary key,
   training_date date not null unique,
+  archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.rotax_training_sessions
+  add column if not exists archived_at timestamptz;
 
 create table if not exists public.rotax_training_students (
   id uuid primary key,

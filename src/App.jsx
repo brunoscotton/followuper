@@ -87,6 +87,7 @@ import {
   subscribeToRotaxTrainingChanges,
   updateRotaxBlock,
   updateRotaxContact,
+  updateRotaxSession,
   updateRotaxStudent,
 } from './services/rotaxTrainingRepository';
 import {
@@ -1394,15 +1395,19 @@ export function App() {
   }, [isLoading, quotes]);
 
   useEffect(() => {
-    if (!rotaxSessions.length) {
+    const activeSessions = rotaxSessions.filter((session) => !isRotaxSessionArchived(session));
+    const archivedSessions = rotaxSessions.filter(isRotaxSessionArchived);
+    const selectableSessions = activeRotaxTab === 'archived' ? archivedSessions : activeSessions;
+
+    if (!selectableSessions.length) {
       setActiveRotaxSessionId('');
       return;
     }
 
-    if (!activeRotaxSessionId || !rotaxSessions.some((session) => session.id === activeRotaxSessionId)) {
-      setActiveRotaxSessionId(rotaxSessions[0].id);
+    if (!activeRotaxSessionId || !selectableSessions.some((session) => session.id === activeRotaxSessionId)) {
+      setActiveRotaxSessionId(selectableSessions[0].id);
     }
-  }, [activeRotaxSessionId, rotaxSessions]);
+  }, [activeRotaxSessionId, activeRotaxTab, rotaxSessions]);
 
   const metrics = useMemo(() => {
     const followUpDue = quotes.filter((quote) => isFollowUpDue(quote, now));
@@ -1541,9 +1546,13 @@ export function App() {
   const rotaxMetrics = useMemo(
     () => ({
       contacts: rotaxContacts.length,
-      students: rotaxStudents.length,
+      students: rotaxStudents.filter((student) => {
+        const session = rotaxSessions.find((item) => item.id === student.trainingSessionId);
+        return !isRotaxSessionArchived(session);
+      }).length,
+      archived: rotaxSessions.filter(isRotaxSessionArchived).length,
     }),
-    [rotaxContacts, rotaxStudents],
+    [rotaxContacts, rotaxSessions, rotaxStudents],
   );
 
   const activeRotaxBlocks = useMemo(
@@ -1552,7 +1561,7 @@ export function App() {
   );
 
   const visibleRotaxStudents = useMemo(() => {
-    if (!activeRotaxSessionId) return rotaxStudents;
+    if (!activeRotaxSessionId) return [];
     return rotaxStudents.filter((student) => student.trainingSessionId === activeRotaxSessionId);
   }, [activeRotaxSessionId, rotaxStudents]);
 
@@ -1747,6 +1756,35 @@ export function App() {
     } catch (error) {
       setRotaxSessions(previousSessions);
       setAppError(error.message || 'Nao foi possivel adicionar o treinamento.');
+    }
+  }
+
+  async function archiveRotaxSession(sessionId) {
+    const session = rotaxSessions.find((item) => item.id === sessionId);
+    if (!session || isRotaxSessionArchived(session)) return;
+    if (!hasRotaxSessionPassed(session)) {
+      setAppError('Treinamentos so podem ser arquivados depois que a data passar.');
+      return;
+    }
+
+    const confirmed = window.confirm(`Arquivar o treinamento de ${getRotaxSessionLabel(session)}?`);
+    if (!confirmed) return;
+
+    const archivedAt = new Date().toISOString();
+    const previousSessions = rotaxSessions;
+    setRotaxSessions((current) => sortRotaxSessions(current.map((item) => (item.id === sessionId ? { ...item, archivedAt } : item))));
+    setActiveRotaxTab('archived');
+    setActiveRotaxSessionId(sessionId);
+
+    try {
+      const savedSession = await updateRotaxSession(sessionId, { archivedAt });
+      setRotaxSessions((current) => sortRotaxSessions(current.map((item) => (item.id === savedSession.id ? savedSession : item))));
+      setAppError('Treinamento arquivado.');
+    } catch (error) {
+      setRotaxSessions(previousSessions);
+      setActiveRotaxTab('students');
+      setActiveRotaxSessionId(sessionId);
+      setAppError(error.message || 'Nao foi possivel arquivar o treinamento.');
     }
   }
 
@@ -4013,6 +4051,7 @@ export function App() {
           onAddContact={() => openRotaxContactModal()}
           onAddSession={openRotaxSessionModal}
           onAddStudent={() => openRotaxStudentModal()}
+          onArchiveSession={archiveRotaxSession}
           onChangeBlock={changeRotaxBlock}
           onEditContact={openRotaxContactModal}
           onEditStudent={openRotaxStudentModal}
@@ -6618,6 +6657,14 @@ function getRotaxSessionLabel(session) {
   return session?.trainingDate ? formatDate(`${session.trainingDate}T12:00:00`) : 'Sem treinamento';
 }
 
+function isRotaxSessionArchived(session) {
+  return Boolean(session?.archivedAt);
+}
+
+function hasRotaxSessionPassed(session) {
+  return Boolean(session?.trainingDate && session.trainingDate < getTodayInputValue());
+}
+
 function RotaxTrainingWorkspace({
   activeInfoCategory,
   activeSessionId,
@@ -6630,6 +6677,7 @@ function RotaxTrainingWorkspace({
   onAddContact,
   onAddSession,
   onAddStudent,
+  onArchiveSession,
   onChangeBlock,
   onEditContact,
   onEditStudent,
@@ -6647,7 +6695,10 @@ function RotaxTrainingWorkspace({
   students,
 }) {
   const activeCategory = rotaxInfoCategories.find((category) => category.value === activeInfoCategory) || rotaxInfoCategories[0];
-  const activeSession = sessions.find((session) => session.id === activeSessionId);
+  const activeSessions = sessions.filter((session) => !isRotaxSessionArchived(session));
+  const archivedSessions = sessions.filter(isRotaxSessionArchived);
+  const displayedSessions = activeTab === 'archived' ? archivedSessions : activeSessions;
+  const activeSession = displayedSessions.find((session) => session.id === activeSessionId);
 
   return (
     <section className="rotax-panel">
@@ -6724,12 +6775,22 @@ function RotaxTrainingWorkspace({
               Alunos confirmados
               <strong>{metrics.students}</strong>
             </button>
+            <button
+              className={activeTab === 'archived' ? 'tab active' : 'tab'}
+              type="button"
+              onClick={() => setActiveTab('archived')}
+            >
+              Arquivados
+              <strong>{metrics.archived}</strong>
+            </button>
           </div>
           <div className="panel-actions">
-            <button className="secondary-button compact" type="button" onClick={onAddStudent}>
-              <Plus size={16} />
-              Adicionar novo aluno
-            </button>
+            {activeTab !== 'archived' && (
+              <button className="secondary-button compact" type="button" onClick={onAddStudent}>
+                <Plus size={16} />
+                Adicionar novo aluno
+              </button>
+            )}
             <button className="secondary-button compact" type="button" onClick={onAddSession}>
               <CalendarClock size={16} />
               Adicionar treinamento
@@ -6747,23 +6808,37 @@ function RotaxTrainingWorkspace({
         ) : (
           <>
             <div className="tabs rotax-session-tabs" role="tablist" aria-label="Datas de treinamento">
-              {sessions.length === 0 ? (
-                <button className="tab active" type="button" onClick={onAddSession}>
-                  Nenhum treinamento cadastrado
-                  <strong>+</strong>
+              {displayedSessions.length === 0 ? (
+                <button className="tab active" type="button" disabled={activeTab === 'archived'} onClick={activeTab === 'archived' ? undefined : onAddSession}>
+                  {activeTab === 'archived' ? 'Nenhum treinamento arquivado' : 'Nenhum treinamento cadastrado'}
+                  <strong>{activeTab === 'archived' ? '0' : '+'}</strong>
                 </button>
               ) : (
-                sessions.map((session) => (
-                  <button
-                    className={activeSessionId === session.id ? 'tab active' : 'tab'}
-                    key={session.id}
-                    type="button"
-                    onClick={() => setActiveSessionId(session.id)}
-                  >
-                    {getRotaxSessionLabel(session)}
-                    <strong>{allStudents.filter((student) => student.trainingSessionId === session.id).length}</strong>
-                  </button>
-                ))
+                displayedSessions.map((session) => {
+                  const canArchive = activeTab === 'students' && hasRotaxSessionPassed(session);
+
+                  return (
+                    <div className="rotax-session-tab-item" key={session.id}>
+                      <button
+                        className={activeSessionId === session.id ? 'tab active' : 'tab'}
+                        type="button"
+                        onClick={() => setActiveSessionId(session.id)}
+                      >
+                        {getRotaxSessionLabel(session)}
+                        <strong>{allStudents.filter((student) => student.trainingSessionId === session.id).length}</strong>
+                      </button>
+                      {canArchive && (
+                        <button
+                          className="secondary-button compact rotax-archive-session-button"
+                          type="button"
+                          onClick={() => onArchiveSession(session.id)}
+                        >
+                          Arquivar
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
               )}
             </div>
             <RotaxStudentsTable

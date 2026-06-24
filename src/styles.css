@@ -2746,12 +2746,29 @@ td {
 
 .rotax-main-tabs {
   flex: 1;
-  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
   margin: 0;
 }
 
 .rotax-session-tabs {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.rotax-session-tab-item {
+  align-items: stretch;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rotax-session-tab-item > .tab {
+  flex: 1;
+  min-width: 0;
+}
+
+.rotax-archive-session-button {
+  color: #7c2d12;
+  white-space: nowrap;
 }
 
 .rotax-table {
