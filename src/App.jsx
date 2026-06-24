@@ -127,6 +127,7 @@ import { createUploadAudit, loadUploadAudits } from './services/uploadAuditsRepo
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 const billingSellers = ['Bruno', 'Elton', 'Stephanie'];
+const BILLING_NOTE_DRAFTS_STORAGE_KEY = 'followuper.billingNoteDrafts.v1';
 const LAYOUT_STORAGE_KEY = 'followuper.layoutMode.v1';
 const MASTER_USER_EMAIL = 'bruno.scotton@cdsav.com.br';
 const AUTO_ARCHIVE_INACTIVE_DAYS = 15;
@@ -902,6 +903,18 @@ function buildBillingRowKey(rowData, options = {}) {
   return createBillingHash(identity);
 }
 
+function loadBillingNoteDrafts() {
+  try {
+    return JSON.parse(localStorage.getItem(BILLING_NOTE_DRAFTS_STORAGE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveBillingNoteDrafts(drafts) {
+  localStorage.setItem(BILLING_NOTE_DRAFTS_STORAGE_KEY, JSON.stringify(drafts));
+}
+
 async function parseBillingUploadFile(file) {
   const rows = await readSheet(file);
   const headers = buildBillingHeaders(rows);
@@ -1138,7 +1151,7 @@ export function App() {
   const [customerEditModal, setCustomerEditModal] = useState(null);
   const [customerEditForm, setCustomerEditForm] = useState(initialCustomerEditForm);
   const [customerEditErrors, setCustomerEditErrors] = useState({});
-  const [billingNoteDrafts, setBillingNoteDrafts] = useState({});
+  const [billingNoteDrafts, setBillingNoteDrafts] = useState(() => loadBillingNoteDrafts());
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
@@ -2769,12 +2782,26 @@ export function App() {
   }
 
   function updateBillingNoteDraft(id, value) {
-    setBillingNoteDrafts((current) => ({ ...current, [id]: value }));
+    setBillingNoteDrafts((current) => {
+      const nextDrafts = { ...current, [id]: value };
+      saveBillingNoteDrafts(nextDrafts);
+      return nextDrafts;
+    });
   }
 
   async function saveBillingNote(entry) {
     const nextNote = billingNoteDrafts[entry.id] ?? entry.notes ?? '';
-    if (nextNote === (entry.notes || '')) return;
+    if (nextNote === (entry.notes || '')) {
+      if (entry.id in billingNoteDrafts) {
+        setBillingNoteDrafts((current) => {
+          const nextDrafts = { ...current };
+          delete nextDrafts[entry.id];
+          saveBillingNoteDrafts(nextDrafts);
+          return nextDrafts;
+        });
+      }
+      return;
+    }
 
     const previousEntries = billingEntries;
     setBillingEntries((current) => sortBillingEntries(current.map((item) => (item.id === entry.id ? { ...item, notes: nextNote } : item))));
@@ -2785,6 +2812,7 @@ export function App() {
       setBillingNoteDrafts((current) => {
         const nextDrafts = { ...current };
         delete nextDrafts[entry.id];
+        saveBillingNoteDrafts(nextDrafts);
         return nextDrafts;
       });
     } catch (error) {
@@ -7858,6 +7886,19 @@ function formatBillingDisplayValue(label, value) {
   return String(value);
 }
 
+function getBillingValueByLabel(rowData, labelFragments) {
+  const normalizedFragments = labelFragments.map(normalizeBillingSearchText);
+  const match = Object.entries(rowData || {}).find(([label]) => {
+    const normalizedLabel = normalizeBillingSearchText(label);
+    return normalizedFragments.every((fragment) => normalizedLabel.includes(fragment));
+  });
+  return match?.[1];
+}
+
+function getBillingCurrentValue(entry) {
+  return parseUploadCurrency(getBillingValueByLabel(entry.rowData, ['valores', 'atual']));
+}
+
 function BillingWorkspace({
   activeSeller,
   entries,
@@ -7873,6 +7914,16 @@ function BillingWorkspace({
   const topScrollRef = useRef(null);
   const [tableScrollWidth, setTableScrollWidth] = useState(0);
   const sellerEntries = useMemo(() => entries.filter((entry) => entry.seller === activeSeller), [activeSeller, entries]);
+  const totalsBySeller = useMemo(
+    () =>
+      billingSellers.reduce((acc, seller) => {
+        acc[seller] = entries
+          .filter((entry) => entry.seller === seller)
+          .reduce((sum, entry) => sum + getBillingCurrentValue(entry), 0);
+        return acc;
+      }, {}),
+    [entries],
+  );
   const columns = useMemo(() => {
     const labels = [];
     sellerEntries.forEach((entry) => {
@@ -7948,6 +7999,7 @@ function BillingWorkspace({
             onClick={() => onSelectSeller(seller)}
           >
             {seller}
+            <span>{formatCurrencyValue(totalsBySeller[seller] || 0)}</span>
             <strong>{entries.filter((entry) => entry.seller === seller).length}</strong>
           </button>
         ))}

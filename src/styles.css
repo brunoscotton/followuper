@@ -2363,6 +2363,18 @@ td {
   grid-template-columns: repeat(3, minmax(140px, 1fr));
 }
 
+.billing-tabs .tab {
+  align-items: center;
+  gap: 8px;
+}
+
+.billing-tabs .tab span {
+  color: #0f766e;
+  font-size: 0.9rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
 .billing-table {
   min-width: 1680px;
 }
