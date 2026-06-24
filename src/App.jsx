@@ -129,7 +129,6 @@ const sellers = ['Elton', 'Bruno', 'Stephanie'];
 const billingSellers = ['Bruno', 'Elton', 'Stephanie'];
 const BILLING_NOTE_DRAFTS_STORAGE_KEY = 'followuper.billingNoteDrafts.v1';
 const LAYOUT_STORAGE_KEY = 'followuper.layoutMode.v1';
-const MASTER_USER_EMAIL = 'bruno.scotton@cdsav.com.br';
 const AUTO_ARCHIVE_INACTIVE_DAYS = 15;
 const DOLLAR_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 const monthNames = [
@@ -1197,8 +1196,6 @@ export function App() {
   const autoArchiveRunningRef = useRef(false);
   const closedUnarchiveRunningRef = useRef(false);
   const celebrationTimeoutRef = useRef(null);
-  const isMasterUser = normalize(user?.email || '') === MASTER_USER_EMAIL;
-
   useEffect(() => {
     let active = true;
 
@@ -1369,9 +1366,8 @@ export function App() {
 
     if (!authChecked) return () => {};
 
-    if (!isMasterUser) {
+    if (isSupabaseConfigured && !user) {
       setRotaxRevenueEntries([]);
-      if (activeView === 'rotaxRevenue') setActiveView('quotes');
       return () => {
         active = false;
       };
@@ -1403,7 +1399,7 @@ export function App() {
       active = false;
       unsubscribeRealtime();
     };
-  }, [authChecked, user, isMasterUser, activeView]);
+  }, [authChecked, user]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
@@ -3711,8 +3707,6 @@ export function App() {
   }
 
   async function saveRotaxRevenueEntry(entry, changes) {
-    if (!isMasterUser) return false;
-
     const previousEntries = rotaxRevenueEntries;
     const nowIso = new Date().toISOString();
     const nextEntry = {
@@ -3764,8 +3758,6 @@ export function App() {
   }
 
   async function createRotaxRevenueYear(year) {
-    if (!isMasterUser) return;
-
     const numericYear = Number(year);
     if (!Number.isFinite(numericYear)) return;
 
@@ -3921,12 +3913,10 @@ export function App() {
                           <GraduationCap size={16} />
                           Treinamento Rotax
                         </button>
-                        {isMasterUser && (
-                          <button type="button" onClick={() => navigateFromMenu('rotaxRevenue')}>
-                            <ShieldCheck size={16} />
-                            Faturamento Rotax
-                          </button>
-                        )}
+                        <button type="button" onClick={() => navigateFromMenu('rotaxRevenue')}>
+                          <ShieldCheck size={16} />
+                          Faturamento Rotax
+                        </button>
                         <button type="button" onClick={() => navigateFromMenu('tracking')}>
                           <Truck size={16} />
                           Rastreio
@@ -3996,16 +3986,14 @@ export function App() {
                   <GraduationCap size={16} />
                   Treinamento Rotax
                 </button>
-                {isMasterUser && (
-                  <button
-                    className={activeView === 'rotaxRevenue' ? 'view-button active' : 'view-button'}
-                    type="button"
-                    onClick={() => setActiveView('rotaxRevenue')}
-                  >
-                    <ShieldCheck size={16} />
-                    Faturamento Rotax
-                  </button>
-                )}
+                <button
+                  className={activeView === 'rotaxRevenue' ? 'view-button active' : 'view-button'}
+                  type="button"
+                  onClick={() => setActiveView('rotaxRevenue')}
+                >
+                  <ShieldCheck size={16} />
+                  Faturamento Rotax
+                </button>
                 <button
                   className={activeView === 'tracking' ? 'view-button active' : 'view-button'}
                   type="button"
@@ -4110,7 +4098,6 @@ export function App() {
             dataStatus={dataStatus}
             errors={errors}
             form={form}
-            isMasterUser={isMasterUser}
             isUploadingCustomers={isUploadingCustomers}
             isUploadingQuotes={isUploadingQuotes}
             metrics={metrics}
@@ -4268,7 +4255,7 @@ export function App() {
           setActiveView={setActiveView}
           students={visibleRotaxStudents}
         />
-      ) : activeView === 'rotaxRevenue' && isMasterUser ? (
+      ) : activeView === 'rotaxRevenue' ? (
         <RotaxRevenueWorkspaceV2
           activeYear={activeRotaxRevenueYear}
           entries={rotaxRevenueEntries}
@@ -5305,7 +5292,6 @@ function SideNavigation({
   dataStatus,
   errors,
   form,
-  isMasterUser,
   isUploadingCustomers,
   isUploadingQuotes,
   metrics,
@@ -5501,16 +5487,14 @@ function SideNavigation({
           <GraduationCap size={17} />
           Trein. Rotax
         </button>
-        {isMasterUser && (
-          <button
-            className={activeView === 'rotaxRevenue' ? 'side-nav-button active' : 'side-nav-button'}
-            type="button"
-            onClick={() => onNavigate('rotaxRevenue')}
-          >
-            <ShieldCheck size={17} />
-            Fat. Rotax
-          </button>
-        )}
+        <button
+          className={activeView === 'rotaxRevenue' ? 'side-nav-button active' : 'side-nav-button'}
+          type="button"
+          onClick={() => onNavigate('rotaxRevenue')}
+        >
+          <ShieldCheck size={17} />
+          Fat. Rotax
+        </button>
       </nav>
 
       <div className="side-alerts" aria-live="polite">
@@ -6269,7 +6253,7 @@ function RotaxRevenueWorkspace({ activeYear, entries, onCreateYear, onSaveEntry,
 
       <div className="master-notice">
         <ShieldCheck size={18} />
-        Área master restrita ao usuário bruno.scotton@cdsav.com.br
+        Faturamento Rotax compartilhado entre usuarios logados.
       </div>
 
       <div className="rotax-revenue-controls">
@@ -6639,7 +6623,7 @@ function RotaxRevenueWorkspaceV2({ activeYear, entries, onCreateYear, onSaveEntr
 
       <div className="master-notice">
         <ShieldCheck size={18} />
-        Área master restrita ao usuário bruno.scotton@cdsav.com.br
+        Faturamento Rotax compartilhado entre usuarios logados.
       </div>
 
       <div className="rotax-revenue-controls">

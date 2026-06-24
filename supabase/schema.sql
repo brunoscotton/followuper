@@ -285,6 +285,10 @@ drop policy if exists "Master user can read rotax revenue entries" on public.rot
 drop policy if exists "Master user can insert rotax revenue entries" on public.rotax_revenue_entries;
 drop policy if exists "Master user can update rotax revenue entries" on public.rotax_revenue_entries;
 drop policy if exists "Master user can delete rotax revenue entries" on public.rotax_revenue_entries;
+drop policy if exists "Authenticated users can read rotax revenue entries" on public.rotax_revenue_entries;
+drop policy if exists "Authenticated users can insert rotax revenue entries" on public.rotax_revenue_entries;
+drop policy if exists "Authenticated users can update rotax revenue entries" on public.rotax_revenue_entries;
+drop policy if exists "Authenticated users can delete rotax revenue entries" on public.rotax_revenue_entries;
 
 create policy "Authenticated users can read quotes"
   on public.quotes
@@ -548,30 +552,30 @@ create policy "Authenticated users can delete contract templates"
   to authenticated
   using (true);
 
-create policy "Master user can read rotax revenue entries"
+create policy "Authenticated users can read rotax revenue entries"
   on public.rotax_revenue_entries
   for select
   to authenticated
-  using (lower(auth.jwt() ->> 'email') = 'bruno.scotton@cdsav.com.br');
+  using (true);
 
-create policy "Master user can insert rotax revenue entries"
+create policy "Authenticated users can insert rotax revenue entries"
   on public.rotax_revenue_entries
   for insert
   to authenticated
-  with check (lower(auth.jwt() ->> 'email') = 'bruno.scotton@cdsav.com.br');
+  with check (true);
 
-create policy "Master user can update rotax revenue entries"
+create policy "Authenticated users can update rotax revenue entries"
   on public.rotax_revenue_entries
   for update
   to authenticated
-  using (lower(auth.jwt() ->> 'email') = 'bruno.scotton@cdsav.com.br')
-  with check (lower(auth.jwt() ->> 'email') = 'bruno.scotton@cdsav.com.br');
+  using (true)
+  with check (true);
 
-create policy "Master user can delete rotax revenue entries"
+create policy "Authenticated users can delete rotax revenue entries"
   on public.rotax_revenue_entries
   for delete
   to authenticated
-  using (lower(auth.jwt() ->> 'email') = 'bruno.scotton@cdsav.com.br');
+  using (true);
 
 do $$
 begin
