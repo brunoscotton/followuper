@@ -7938,7 +7938,7 @@ function formatBillingWholeNumber(value) {
 
 function getBillingSortKeyForColumn(label) {
   const normalizedLabel = normalizeBillingSearchText(label);
-  if (normalizedLabel.includes('dias') && normalizedLabel.includes('aberto')) return 'openDays';
+  if (normalizedLabel.includes('dias') && (normalizedLabel.includes('aberto') || normalizedLabel.includes('atraso'))) return 'openDays';
   if (normalizedLabel.includes('vencimento')) return 'dueDate';
   if (normalizedLabel.includes('nome') || normalizedLabel.includes('cliente')) return 'name';
   return '';
@@ -7980,7 +7980,7 @@ function getBillingSortValue(entry, sortKey) {
   }
 
   if (sortKey === 'openDays') {
-    return Number(getBillingValueByLabel(entry.rowData, ['dias', 'aberto']) || 0);
+    return Number(getBillingValueByLabel(entry.rowData, ['dias', 'aberto']) || getBillingValueByLabel(entry.rowData, ['atraso', 'dias']) || 0);
   }
 
   if (sortKey === 'dueDate') {
