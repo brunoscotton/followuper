@@ -2429,6 +2429,17 @@ td {
   white-space: nowrap;
 }
 
+.billing-table-tools {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.billing-search-box {
+  max-width: 520px;
+  width: 100%;
+}
+
 .billing-table {
   min-width: 1680px;
 }

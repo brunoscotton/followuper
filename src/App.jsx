@@ -7734,7 +7734,6 @@ function CustomersWorkspace({
           </label>
         </div>
       </div>
-
       <div className="table-top-scroll" ref={topScrollRef} onScroll={syncTableScrollFromTop} aria-label="Mover tabela lateralmente">
         <div style={{ width: `${tableScrollWidth}px` }} />
       </div>
@@ -7884,6 +7883,10 @@ function formatBillingDisplayValue(label, value) {
   if (value === null || value === undefined || value === '') return '—';
   const textLabel = normalize(label);
 
+  if (isBillingWholeNumberColumn(label)) {
+    return formatBillingWholeNumber(value);
+  }
+
   if (textLabel.includes('data')) {
     const dateValue = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value;
     const date = new Date(dateValue);
@@ -7915,6 +7918,78 @@ function getBillingValueByLabel(rowData, labelFragments) {
   return match?.[1];
 }
 
+function isBillingWholeNumberColumn(label) {
+  const normalizedLabel = normalizeBillingSearchText(label);
+  return normalizedLabel.includes('pedido') || (normalizedLabel.includes('titulo') && normalizedLabel.includes('numero'));
+}
+
+function formatBillingWholeNumber(value) {
+  if (typeof value === 'number') return String(Math.trunc(value));
+
+  const text = String(value || '').trim();
+  if (!text) return '-';
+
+  const normalizedNumber = text.replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
+  const numericValue = Number(normalizedNumber);
+  if (Number.isFinite(numericValue)) return String(Math.trunc(numericValue));
+
+  return text;
+}
+
+function getBillingSortKeyForColumn(label) {
+  const normalizedLabel = normalizeBillingSearchText(label);
+  if (normalizedLabel.includes('dias') && normalizedLabel.includes('aberto')) return 'openDays';
+  if (normalizedLabel.includes('vencimento')) return 'dueDate';
+  if (normalizedLabel.includes('nome') || normalizedLabel.includes('cliente')) return 'name';
+  return '';
+}
+
+function getBillingSearchText(entry) {
+  return [
+    getBillingValueByLabel(entry.rowData, ['nome']),
+    getBillingValueByLabel(entry.rowData, ['cliente']),
+    getBillingValueByLabel(entry.rowData, ['pedido']),
+    getBillingValueByLabel(entry.rowData, ['titulo', 'numero']),
+    entry.notes,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function parseBillingDateValue(value) {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+
+  const text = String(value).trim();
+  const brDateMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (brDateMatch) {
+    const [, day, month, year] = brDateMatch;
+    const fullYear = year.length === 2 ? `20${year}` : year;
+    return new Date(`${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T12:00:00`).getTime();
+  }
+
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function getBillingSortValue(entry, sortKey) {
+  if (sortKey === 'name') {
+    return normalizeBillingSearchText(
+      getBillingValueByLabel(entry.rowData, ['nome']) || getBillingValueByLabel(entry.rowData, ['cliente']) || '',
+    );
+  }
+
+  if (sortKey === 'openDays') {
+    return Number(getBillingValueByLabel(entry.rowData, ['dias', 'aberto']) || 0);
+  }
+
+  if (sortKey === 'dueDate') {
+    return parseBillingDateValue(getBillingValueByLabel(entry.rowData, ['vencimento']));
+  }
+
+  return '';
+}
+
 function getBillingCurrentValue(entry) {
   return parseUploadCurrency(getBillingValueByLabel(entry.rowData, ['valores', 'atual']));
 }
@@ -7933,7 +8008,11 @@ function BillingWorkspace({
   const tableRef = useRef(null);
   const topScrollRef = useRef(null);
   const [tableScrollWidth, setTableScrollWidth] = useState(0);
+  const [searchTermsBySeller, setSearchTermsBySeller] = useState(() => ({}));
+  const [sortStateBySeller, setSortStateBySeller] = useState(() => ({}));
   const sellerEntries = useMemo(() => entries.filter((entry) => entry.seller === activeSeller), [activeSeller, entries]);
+  const activeSearchTerm = searchTermsBySeller[activeSeller] || '';
+  const activeSort = sortStateBySeller[activeSeller] || { key: '', direction: 'asc' };
   const totalsBySeller = useMemo(
     () =>
       billingSellers.reduce((acc, seller) => {
@@ -7953,6 +8032,29 @@ function BillingWorkspace({
     });
     return labels;
   }, [sellerEntries]);
+  const visibleSellerEntries = useMemo(() => {
+    const normalizedSearch = normalizeBillingSearchText(activeSearchTerm);
+    const filteredEntries = normalizedSearch
+      ? sellerEntries.filter((entry) => normalizeBillingSearchText(getBillingSearchText(entry)).includes(normalizedSearch))
+      : sellerEntries;
+
+    if (!activeSort.key) return filteredEntries;
+
+    return [...filteredEntries].sort((a, b) => {
+      const valueA = getBillingSortValue(a, activeSort.key);
+      const valueB = getBillingSortValue(b, activeSort.key);
+      let result = 0;
+
+      if (activeSort.key === 'name') {
+        result = String(valueA).localeCompare(String(valueB), 'pt-BR');
+      } else {
+        result = Number(valueA || 0) - Number(valueB || 0);
+      }
+
+      if (result !== 0) return activeSort.direction === 'desc' ? result * -1 : result;
+      return Number(a.orderIndex || 0) - Number(b.orderIndex || 0);
+    });
+  }, [activeSearchTerm, activeSort, sellerEntries]);
 
   useEffect(() => {
     function updateScrollWidth() {
@@ -7975,7 +8077,32 @@ function BillingWorkspace({
       window.removeEventListener('resize', updateScrollWidth);
       resizeObserver.disconnect();
     };
-  }, [sellerEntries.length, columns.length]);
+  }, [visibleSellerEntries.length, columns.length]);
+
+  function updateSearchTerm(value) {
+    setSearchTermsBySeller((current) => ({ ...current, [activeSeller]: value }));
+  }
+
+  function changeSort(sortKey) {
+    setSortStateBySeller((current) => {
+      const currentSort = current[activeSeller] || { key: '', direction: 'asc' };
+      const nextDirection = sortKey === 'name' ? 'asc' : currentSort.key === sortKey && currentSort.direction === 'asc' ? 'desc' : 'asc';
+      return { ...current, [activeSeller]: { key: sortKey, direction: nextDirection } };
+    });
+  }
+
+  function renderHeader(column) {
+    const sortKey = getBillingSortKeyForColumn(column);
+    if (!sortKey) return column;
+
+    const directionLabel = activeSort.key === sortKey ? (activeSort.direction === 'asc' ? '↑' : '↓') : '';
+    return (
+      <button className="sortable-header-button" type="button" onClick={() => changeSort(sortKey)}>
+        {column}
+        <span>{directionLabel}</span>
+      </button>
+    );
+  }
 
   function syncTableScrollFromTop(event) {
     if (tableWrapRef.current) tableWrapRef.current.scrollLeft = event.currentTarget.scrollLeft;
@@ -8025,6 +8152,17 @@ function BillingWorkspace({
         ))}
       </div>
 
+      <div className="billing-table-tools">
+        <label className="search-box billing-search-box">
+          <Search size={18} />
+          <input
+            value={activeSearchTerm}
+            onChange={(event) => updateSearchTerm(event.target.value)}
+            placeholder="Buscar por nome, Nº pedido ou título número"
+          />
+        </label>
+      </div>
+
       <div className="table-top-scroll" ref={topScrollRef} onScroll={syncTableScrollFromTop} aria-label="Mover tabela lateralmente">
         <div style={{ width: `${tableScrollWidth}px` }} />
       </div>
@@ -8034,13 +8172,13 @@ function BillingWorkspace({
           <thead>
             <tr>
               {columns.map((column) => (
-                <th key={column}>{column}</th>
+                <th key={column}>{renderHeader(column)}</th>
               ))}
               <th>Observação</th>
             </tr>
           </thead>
           <tbody>
-            {sellerEntries.map((entry) => (
+            {visibleSellerEntries.map((entry) => (
               <tr className="quote-row" key={entry.id}>
                 {columns.map((column) => (
                   <td key={column}>{formatBillingDisplayValue(column, entry.rowData?.[column])}</td>
@@ -8065,6 +8203,12 @@ function BillingWorkspace({
         <div className="empty-state">
           <FileText size={28} />
           <p>Nenhuma cobrança importada para {activeSeller}.</p>
+        </div>
+      )}
+      {sellerEntries.length > 0 && visibleSellerEntries.length === 0 && (
+        <div className="empty-state">
+          <Search size={28} />
+          <p>Nenhuma cobrança encontrada para a busca atual.</p>
         </div>
       )}
     </section>
