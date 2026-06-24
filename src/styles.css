@@ -1413,6 +1413,60 @@ small {
   gap: 2px;
 }
 
+.dashboard-rotax-summary {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  box-shadow: 0 14px 36px rgba(31, 48, 65, 0.07);
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.dashboard-rotax-summary.above {
+  border-color: #86efac;
+}
+
+.dashboard-rotax-summary.below {
+  border-color: #fecaca;
+}
+
+.rotax-summary-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.rotax-summary-grid div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rotax-summary-grid span {
+  color: #657587;
+  font-size: 0.76rem;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.rotax-summary-grid strong {
+  color: #17212b;
+  font-size: clamp(1rem, 1.7vw, 1.55rem);
+  line-height: 1;
+}
+
+.dashboard-rotax-summary.above .rotax-summary-grid div:nth-child(n + 3) strong {
+  color: #15803d;
+}
+
+.dashboard-rotax-summary.below .rotax-summary-grid div:nth-child(n + 3) strong {
+  color: #dc2626;
+}
+
 .dashboard-totals {
   display: grid;
   gap: 10px;

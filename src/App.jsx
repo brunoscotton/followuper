@@ -4129,7 +4129,7 @@ export function App() {
         )}
         <div className={useSideMenu ? 'app-content-area' : undefined}>
       {layoutMode === 'dashboard' ? (
-        <SalesDashboard quotes={quotes} saleCelebration={saleCelebration} />
+        <SalesDashboard quotes={quotes} rotaxRevenueEntries={rotaxRevenueEntries} saleCelebration={saleCelebration} />
       ) : layoutMode === 'vovo' ? (
         <GrandpaWorkspace
           errors={grandpaErrors}
@@ -4465,9 +4465,21 @@ function normalizeInfoLink(url) {
   return /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
 }
 
-function SalesDashboard({ quotes, saleCelebration }) {
+function SalesDashboard({ quotes, rotaxRevenueEntries = [], saleCelebration }) {
   const [relevantPage, setRelevantPage] = useState(0);
   const [dollarQuote, setDollarQuote] = useState({ error: '', updatedAt: '', value: null });
+  const dashboardDate = new Date();
+  const currentRotaxRevenue = rotaxRevenueEntries.find(
+    (entry) =>
+      Number(entry.year) === dashboardDate.getFullYear() &&
+      Number(entry.month) === dashboardDate.getMonth() + 1,
+  );
+  const rotaxMonthlyRevenue = Number(currentRotaxRevenue?.revenueValue || 0);
+  const rotaxMonthlyTarget = Number(currentRotaxRevenue?.targetValue || 0);
+  const rotaxMonthlyDifference = rotaxMonthlyRevenue - rotaxMonthlyTarget;
+  const rotaxMonthlyPercent = rotaxMonthlyTarget ? Math.round((rotaxMonthlyRevenue / rotaxMonthlyTarget) * 100) : 0;
+  const rotaxMonthlyStatus = rotaxMonthlyDifference >= 0 ? 'above' : 'below';
+  const rotaxMonthlyDiffLabel = rotaxMonthlyDifference >= 0 ? 'acima da meta' : 'para chegar na meta';
   const activeQuotes = quotes.filter((quote) => !isArchived(quote));
   const openQuotes = activeQuotes.filter((quote) => !isClosed(quote));
   const closedQuotes = activeQuotes.filter(isClosed);
@@ -4655,6 +4667,30 @@ function SalesDashboard({ quotes, saleCelebration }) {
           </div>
         </section>
       </div>
+
+      <section className={`dashboard-rotax-summary ${rotaxMonthlyStatus}`}>
+        <div className="dashboard-card-title">
+          <h3>Faturamento Rotax - {monthNames[dashboardDate.getMonth()]}</h3>
+        </div>
+        <div className="rotax-summary-grid">
+          <div>
+            <span>Faturamento do mês</span>
+            <strong>{formatCurrencyValue(rotaxMonthlyRevenue)}</strong>
+          </div>
+          <div>
+            <span>Meta</span>
+            <strong>{formatCurrencyValue(rotaxMonthlyTarget)}</strong>
+          </div>
+          <div>
+            <span>{rotaxMonthlyDiffLabel}</span>
+            <strong>{formatCurrencyValue(Math.abs(rotaxMonthlyDifference))}</strong>
+          </div>
+          <div>
+            <span>% faturamento/meta</span>
+            <strong>{rotaxMonthlyPercent}%</strong>
+          </div>
+        </div>
+      </section>
 
       <div className="dashboard-totals">
         <div className="dashboard-total-card open">
