@@ -1455,7 +1455,7 @@ small {
 
 .rotax-summary-grid strong {
   color: #17212b;
-  font-size: clamp(1rem, 1.7vw, 1.55rem);
+  font-size: clamp(1.15rem, 2.05vw, 1.85rem);
   line-height: 1;
 }
 
