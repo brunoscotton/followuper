@@ -116,6 +116,7 @@ import {
 } from './services/contractTemplatesRepository';
 import {
   cacheBillingEntries,
+  deleteBillingEntry,
   loadBillingEntries,
   replaceBillingEntriesForSeller,
   sortBillingEntries,
@@ -181,6 +182,7 @@ const simpleTabs = [
 const trackingTabs = [
   { value: 'Em andamento', label: 'Em andamento' },
   { value: 'Finalizado', label: 'Finalizado' },
+  { value: 'Importação', label: 'Importação' },
 ];
 
 const rotaxInfoCategories = [
@@ -236,6 +238,7 @@ const deliverySituations = [
   'saiu para entrega',
   'Postado após limite de horário',
   'etiqueta',
+  'Importação',
 ];
 
 const situationColorClass = {
@@ -251,6 +254,7 @@ const situationColorClass = {
   'saiu para entrega': 'pink',
   'Postado após limite de horário': 'blue',
   etiqueta: 'blue',
+  Importação: 'teal',
 };
 
 const initialCloseDetails = {
@@ -868,6 +872,7 @@ function buildBillingHeaders(rows) {
     if (!group && !label) continue;
 
     const header = label && activeGroup && label !== activeGroup ? `${activeGroup} ${label}` : group || label;
+    if (isIgnoredBillingColumn(header)) continue;
     headers.push({ index, label: header });
   }
 
@@ -876,6 +881,11 @@ function buildBillingHeaders(rows) {
 
 function normalizeBillingSearchText(value) {
   return normalizeFinalClientName(value).toLowerCase();
+}
+
+function isIgnoredBillingColumn(label) {
+  const compactLabel = normalizeBillingSearchText(label).replace(/\s/g, '');
+  return compactLabel.includes('%abs') || compactLabel.includes('%acm');
 }
 
 function getBillingIdentityValue(rowData, labelFragments, options = {}) {
@@ -1577,6 +1587,7 @@ export function App() {
     () => ({
       andamento: trackingEntries.filter((entry) => entry.status === 'Em andamento').length,
       finalizado: trackingEntries.filter((entry) => entry.status === 'Finalizado').length,
+      importacao: trackingEntries.filter((entry) => entry.status === 'Importação').length,
       withoutCode: trackingEntries.filter((entry) => entry.status === 'Em andamento' && !entry.trackingCode.trim()).length,
     }),
     [trackingEntries],
@@ -2817,6 +2828,28 @@ export function App() {
     }
   }
 
+  async function removeBillingEntry(entry) {
+    if (!entry?.id) return;
+    const previousEntries = billingEntries;
+
+    setBillingEntries((current) => current.filter((item) => item.id !== entry.id));
+    setBillingNoteDrafts((current) => {
+      if (!(entry.id in current)) return current;
+      const nextDrafts = { ...current };
+      delete nextDrafts[entry.id];
+      saveBillingNoteDrafts(nextDrafts);
+      return nextDrafts;
+    });
+
+    try {
+      await deleteBillingEntry(entry.id);
+      setAppError('');
+    } catch (error) {
+      setBillingEntries(previousEntries);
+      setAppError(error.message || 'Nao foi possivel excluir a cobranca.');
+    }
+  }
+
   function openCustomerEditModal(customer) {
     setCustomerEditModal(customer);
     setCustomerEditForm({
@@ -3529,6 +3562,14 @@ export function App() {
         return { ...current, deliverySituation: value, status: 'Finalizado' };
       }
 
+      if (field === 'deliverySituation' && value === 'Importação') {
+        return { ...current, deliverySituation: value, status: 'Importação' };
+      }
+
+      if (field === 'deliverySituation' && current.status === 'Importação') {
+        return { ...current, deliverySituation: value, status: 'Em andamento' };
+      }
+
       if (field === 'clientName') {
         const customer = findCustomerByName(value);
         return { ...current, clientName: value, phone: customer?.phone || current.phone };
@@ -3554,7 +3595,12 @@ export function App() {
     if (!trackingModal) return;
 
     const previousEntries = trackingEntries;
-    const nextStatus = trackingForm.deliverySituation === 'Entregue' ? 'Finalizado' : trackingForm.status;
+    const nextStatus =
+      trackingForm.deliverySituation === 'Entregue'
+        ? 'Finalizado'
+        : trackingForm.deliverySituation === 'Importação'
+          ? 'Importação'
+          : trackingForm.status;
     const customer = findCustomerByName(trackingModal.clientName);
     const phone = trackingForm.phone.trim() || customer?.phone || '';
     const changes = {
@@ -3573,7 +3619,7 @@ export function App() {
       changes.finalizedAt = new Date().toISOString();
     }
 
-    if (changes.status === 'Em andamento') {
+    if (changes.status === 'Em andamento' || changes.status === 'Importação') {
       changes.finalizedAt = '';
     }
 
@@ -3615,7 +3661,12 @@ export function App() {
 
     const previousEntries = trackingEntries;
     const nowIso = new Date().toISOString();
-    const nextStatus = trackingForm.deliverySituation === 'Entregue' ? 'Finalizado' : trackingForm.status;
+    const nextStatus =
+      trackingForm.deliverySituation === 'Entregue'
+        ? 'Finalizado'
+        : trackingForm.deliverySituation === 'Importação'
+          ? 'Importação'
+          : trackingForm.status;
     const customer = findCustomerByName(trackingForm.clientName);
     const phone = trackingForm.phone.trim() || customer?.phone || '';
     const nextEntry = {
@@ -4205,6 +4256,7 @@ export function App() {
           isUploading={isUploadingBilling}
           noteDrafts={billingNoteDrafts}
           onChangeNote={updateBillingNoteDraft}
+          onRemoveEntry={removeBillingEntry}
           onSaveNote={saveBillingNote}
           onSelectSeller={setActiveBillingSeller}
           onUpload={handleBillingUpload}
@@ -8000,6 +8052,7 @@ function BillingWorkspace({
   isUploading,
   noteDrafts,
   onChangeNote,
+  onRemoveEntry,
   onSaveNote,
   onSelectSeller,
   onUpload,
@@ -8027,7 +8080,7 @@ function BillingWorkspace({
     const labels = [];
     sellerEntries.forEach((entry) => {
       Object.keys(entry.rowData || {}).forEach((label) => {
-        if (!labels.includes(label)) labels.push(label);
+        if (!isIgnoredBillingColumn(label) && !labels.includes(label)) labels.push(label);
       });
     });
     return labels;
@@ -8175,6 +8228,7 @@ function BillingWorkspace({
                 <th key={column}>{renderHeader(column)}</th>
               ))}
               <th>Observação</th>
+              <th>Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -8192,6 +8246,17 @@ function BillingWorkspace({
                     placeholder="Observação"
                     rows="2"
                   />
+                </td>
+                <td>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    title="Excluir cobrança"
+                    aria-label="Excluir cobrança"
+                    onClick={() => onRemoveEntry(entry)}
+                  >
+                    <Trash2 size={17} />
+                  </button>
                 </td>
               </tr>
             ))}
@@ -8413,7 +8478,7 @@ function TrackingWorkspace({
             onClick={() => setActiveTrackingTab(tab.value)}
           >
             {tab.label}
-            <strong>{tab.value === 'Em andamento' ? metrics.andamento : metrics.finalizado}</strong>
+            <strong>{metrics[tab.value === 'Em andamento' ? 'andamento' : tab.value === 'Finalizado' ? 'finalizado' : 'importacao']}</strong>
           </button>
         ))}
       </div>
@@ -8425,6 +8490,7 @@ function TrackingWorkspace({
         <span className="situation yellow">Transferência / preparo</span>
         <span className="situation pink">Saiu para entrega</span>
         <span className="situation blue">Postado / etiqueta</span>
+        <span className="situation teal">Importação</span>
       </div>
 
       <div className="table-top-scroll" ref={topScrollRef} onScroll={syncTableScrollFromTop} aria-label="Mover tabela lateralmente">
@@ -9213,6 +9279,7 @@ function TrackingEditModal({ entry, errors = {}, form, isStandalone = false, onC
           <select value={form.status} onChange={(event) => onUpdate('status', event.target.value)}>
             <option value="Em andamento">Em andamento</option>
             <option value="Finalizado">Finalizado</option>
+            <option value="Importação">Importação</option>
           </select>
         </label>
 

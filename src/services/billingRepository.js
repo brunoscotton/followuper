@@ -157,6 +157,18 @@ export async function updateBillingEntry(id, changes) {
   return toBillingEntry(data);
 }
 
+export async function deleteBillingEntry(id) {
+  if (!supabase) {
+    saveLocalBillingEntries(loadLocalBillingEntries().filter((entry) => entry.id !== id));
+    return;
+  }
+
+  const { error } = await supabase.from('billing_entries').delete().eq('id', id);
+  if (error) throw error;
+
+  saveLocalBillingEntries(loadLocalBillingEntries().filter((entry) => entry.id !== id));
+}
+
 export function subscribeToBillingChanges(onChange) {
   if (!supabase) return () => {};
 

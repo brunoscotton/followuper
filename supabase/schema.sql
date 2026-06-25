@@ -46,12 +46,13 @@ create table if not exists public.tracking_entries (
       'Preparando para entrega',
       'saiu para entrega',
       'Postado após limite de horário',
-      'etiqueta'
+      'etiqueta',
+      'Importação'
     )
   ),
   expected_delivery_date date,
   notes text,
-  status text not null default 'Em andamento' check (status in ('Em andamento', 'Finalizado')),
+  status text not null default 'Em andamento' check (status in ('Em andamento', 'Finalizado', 'Importação')),
   finalized_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -194,6 +195,30 @@ alter table public.quotes add column if not exists history jsonb not null defaul
 alter table public.tracking_entries add column if not exists invoice_number text;
 alter table public.tracking_entries add column if not exists phone text;
 alter table public.tracking_entries add column if not exists correios_update_failed boolean not null default false;
+alter table public.tracking_entries drop constraint if exists tracking_entries_delivery_situation_check;
+alter table public.tracking_entries
+  add constraint tracking_entries_delivery_situation_check
+  check (
+    delivery_situation in (
+      'Entregue',
+      'Disponível para Retirada',
+      'Não encontrado na Base dados',
+      'Manifestação',
+      'NÃO ENTREGUE',
+      'Em correção de rota',
+      'Correio não atendido',
+      'Em transferencia',
+      'Preparando para entrega',
+      'saiu para entrega',
+      'Postado após limite de horário',
+      'etiqueta',
+      'Importação'
+    )
+  );
+alter table public.tracking_entries drop constraint if exists tracking_entries_status_check;
+alter table public.tracking_entries
+  add constraint tracking_entries_status_check
+  check (status in ('Em andamento', 'Finalizado', 'Importação'));
 alter table public.customers add column if not exists seller text;
 alter table public.contract_templates add column if not exists mime_type text not null default 'application/pdf';
 alter table public.rotax_revenue_entries add column if not exists matriz_value numeric not null default 0;

@@ -110,7 +110,7 @@ export async function updateTrackingEntry(id, changes) {
     nextChanges.finalizedAt = updatedAt;
   }
 
-  if (nextChanges.status === 'Em andamento') {
+  if (nextChanges.status === 'Em andamento' || nextChanges.status === 'Importação') {
     nextChanges.finalizedAt = '';
   }
 
