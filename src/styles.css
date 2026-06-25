@@ -2473,7 +2473,8 @@ td {
   resize: vertical;
 }
 
-.contracts-panel {
+.contracts-panel,
+.returns-panel {
   background: #ffffff;
   border: 1px solid #d9e0e7;
   border-radius: 8px;
@@ -2487,6 +2488,52 @@ td {
 
 .contract-tabs {
   grid-template-columns: repeat(3, minmax(160px, 1fr));
+}
+
+.returns-tabs {
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+}
+
+.returns-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.returns-table th:nth-child(1) {
+  min-width: 140px;
+}
+
+.return-items-list {
+  display: grid;
+  gap: 4px;
+}
+
+.return-items-list span {
+  color: #435268;
+  font-weight: 800;
+}
+
+.return-modal {
+  max-width: 760px;
+}
+
+.return-items-editor {
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.return-items-editor h3 {
+  margin: 0;
+}
+
+.return-item-row {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 140px 40px;
 }
 
 .template-status {

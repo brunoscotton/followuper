@@ -123,6 +123,15 @@ import {
   subscribeToBillingChanges,
   updateBillingEntry,
 } from './services/billingRepository';
+import {
+  cacheReturnEntries,
+  createReturnEntry,
+  deleteReturnEntry,
+  loadReturnEntries,
+  sortReturnEntries,
+  subscribeToReturnChanges,
+  updateReturnEntry,
+} from './services/returnsRepository';
 import { generateContractPdf } from './services/contractsPdfService';
 import { createUploadAudit, loadUploadAudits } from './services/uploadAuditsRepository';
 
@@ -184,6 +193,28 @@ const trackingTabs = [
   { value: 'Finalizado', label: 'Finalizado' },
   { value: 'Importação', label: 'Importação' },
 ];
+
+const returnTabs = [
+  { value: 'andamento', label: 'Em andamento' },
+  { value: 'finalizado', label: 'Finalizado' },
+];
+
+const returnTypes = ['Total', 'Parcial'];
+
+const returnStatuses = [
+  'Aguardando retorno cliente',
+  'Solicitado carta faturamento',
+  'Aguardando finalização faturamento',
+  'Aguardando item chegar matriz',
+  'Finalizado',
+];
+
+const initialReturnForm = {
+  invoiceNumber: '',
+  returnType: 'Total',
+  items: [{ partNumber: '', quantity: '' }],
+  status: 'Aguardando retorno cliente',
+};
 
 const rotaxInfoCategories = [
   { value: 'internal', label: 'Informações Internas' },
@@ -1131,6 +1162,7 @@ export function App() {
   const [activeRotaxRevenueYear, setActiveRotaxRevenueYear] = useState(2026);
   const [customers, setCustomers] = useState([]);
   const [billingEntries, setBillingEntries] = useState([]);
+  const [returnEntries, setReturnEntries] = useState([]);
   const [contractTemplates, setContractTemplates] = useState([]);
   const [activeContractType, setActiveContractType] = useState('motor');
   const [contractForms, setContractForms] = useState(initialContractForms);
@@ -1145,6 +1177,7 @@ export function App() {
   const [activeRotaxSessionId, setActiveRotaxSessionId] = useState('');
   const [activeRotaxInfoCategory, setActiveRotaxInfoCategory] = useState('internal');
   const [activeBillingSeller, setActiveBillingSeller] = useState(billingSellers[0]);
+  const [activeReturnTab, setActiveReturnTab] = useState('andamento');
   const [expandedRotaxStudentIds, setExpandedRotaxStudentIds] = useState([]);
   const [layoutMode, setLayoutMode] = useState(getStoredLayoutMode);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
@@ -1161,6 +1194,9 @@ export function App() {
   const [customerEditForm, setCustomerEditForm] = useState(initialCustomerEditForm);
   const [customerEditErrors, setCustomerEditErrors] = useState({});
   const [billingNoteDrafts, setBillingNoteDrafts] = useState(() => loadBillingNoteDrafts());
+  const [returnModal, setReturnModal] = useState(null);
+  const [returnForm, setReturnForm] = useState(initialReturnForm);
+  const [returnErrors, setReturnErrors] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
@@ -1256,6 +1292,7 @@ export function App() {
       setRotaxRevenueEntries([]);
       setCustomers([]);
       setBillingEntries([]);
+      setReturnEntries([]);
       setContractTemplates([]);
       setUploadAudits([]);
       setIsLoading(false);
@@ -1274,8 +1311,20 @@ export function App() {
       loadCustomers(),
       loadContractTemplates(),
       loadBillingEntries(),
+      loadReturnEntries(),
     ])
-      .then(([quoteResult, trackingResult, infoResult, rotaxResult, uploadAuditResult, customerResult, contractTemplateResult, billingResult]) => {
+      .then(
+        ([
+          quoteResult,
+          trackingResult,
+          infoResult,
+          rotaxResult,
+          uploadAuditResult,
+          customerResult,
+          contractTemplateResult,
+          billingResult,
+          returnResult,
+        ]) => {
         if (!active) return;
         setQuotes(quoteResult.quotes);
         setTrackingEntries(trackingResult.entries);
@@ -1288,6 +1337,7 @@ export function App() {
         setCustomers(customerResult.customers);
         setContractTemplates(contractTemplateResult.templates);
         setBillingEntries(billingResult.entries);
+        setReturnEntries(returnResult.entries);
         setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
         setDataStatus(quoteResult.mode === 'supabase' ? 'Supabase · tempo real' : 'Local');
         setAppError('');
@@ -1344,6 +1394,9 @@ export function App() {
           const unsubscribeBilling = subscribeToBillingChanges(({ eventType, entry, oldId }) => {
             setBillingEntries((current) => syncCollection(current, eventType, entry, oldId, sortBillingEntries, cacheBillingEntries));
           });
+          const unsubscribeReturns = subscribeToReturnChanges(({ eventType, entry, oldId }) => {
+            setReturnEntries((current) => syncCollection(current, eventType, entry, oldId, sortReturnEntries, cacheReturnEntries));
+          });
 
           unsubscribeRealtime = () => {
             unsubscribeQuotes();
@@ -1353,9 +1406,11 @@ export function App() {
             unsubscribeCustomers();
             unsubscribeContractTemplates();
             unsubscribeBilling();
+            unsubscribeReturns();
           };
         }
-      })
+      },
+      )
       .catch((error) => {
         if (!active) return;
         setAppError(error.message || 'Não foi possível carregar os dados.');
@@ -1677,6 +1732,14 @@ export function App() {
   const correiosTrackingCandidates = useMemo(
     () => trackingEntries.filter(isCorreiosTrackingCandidate),
     [trackingEntries],
+  );
+
+  const visibleReturnEntries = useMemo(
+    () =>
+      returnEntries.filter((entry) =>
+        activeReturnTab === 'finalizado' ? entry.status === 'Finalizado' : entry.status !== 'Finalizado',
+      ),
+    [activeReturnTab, returnEntries],
   );
 
   const rotaxMetrics = useMemo(
@@ -2847,6 +2910,135 @@ export function App() {
     } catch (error) {
       setBillingEntries(previousEntries);
       setAppError(error.message || 'Nao foi possivel excluir a cobranca.');
+    }
+  }
+
+  function openReturnModal(entry = null) {
+    setReturnModal(entry || {});
+    setReturnForm(
+      entry
+        ? {
+            invoiceNumber: entry.invoiceNumber || '',
+            returnType: entry.returnType || 'Total',
+            items: entry.items?.length ? entry.items : [{ partNumber: '', quantity: '' }],
+            status: entry.status || 'Aguardando retorno cliente',
+          }
+        : initialReturnForm,
+    );
+    setReturnErrors({});
+  }
+
+  function cancelReturnModal() {
+    setReturnModal(null);
+    setReturnForm(initialReturnForm);
+    setReturnErrors({});
+  }
+
+  function updateReturnForm(field, value) {
+    setReturnForm((current) => {
+      if (field === 'returnType') {
+        return {
+          ...current,
+          returnType: value,
+          items: value === 'Parcial' ? current.items?.length ? current.items : [{ partNumber: '', quantity: '' }] : [],
+        };
+      }
+      return { ...current, [field]: value };
+    });
+    setReturnErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  function addReturnFormItem() {
+    setReturnForm((current) => ({
+      ...current,
+      items: [...(current.items || []), { partNumber: '', quantity: '' }],
+    }));
+  }
+
+  function updateReturnFormItem(index, field, value) {
+    setReturnForm((current) => ({
+      ...current,
+      items: (current.items || []).map((item, itemIndex) => (itemIndex === index ? { ...item, [field]: value } : item)),
+    }));
+  }
+
+  function removeReturnFormItem(index) {
+    setReturnForm((current) => ({
+      ...current,
+      items: (current.items || []).filter((_, itemIndex) => itemIndex !== index),
+    }));
+  }
+
+  function validateReturnForm() {
+    const nextErrors = {};
+    if (!returnForm.invoiceNumber.trim()) nextErrors.invoiceNumber = 'Informe a nota fiscal.';
+    if (returnForm.returnType === 'Parcial') {
+      const validItems = (returnForm.items || []).filter((item) => item.partNumber.trim() && String(item.quantity || '').trim());
+      if (validItems.length === 0) nextErrors.items = 'Informe pelo menos um PN e quantidade.';
+    }
+    setReturnErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
+
+  async function saveReturnForm(event) {
+    event.preventDefault();
+    if (!returnModal || !validateReturnForm()) return;
+
+    const previousEntries = returnEntries;
+    const nowIso = new Date().toISOString();
+    const sanitizedItems =
+      returnForm.returnType === 'Parcial'
+        ? (returnForm.items || [])
+            .map((item) => ({ partNumber: item.partNumber.trim(), quantity: String(item.quantity || '').trim() }))
+            .filter((item) => item.partNumber && item.quantity)
+        : [];
+    const nextEntry = {
+      id: returnModal.id || crypto.randomUUID(),
+      invoiceNumber: returnForm.invoiceNumber.trim(),
+      returnType: returnForm.returnType,
+      items: sanitizedItems,
+      status: returnForm.status,
+      createdAt: returnModal.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+
+    setReturnEntries((current) =>
+      sortReturnEntries([nextEntry, ...current.filter((entry) => entry.id !== nextEntry.id)]),
+    );
+
+    try {
+      const savedEntry = returnModal.id
+        ? await updateReturnEntry(returnModal.id, {
+            invoiceNumber: nextEntry.invoiceNumber,
+            returnType: nextEntry.returnType,
+            items: nextEntry.items,
+            status: nextEntry.status,
+          })
+        : await createReturnEntry(nextEntry);
+
+      setReturnEntries((current) =>
+        sortReturnEntries([savedEntry, ...current.filter((entry) => entry.id !== savedEntry.id)]),
+      );
+      setActiveReturnTab(savedEntry.status === 'Finalizado' ? 'finalizado' : 'andamento');
+      cancelReturnModal();
+      setAppError('');
+    } catch (error) {
+      setReturnEntries(previousEntries);
+      setAppError(error.message || 'Nao foi possivel salvar a devolucao.');
+    }
+  }
+
+  async function removeReturnEntry(entry) {
+    if (!entry?.id) return;
+    const previousEntries = returnEntries;
+    setReturnEntries((current) => current.filter((item) => item.id !== entry.id));
+
+    try {
+      await deleteReturnEntry(entry.id);
+      setAppError('');
+    } catch (error) {
+      setReturnEntries(previousEntries);
+      setAppError(error.message || 'Nao foi possivel excluir a devolucao.');
     }
   }
 
@@ -4277,6 +4469,19 @@ export function App() {
           onUpdateReturnItem={updateReturnItem}
           templates={contractTemplates}
         />
+      ) : activeView === 'returns' ? (
+        <ReturnsWorkspace
+          activeTab={activeReturnTab}
+          entries={visibleReturnEntries}
+          onAdd={() => openReturnModal()}
+          onEdit={openReturnModal}
+          onRemove={removeReturnEntry}
+          setActiveTab={setActiveReturnTab}
+          totalCounts={{
+            andamento: returnEntries.filter((entry) => entry.status !== 'Finalizado').length,
+            finalizado: returnEntries.filter((entry) => entry.status === 'Finalizado').length,
+          }}
+        />
       ) : activeView === 'rotax' ? (
         <RotaxTrainingWorkspace
           activeInfoCategory={activeRotaxInfoCategory}
@@ -4401,6 +4606,20 @@ export function App() {
           onCancel={cancelTrackingModal}
           onSubmit={saveStandaloneTrackingForm}
           onUpdate={updateTrackingForm}
+        />
+      )}
+
+      {returnModal && (
+        <ReturnEntryModal
+          errors={returnErrors}
+          form={returnForm}
+          isEditing={Boolean(returnModal.id)}
+          onAddItem={addReturnFormItem}
+          onCancel={cancelReturnModal}
+          onRemoveItem={removeReturnFormItem}
+          onSubmit={saveReturnForm}
+          onUpdate={updateReturnForm}
+          onUpdateItem={updateReturnFormItem}
         />
       )}
 
@@ -5526,6 +5745,10 @@ function SideNavigation({
         <button className={activeView === 'contracts' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('contracts')}>
           <FileText size={17} />
           Contratos
+        </button>
+        <button className={activeView === 'returns' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('returns')}>
+          <RefreshCw size={17} />
+          Devoluções
         </button>
         <button className="side-nav-button" type="button" disabled={isUploadingCustomers} onClick={onUploadCustomersClick}>
           <Upload size={17} />
@@ -8277,6 +8500,179 @@ function BillingWorkspace({
         </div>
       )}
     </section>
+  );
+}
+
+function ReturnsWorkspace({ activeTab, entries, onAdd, onEdit, onRemove, setActiveTab, totalCounts }) {
+  return (
+    <section className="returns-panel">
+      <div className="panel-toolbar">
+        <div className="section-title">
+          <RefreshCw size={20} />
+          <h2>Devoluções</h2>
+        </div>
+      </div>
+
+      <div className="tabs returns-tabs" role="tablist" aria-label="Status das devoluções">
+        {returnTabs.map((tab) => (
+          <button
+            className={activeTab === tab.value ? 'tab active' : 'tab'}
+            key={tab.value}
+            type="button"
+            onClick={() => setActiveTab(tab.value)}
+          >
+            {tab.label}
+            <strong>{totalCounts[tab.value]}</strong>
+          </button>
+        ))}
+      </div>
+
+      <div className="returns-actions">
+        <button className="primary-button compact" type="button" onClick={onAdd}>
+          <Plus size={16} />
+          Incluir
+        </button>
+      </div>
+
+      <div className="table-wrap">
+        <table className="quote-table returns-table">
+          <thead>
+            <tr>
+              <th>Nota Fiscal</th>
+              <th>Tipo</th>
+              <th>Itens</th>
+              <th>Status</th>
+              <th>Atualizado em</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => (
+              <tr className="quote-row" key={entry.id}>
+                <td className="strong-text">{entry.invoiceNumber}</td>
+                <td>
+                  <span className={entry.returnType === 'Total' ? 'situation green' : 'situation orange'}>{entry.returnType}</span>
+                </td>
+                <td>
+                  {entry.returnType === 'Parcial' && entry.items?.length ? (
+                    <div className="return-items-list">
+                      {entry.items.map((item, index) => (
+                        <span key={`${entry.id}-${item.partNumber}-${index}`}>
+                          {item.partNumber} · {item.quantity}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    'Devolução total'
+                  )}
+                </td>
+                <td>{entry.status}</td>
+                <td>{entry.updatedAt ? formatDateTime(entry.updatedAt) : '-'}</td>
+                <td>
+                  <div className="row-actions">
+                    <button className="icon-button neutral" type="button" title="Editar devolução" aria-label="Editar devolução" onClick={() => onEdit(entry)}>
+                      <Pencil size={17} />
+                    </button>
+                    <button className="icon-button" type="button" title="Excluir devolução" aria-label="Excluir devolução" onClick={() => onRemove(entry)}>
+                      <Trash2 size={17} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {entries.length === 0 && (
+        <div className="empty-state">
+          <RefreshCw size={28} />
+          <p>Nenhuma devolução nesta aba.</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReturnEntryModal({ errors = {}, form, isEditing, onAddItem, onCancel, onRemoveItem, onSubmit, onUpdate, onUpdateItem }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="close-modal return-modal" onSubmit={onSubmit} noValidate>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Devoluções</p>
+            <h2>{isEditing ? 'Editar devolução' : 'Nova devolução'}</h2>
+          </div>
+          <button className="modal-close" type="button" aria-label="Fechar janela" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="form-pair wide">
+          <label>
+            Nota Fiscal
+            <input value={form.invoiceNumber} onChange={(event) => onUpdate('invoiceNumber', event.target.value)} placeholder="Ex: 123456" />
+            {errors.invoiceNumber && <small>{errors.invoiceNumber}</small>}
+          </label>
+          <label>
+            Tipo de devolução
+            <select value={form.returnType} onChange={(event) => onUpdate('returnType', event.target.value)}>
+              {returnTypes.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {form.returnType === 'Parcial' && (
+          <div className="return-items-editor">
+            <h3>Itens da devolução parcial</h3>
+            {(form.items || []).map((item, index) => (
+              <div className="return-item-row" key={`return-item-${index}`}>
+                <label>
+                  PN
+                  <input value={item.partNumber} onChange={(event) => onUpdateItem(index, 'partNumber', event.target.value)} placeholder="PN" />
+                </label>
+                <label>
+                  Quantidade
+                  <input value={item.quantity} onChange={(event) => onUpdateItem(index, 'quantity', event.target.value)} placeholder="Qtd." />
+                </label>
+                <button className="icon-button" type="button" title="Remover item" aria-label="Remover item" onClick={() => onRemoveItem(index)}>
+                  <Trash2 size={17} />
+                </button>
+              </div>
+            ))}
+            {errors.items && <small>{errors.items}</small>}
+            <button className="secondary-button compact" type="button" onClick={onAddItem}>
+              <Plus size={16} />
+              Adicionar item
+            </button>
+          </div>
+        )}
+
+        <label>
+          Status
+          <select value={form.status} onChange={(event) => onUpdate('status', event.target.value)}>
+            {returnStatuses.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button className="primary-button" type="submit">
+            Salvar
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 

@@ -154,6 +154,24 @@ create table if not exists public.billing_entries (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.return_entries (
+  id uuid primary key,
+  invoice_number text not null,
+  return_type text not null default 'Total' check (return_type in ('Total', 'Parcial')),
+  items jsonb not null default '[]'::jsonb,
+  status text not null default 'Aguardando retorno cliente' check (
+    status in (
+      'Aguardando retorno cliente',
+      'Solicitado carta faturamento',
+      'Aguardando finalização faturamento',
+      'Aguardando item chegar matriz',
+      'Finalizado'
+    )
+  ),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.contract_templates (
   template_type text primary key check (template_type in ('motor', 'training', 'return')),
   file_name text not null,
@@ -248,6 +266,7 @@ alter table public.rotax_training_contacts replica identity full;
 alter table public.upload_audits replica identity full;
 alter table public.customers replica identity full;
 alter table public.billing_entries replica identity full;
+alter table public.return_entries replica identity full;
 alter table public.contract_templates replica identity full;
 alter table public.rotax_revenue_entries replica identity full;
 
@@ -261,6 +280,7 @@ alter table public.rotax_training_contacts enable row level security;
 alter table public.upload_audits enable row level security;
 alter table public.customers enable row level security;
 alter table public.billing_entries enable row level security;
+alter table public.return_entries enable row level security;
 alter table public.contract_templates enable row level security;
 alter table public.rotax_revenue_entries enable row level security;
 
@@ -302,6 +322,10 @@ drop policy if exists "Authenticated users can read billing entries" on public.b
 drop policy if exists "Authenticated users can insert billing entries" on public.billing_entries;
 drop policy if exists "Authenticated users can update billing entries" on public.billing_entries;
 drop policy if exists "Authenticated users can delete billing entries" on public.billing_entries;
+drop policy if exists "Authenticated users can read return entries" on public.return_entries;
+drop policy if exists "Authenticated users can insert return entries" on public.return_entries;
+drop policy if exists "Authenticated users can update return entries" on public.return_entries;
+drop policy if exists "Authenticated users can delete return entries" on public.return_entries;
 drop policy if exists "Authenticated users can read contract templates" on public.contract_templates;
 drop policy if exists "Authenticated users can insert contract templates" on public.contract_templates;
 drop policy if exists "Authenticated users can update contract templates" on public.contract_templates;
@@ -552,6 +576,31 @@ create policy "Authenticated users can delete billing entries"
   to authenticated
   using (true);
 
+create policy "Authenticated users can read return entries"
+  on public.return_entries
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert return entries"
+  on public.return_entries
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update return entries"
+  on public.return_entries
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete return entries"
+  on public.return_entries
+  for delete
+  to authenticated
+  using (true);
+
 create policy "Authenticated users can read contract templates"
   on public.contract_templates
   for select
@@ -702,6 +751,16 @@ begin
       and tablename = 'billing_entries'
   ) then
     alter publication supabase_realtime add table public.billing_entries;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'return_entries'
+  ) then
+    alter publication supabase_realtime add table public.return_entries;
   end if;
 
   if not exists (
