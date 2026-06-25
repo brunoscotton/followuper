@@ -1711,6 +1711,9 @@ small {
   margin: 0 0 8px;
   overflow-x: auto;
   overflow-y: hidden;
+  position: sticky;
+  top: 8px;
+  z-index: 12;
 }
 
 .table-top-scroll div {
@@ -2454,13 +2457,27 @@ td {
 .billing-table th:last-child,
 .billing-table td:last-child {
   background: #ffffff;
-  box-shadow: -10px 0 18px rgba(15, 23, 42, 0.08);
   max-width: 92px;
   min-width: 92px;
   position: sticky;
   right: 0;
   text-align: center;
   z-index: 2;
+}
+
+.billing-table th:nth-last-child(2),
+.billing-table td:nth-last-child(2) {
+  background: #ffffff;
+  box-shadow: -10px 0 18px rgba(15, 23, 42, 0.08);
+  max-width: 260px;
+  min-width: 260px;
+  position: sticky;
+  right: 92px;
+  z-index: 2;
+}
+
+.billing-table th:nth-last-child(2) {
+  z-index: 3;
 }
 
 .billing-table th:last-child {
