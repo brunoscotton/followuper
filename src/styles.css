@@ -2491,7 +2491,8 @@ td {
 }
 
 .contracts-panel,
-.returns-panel {
+.returns-panel,
+.warranties-panel {
   background: #ffffff;
   border: 1px solid #d9e0e7;
   border-radius: 8px;
@@ -2551,6 +2552,43 @@ td {
   display: grid;
   gap: 10px;
   grid-template-columns: minmax(0, 1fr) 140px 40px;
+}
+
+.warranties-table th:nth-child(1) {
+  min-width: 150px;
+}
+
+.warranty-status-list,
+.warranty-status-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.warranty-modal {
+  max-width: 760px;
+}
+
+.warranty-status-fieldset {
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+}
+
+.warranty-status-fieldset legend {
+  color: #17212b;
+  font-weight: 900;
+  padding: 0 6px;
+}
+
+.warranty-status-option {
+  background: #f8fafc;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  padding: 6px 8px;
 }
 
 .template-status {

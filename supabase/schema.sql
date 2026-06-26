@@ -172,6 +172,15 @@ create table if not exists public.return_entries (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.warranty_entries (
+  id uuid primary key,
+  warranty_number text not null,
+  statuses jsonb not null default '[]'::jsonb,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.contract_templates (
   template_type text primary key check (template_type in ('motor', 'training', 'return')),
   file_name text not null,
@@ -267,6 +276,7 @@ alter table public.upload_audits replica identity full;
 alter table public.customers replica identity full;
 alter table public.billing_entries replica identity full;
 alter table public.return_entries replica identity full;
+alter table public.warranty_entries replica identity full;
 alter table public.contract_templates replica identity full;
 alter table public.rotax_revenue_entries replica identity full;
 
@@ -281,6 +291,7 @@ alter table public.upload_audits enable row level security;
 alter table public.customers enable row level security;
 alter table public.billing_entries enable row level security;
 alter table public.return_entries enable row level security;
+alter table public.warranty_entries enable row level security;
 alter table public.contract_templates enable row level security;
 alter table public.rotax_revenue_entries enable row level security;
 
@@ -326,6 +337,10 @@ drop policy if exists "Authenticated users can read return entries" on public.re
 drop policy if exists "Authenticated users can insert return entries" on public.return_entries;
 drop policy if exists "Authenticated users can update return entries" on public.return_entries;
 drop policy if exists "Authenticated users can delete return entries" on public.return_entries;
+drop policy if exists "Authenticated users can read warranty entries" on public.warranty_entries;
+drop policy if exists "Authenticated users can insert warranty entries" on public.warranty_entries;
+drop policy if exists "Authenticated users can update warranty entries" on public.warranty_entries;
+drop policy if exists "Authenticated users can delete warranty entries" on public.warranty_entries;
 drop policy if exists "Authenticated users can read contract templates" on public.contract_templates;
 drop policy if exists "Authenticated users can insert contract templates" on public.contract_templates;
 drop policy if exists "Authenticated users can update contract templates" on public.contract_templates;
@@ -601,6 +616,31 @@ create policy "Authenticated users can delete return entries"
   to authenticated
   using (true);
 
+create policy "Authenticated users can read warranty entries"
+  on public.warranty_entries
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert warranty entries"
+  on public.warranty_entries
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update warranty entries"
+  on public.warranty_entries
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete warranty entries"
+  on public.warranty_entries
+  for delete
+  to authenticated
+  using (true);
+
 create policy "Authenticated users can read contract templates"
   on public.contract_templates
   for select
@@ -761,6 +801,16 @@ begin
       and tablename = 'return_entries'
   ) then
     alter publication supabase_realtime add table public.return_entries;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'warranty_entries'
+  ) then
+    alter publication supabase_realtime add table public.warranty_entries;
   end if;
 
   if not exists (

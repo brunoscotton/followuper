@@ -132,6 +132,15 @@ import {
   subscribeToReturnChanges,
   updateReturnEntry,
 } from './services/returnsRepository';
+import {
+  cacheWarrantyEntries,
+  createWarrantyEntry,
+  deleteWarrantyEntry,
+  loadWarrantyEntries,
+  sortWarrantyEntries,
+  subscribeToWarrantyChanges,
+  updateWarrantyEntry,
+} from './services/warrantiesRepository';
 import { generateContractPdf } from './services/contractsPdfService';
 import { createUploadAudit, loadUploadAudits } from './services/uploadAuditsRepository';
 
@@ -214,6 +223,32 @@ const initialReturnForm = {
   returnType: 'Total',
   items: [{ partNumber: '', quantity: '' }],
   status: 'Aguardando retorno cliente',
+};
+
+const warrantyStatuses = [
+  'SIR Enviada',
+  'Caso Criado',
+  'Garantia Criada',
+  'Garantia Paga',
+  'Standby',
+  'Peça enviada ao cliente',
+  'Peça recebida na Matriz',
+];
+
+const warrantyStatusColorClass = {
+  'SIR Enviada': 'blue',
+  'Caso Criado': 'purple',
+  'Garantia Criada': 'yellow',
+  'Garantia Paga': 'green',
+  Standby: 'orange',
+  'Peça enviada ao cliente': 'pink',
+  'Peça recebida na Matriz': 'teal',
+};
+
+const initialWarrantyForm = {
+  warrantyNumber: '',
+  statuses: [],
+  notes: '',
 };
 
 const rotaxInfoCategories = [
@@ -1163,6 +1198,7 @@ export function App() {
   const [customers, setCustomers] = useState([]);
   const [billingEntries, setBillingEntries] = useState([]);
   const [returnEntries, setReturnEntries] = useState([]);
+  const [warrantyEntries, setWarrantyEntries] = useState([]);
   const [contractTemplates, setContractTemplates] = useState([]);
   const [activeContractType, setActiveContractType] = useState('motor');
   const [contractForms, setContractForms] = useState(initialContractForms);
@@ -1197,6 +1233,9 @@ export function App() {
   const [returnModal, setReturnModal] = useState(null);
   const [returnForm, setReturnForm] = useState(initialReturnForm);
   const [returnErrors, setReturnErrors] = useState({});
+  const [warrantyModal, setWarrantyModal] = useState(null);
+  const [warrantyForm, setWarrantyForm] = useState(initialWarrantyForm);
+  const [warrantyErrors, setWarrantyErrors] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
@@ -1293,6 +1332,7 @@ export function App() {
       setCustomers([]);
       setBillingEntries([]);
       setReturnEntries([]);
+      setWarrantyEntries([]);
       setContractTemplates([]);
       setUploadAudits([]);
       setIsLoading(false);
@@ -1312,6 +1352,7 @@ export function App() {
       loadContractTemplates(),
       loadBillingEntries(),
       loadReturnEntries(),
+      loadWarrantyEntries(),
     ])
       .then(
         ([
@@ -1324,6 +1365,7 @@ export function App() {
           contractTemplateResult,
           billingResult,
           returnResult,
+          warrantyResult,
         ]) => {
         if (!active) return;
         setQuotes(quoteResult.quotes);
@@ -1338,6 +1380,7 @@ export function App() {
         setContractTemplates(contractTemplateResult.templates);
         setBillingEntries(billingResult.entries);
         setReturnEntries(returnResult.entries);
+        setWarrantyEntries(warrantyResult.entries);
         setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
         setDataStatus(quoteResult.mode === 'supabase' ? 'Supabase · tempo real' : 'Local');
         setAppError('');
@@ -1397,6 +1440,9 @@ export function App() {
           const unsubscribeReturns = subscribeToReturnChanges(({ eventType, entry, oldId }) => {
             setReturnEntries((current) => syncCollection(current, eventType, entry, oldId, sortReturnEntries, cacheReturnEntries));
           });
+          const unsubscribeWarranties = subscribeToWarrantyChanges(({ eventType, entry, oldId }) => {
+            setWarrantyEntries((current) => syncCollection(current, eventType, entry, oldId, sortWarrantyEntries, cacheWarrantyEntries));
+          });
 
           unsubscribeRealtime = () => {
             unsubscribeQuotes();
@@ -1407,6 +1453,7 @@ export function App() {
             unsubscribeContractTemplates();
             unsubscribeBilling();
             unsubscribeReturns();
+            unsubscribeWarranties();
           };
         }
       },
@@ -3042,6 +3089,102 @@ export function App() {
     }
   }
 
+  function openWarrantyModal(entry = null) {
+    setWarrantyModal(entry || {});
+    setWarrantyForm(
+      entry
+        ? {
+            warrantyNumber: entry.warrantyNumber || '',
+            statuses: Array.isArray(entry.statuses) ? entry.statuses : [],
+            notes: entry.notes || '',
+          }
+        : initialWarrantyForm,
+    );
+    setWarrantyErrors({});
+  }
+
+  function cancelWarrantyModal() {
+    setWarrantyModal(null);
+    setWarrantyForm(initialWarrantyForm);
+    setWarrantyErrors({});
+  }
+
+  function updateWarrantyForm(field, value) {
+    setWarrantyForm((current) => ({ ...current, [field]: value }));
+    setWarrantyErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  function toggleWarrantyStatus(status) {
+    setWarrantyForm((current) => ({
+      ...current,
+      statuses: current.statuses.includes(status)
+        ? current.statuses.filter((item) => item !== status)
+        : [...current.statuses, status],
+    }));
+    setWarrantyErrors((current) => ({ ...current, statuses: '' }));
+  }
+
+  function validateWarrantyForm() {
+    const nextErrors = {};
+    if (!warrantyForm.warrantyNumber.trim()) nextErrors.warrantyNumber = 'Informe o Nº da garantia.';
+    if (warrantyForm.statuses.length === 0) nextErrors.statuses = 'Selecione pelo menos um status.';
+    setWarrantyErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
+
+  async function saveWarrantyForm(event) {
+    event.preventDefault();
+    if (!warrantyModal || !validateWarrantyForm()) return;
+
+    const previousEntries = warrantyEntries;
+    const nowIso = new Date().toISOString();
+    const nextEntry = {
+      id: warrantyModal.id || crypto.randomUUID(),
+      warrantyNumber: warrantyForm.warrantyNumber.trim(),
+      statuses: warrantyForm.statuses,
+      notes: warrantyForm.notes.trim(),
+      createdAt: warrantyModal.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+
+    setWarrantyEntries((current) =>
+      sortWarrantyEntries([nextEntry, ...current.filter((entry) => entry.id !== nextEntry.id)]),
+    );
+
+    try {
+      const savedEntry = warrantyModal.id
+        ? await updateWarrantyEntry(warrantyModal.id, {
+            warrantyNumber: nextEntry.warrantyNumber,
+            statuses: nextEntry.statuses,
+            notes: nextEntry.notes,
+          })
+        : await createWarrantyEntry(nextEntry);
+
+      setWarrantyEntries((current) =>
+        sortWarrantyEntries([savedEntry, ...current.filter((entry) => entry.id !== savedEntry.id)]),
+      );
+      cancelWarrantyModal();
+      setAppError('');
+    } catch (error) {
+      setWarrantyEntries(previousEntries);
+      setAppError(error.message || 'Nao foi possivel salvar a garantia.');
+    }
+  }
+
+  async function removeWarrantyEntry(entry) {
+    if (!entry?.id) return;
+    const previousEntries = warrantyEntries;
+    setWarrantyEntries((current) => current.filter((item) => item.id !== entry.id));
+
+    try {
+      await deleteWarrantyEntry(entry.id);
+      setAppError('');
+    } catch (error) {
+      setWarrantyEntries(previousEntries);
+      setAppError(error.message || 'Nao foi possivel excluir a garantia.');
+    }
+  }
+
   function openCustomerEditModal(customer) {
     setCustomerEditModal(customer);
     setCustomerEditForm({
@@ -4480,6 +4623,13 @@ export function App() {
             finalizado: returnEntries.filter((entry) => entry.status === 'Finalizado').length,
           }}
         />
+      ) : activeView === 'warranties' ? (
+        <WarrantiesWorkspace
+          entries={warrantyEntries}
+          onAdd={() => openWarrantyModal()}
+          onEdit={openWarrantyModal}
+          onRemove={removeWarrantyEntry}
+        />
       ) : activeView === 'rotax' ? (
         <RotaxTrainingWorkspace
           activeInfoCategory={activeRotaxInfoCategory}
@@ -4618,6 +4768,18 @@ export function App() {
           onSubmit={saveReturnForm}
           onUpdate={updateReturnForm}
           onUpdateItem={updateReturnFormItem}
+        />
+      )}
+
+      {warrantyModal && (
+        <WarrantyEntryModal
+          errors={warrantyErrors}
+          form={warrantyForm}
+          isEditing={Boolean(warrantyModal.id)}
+          onCancel={cancelWarrantyModal}
+          onSubmit={saveWarrantyForm}
+          onToggleStatus={toggleWarrantyStatus}
+          onUpdate={updateWarrantyForm}
         />
       )}
 
@@ -5739,6 +5901,10 @@ function SideNavigation({
         <button className={activeView === 'returns' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('returns')}>
           <RefreshCw size={17} />
           Devoluções
+        </button>
+        <button className={activeView === 'warranties' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('warranties')}>
+          <ShieldCheck size={17} />
+          Garantias
         </button>
         <button className={activeView === 'info' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('info')}>
           <BookOpenText size={17} />
@@ -8655,6 +8821,130 @@ function ReturnEntryModal({ errors = {}, form, isEditing, onAddItem, onCancel, o
               </option>
             ))}
           </select>
+        </label>
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button className="primary-button" type="submit">
+            Salvar
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function WarrantiesWorkspace({ entries, onAdd, onEdit, onRemove }) {
+  return (
+    <section className="warranties-panel">
+      <div className="panel-toolbar">
+        <div className="section-title">
+          <ShieldCheck size={20} />
+          <h2>Garantias</h2>
+        </div>
+        <div className="panel-actions">
+          <button className="primary-button compact" type="button" onClick={onAdd}>
+            <Plus size={16} />
+            Incluir
+          </button>
+        </div>
+      </div>
+
+      <div className="table-wrap">
+        <table className="quote-table warranties-table">
+          <thead>
+            <tr>
+              <th>Nº garantia</th>
+              <th>Status</th>
+              <th>Observações</th>
+              <th>Atualizado em</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => (
+              <tr className="quote-row" key={entry.id}>
+                <td className="strong-text">{entry.warrantyNumber}</td>
+                <td>
+                  <div className="warranty-status-list">
+                    {entry.statuses.map((status) => (
+                      <span className={`situation ${warrantyStatusColorClass[status] || 'blue'}`} key={`${entry.id}-${status}`}>
+                        {status}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+                <td>{entry.notes || '-'}</td>
+                <td>{entry.updatedAt ? formatDateTime(entry.updatedAt) : '-'}</td>
+                <td>
+                  <div className="row-actions">
+                    <button className="icon-button neutral" type="button" title="Editar garantia" aria-label="Editar garantia" onClick={() => onEdit(entry)}>
+                      <Pencil size={17} />
+                    </button>
+                    <button className="icon-button" type="button" title="Excluir garantia" aria-label="Excluir garantia" onClick={() => onRemove(entry)}>
+                      <Trash2 size={17} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {entries.length === 0 && (
+        <div className="empty-state">
+          <ShieldCheck size={28} />
+          <p>Nenhuma garantia cadastrada.</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function WarrantyEntryModal({ errors = {}, form, isEditing, onCancel, onSubmit, onToggleStatus, onUpdate }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="close-modal warranty-modal" onSubmit={onSubmit} noValidate>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Garantias</p>
+            <h2>{isEditing ? 'Editar garantia' : 'Nova garantia'}</h2>
+          </div>
+          <button className="modal-close" type="button" aria-label="Fechar janela" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <label>
+          Nº garantia
+          <input value={form.warrantyNumber} onChange={(event) => onUpdate('warrantyNumber', event.target.value)} placeholder="Ex: GAR-1024" />
+          {errors.warrantyNumber && <small>{errors.warrantyNumber}</small>}
+        </label>
+
+        <fieldset className="warranty-status-fieldset">
+          <legend>Status</legend>
+          <div className="warranty-status-options">
+            {warrantyStatuses.map((status) => (
+              <label className="checkbox-label warranty-status-option" key={status}>
+                <input type="checkbox" checked={form.statuses.includes(status)} onChange={() => onToggleStatus(status)} />
+                <span className={`situation ${warrantyStatusColorClass[status] || 'blue'}`}>{status}</span>
+              </label>
+            ))}
+          </div>
+          {errors.statuses && <small>{errors.statuses}</small>}
+        </fieldset>
+
+        <label>
+          Observações
+          <textarea
+            value={form.notes}
+            onChange={(event) => onUpdate('notes', event.target.value)}
+            placeholder="Observações da garantia"
+            rows="5"
+          />
         </label>
 
         <div className="modal-actions">
