@@ -31,8 +31,12 @@ function toWarrantyEntry(row) {
   return {
     id: row.id,
     warrantyNumber: row.warranty_number || '',
+    motorSerialNumber: row.motor_serial_number || '',
     statuses: Array.isArray(row.statuses) ? row.statuses : [],
     notes: row.notes || '',
+    attachmentFileName: row.attachment_file_name || '',
+    attachmentFileData: row.attachment_file_data || '',
+    attachmentMimeType: row.attachment_mime_type || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -42,8 +46,12 @@ function toRow(entry) {
   const row = {};
   if ('id' in entry) row.id = entry.id;
   if ('warrantyNumber' in entry) row.warranty_number = entry.warrantyNumber || '';
+  if ('motorSerialNumber' in entry) row.motor_serial_number = entry.motorSerialNumber || '';
   if ('statuses' in entry) row.statuses = entry.statuses || [];
   if ('notes' in entry) row.notes = entry.notes || '';
+  if ('attachmentFileName' in entry) row.attachment_file_name = entry.attachmentFileName || '';
+  if ('attachmentFileData' in entry) row.attachment_file_data = entry.attachmentFileData || '';
+  if ('attachmentMimeType' in entry) row.attachment_mime_type = entry.attachmentMimeType || '';
   if ('createdAt' in entry) row.created_at = entry.createdAt;
   if ('updatedAt' in entry) row.updated_at = entry.updatedAt;
   return row;

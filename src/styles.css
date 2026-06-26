@@ -2558,6 +2558,10 @@ td {
   min-width: 150px;
 }
 
+.warranties-tabs {
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+}
+
 .warranty-status-list,
 .warranty-status-options {
   display: flex;
@@ -2608,6 +2612,45 @@ td {
 
 .file-button {
   cursor: pointer;
+}
+
+.visually-hidden {
+  height: 1px;
+  margin: -1px;
+  opacity: 0;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
+}
+
+.mini-link-button {
+  align-items: center;
+  background: #eef8f7;
+  border: 1px solid #a7d8d3;
+  border-radius: 8px;
+  color: #0f766e;
+  display: inline-flex;
+  font-weight: 900;
+  gap: 6px;
+  padding: 7px 10px;
+  text-decoration: none;
+}
+
+.warranty-upload-field {
+  display: grid;
+  gap: 8px;
+}
+
+.warranty-upload-field > span {
+  color: #17212b;
+  font-weight: 900;
+}
+
+.warranty-upload-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .contract-form {

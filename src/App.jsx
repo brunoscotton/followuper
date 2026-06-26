@@ -247,9 +247,18 @@ const warrantyStatusColorClass = {
 
 const initialWarrantyForm = {
   warrantyNumber: '',
+  motorSerialNumber: '',
   statuses: [],
   notes: '',
+  attachmentFileName: '',
+  attachmentFileData: '',
+  attachmentMimeType: '',
 };
+
+const warrantyTabs = [
+  { value: 'andamento', label: 'Em andamento' },
+  { value: 'finalizada', label: 'Finalizada' },
+];
 
 const rotaxInfoCategories = [
   { value: 'internal', label: 'Informações Internas' },
@@ -1084,6 +1093,10 @@ function isClosed(quote) {
   return quote.status === 'fechada';
 }
 
+function isWarrantyFinalized(entry) {
+  return (entry.statuses || []).includes('Garantia Paga');
+}
+
 function isArchived(quote) {
   return Boolean(quote.archivedAt);
 }
@@ -1214,6 +1227,7 @@ export function App() {
   const [activeRotaxInfoCategory, setActiveRotaxInfoCategory] = useState('internal');
   const [activeBillingSeller, setActiveBillingSeller] = useState(billingSellers[0]);
   const [activeReturnTab, setActiveReturnTab] = useState('andamento');
+  const [activeWarrantyTab, setActiveWarrantyTab] = useState('andamento');
   const [expandedRotaxStudentIds, setExpandedRotaxStudentIds] = useState([]);
   const [layoutMode, setLayoutMode] = useState(getStoredLayoutMode);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
@@ -1787,6 +1801,14 @@ export function App() {
         activeReturnTab === 'finalizado' ? entry.status === 'Finalizado' : entry.status !== 'Finalizado',
       ),
     [activeReturnTab, returnEntries],
+  );
+
+  const visibleWarrantyEntries = useMemo(
+    () =>
+      warrantyEntries.filter((entry) =>
+        activeWarrantyTab === 'finalizada' ? isWarrantyFinalized(entry) : !isWarrantyFinalized(entry),
+      ),
+    [activeWarrantyTab, warrantyEntries],
   );
 
   const rotaxMetrics = useMemo(
@@ -3095,8 +3117,12 @@ export function App() {
       entry
         ? {
             warrantyNumber: entry.warrantyNumber || '',
+            motorSerialNumber: entry.motorSerialNumber || '',
             statuses: Array.isArray(entry.statuses) ? entry.statuses : [],
             notes: entry.notes || '',
+            attachmentFileName: entry.attachmentFileName || '',
+            attachmentFileData: entry.attachmentFileData || '',
+            attachmentMimeType: entry.attachmentMimeType || '',
           }
         : initialWarrantyForm,
     );
@@ -3124,6 +3150,27 @@ export function App() {
     setWarrantyErrors((current) => ({ ...current, statuses: '' }));
   }
 
+  async function handleWarrantyAttachmentUpload(file) {
+    if (!file) return;
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      setWarrantyErrors((current) => ({ ...current, attachment: 'Selecione um arquivo PDF.' }));
+      return;
+    }
+
+    try {
+      const fileData = await readFileAsDataUrl(file);
+      setWarrantyForm((current) => ({
+        ...current,
+        attachmentFileName: file.name,
+        attachmentFileData: fileData,
+        attachmentMimeType: file.type || 'application/pdf',
+      }));
+      setWarrantyErrors((current) => ({ ...current, attachment: '' }));
+    } catch {
+      setWarrantyErrors((current) => ({ ...current, attachment: 'Nao foi possivel carregar o PDF.' }));
+    }
+  }
+
   function validateWarrantyForm() {
     const nextErrors = {};
     if (!warrantyForm.warrantyNumber.trim()) nextErrors.warrantyNumber = 'Informe o Nº da garantia.';
@@ -3141,8 +3188,12 @@ export function App() {
     const nextEntry = {
       id: warrantyModal.id || crypto.randomUUID(),
       warrantyNumber: warrantyForm.warrantyNumber.trim(),
+      motorSerialNumber: warrantyForm.motorSerialNumber.trim(),
       statuses: warrantyForm.statuses,
       notes: warrantyForm.notes.trim(),
+      attachmentFileName: warrantyForm.attachmentFileName,
+      attachmentFileData: warrantyForm.attachmentFileData,
+      attachmentMimeType: warrantyForm.attachmentMimeType,
       createdAt: warrantyModal.createdAt || nowIso,
       updatedAt: nowIso,
     };
@@ -3155,14 +3206,19 @@ export function App() {
       const savedEntry = warrantyModal.id
         ? await updateWarrantyEntry(warrantyModal.id, {
             warrantyNumber: nextEntry.warrantyNumber,
+            motorSerialNumber: nextEntry.motorSerialNumber,
             statuses: nextEntry.statuses,
             notes: nextEntry.notes,
+            attachmentFileName: nextEntry.attachmentFileName,
+            attachmentFileData: nextEntry.attachmentFileData,
+            attachmentMimeType: nextEntry.attachmentMimeType,
           })
         : await createWarrantyEntry(nextEntry);
 
       setWarrantyEntries((current) =>
         sortWarrantyEntries([savedEntry, ...current.filter((entry) => entry.id !== savedEntry.id)]),
       );
+      setActiveWarrantyTab(isWarrantyFinalized(savedEntry) ? 'finalizada' : 'andamento');
       cancelWarrantyModal();
       setAppError('');
     } catch (error) {
@@ -4625,10 +4681,16 @@ export function App() {
         />
       ) : activeView === 'warranties' ? (
         <WarrantiesWorkspace
-          entries={warrantyEntries}
+          activeTab={activeWarrantyTab}
+          entries={visibleWarrantyEntries}
           onAdd={() => openWarrantyModal()}
           onEdit={openWarrantyModal}
           onRemove={removeWarrantyEntry}
+          setActiveTab={setActiveWarrantyTab}
+          totalCounts={{
+            andamento: warrantyEntries.filter((entry) => !isWarrantyFinalized(entry)).length,
+            finalizada: warrantyEntries.filter(isWarrantyFinalized).length,
+          }}
         />
       ) : activeView === 'rotax' ? (
         <RotaxTrainingWorkspace
@@ -4780,6 +4842,7 @@ export function App() {
           onSubmit={saveWarrantyForm}
           onToggleStatus={toggleWarrantyStatus}
           onUpdate={updateWarrantyForm}
+          onUploadAttachment={handleWarrantyAttachmentUpload}
         />
       )}
 
@@ -4865,6 +4928,10 @@ function getNextInfoBlockPosition(blocks, afterBlockId) {
 }
 
 function readImageFileAsDataUrl(file) {
+  return readFileAsDataUrl(file);
+}
+
+function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -8836,7 +8903,7 @@ function ReturnEntryModal({ errors = {}, form, isEditing, onAddItem, onCancel, o
   );
 }
 
-function WarrantiesWorkspace({ entries, onAdd, onEdit, onRemove }) {
+function WarrantiesWorkspace({ activeTab, entries, onAdd, onEdit, onRemove, setActiveTab, totalCounts }) {
   return (
     <section className="warranties-panel">
       <div className="panel-toolbar">
@@ -8852,13 +8919,29 @@ function WarrantiesWorkspace({ entries, onAdd, onEdit, onRemove }) {
         </div>
       </div>
 
+      <div className="tabs warranties-tabs" role="tablist" aria-label="Status das garantias">
+        {warrantyTabs.map((tab) => (
+          <button
+            className={activeTab === tab.value ? 'tab active' : 'tab'}
+            key={tab.value}
+            type="button"
+            onClick={() => setActiveTab(tab.value)}
+          >
+            {tab.label}
+            <strong>{totalCounts[tab.value]}</strong>
+          </button>
+        ))}
+      </div>
+
       <div className="table-wrap">
         <table className="quote-table warranties-table">
           <thead>
             <tr>
               <th>Nº garantia</th>
+              <th>Nº série motor</th>
               <th>Status</th>
               <th>Observações</th>
+              <th>Arquivo</th>
               <th>Atualizado em</th>
               <th>Ações</th>
             </tr>
@@ -8867,6 +8950,7 @@ function WarrantiesWorkspace({ entries, onAdd, onEdit, onRemove }) {
             {entries.map((entry) => (
               <tr className="quote-row" key={entry.id}>
                 <td className="strong-text">{entry.warrantyNumber}</td>
+                <td>{entry.motorSerialNumber || '-'}</td>
                 <td>
                   <div className="warranty-status-list">
                     {entry.statuses.map((status) => (
@@ -8877,6 +8961,22 @@ function WarrantiesWorkspace({ entries, onAdd, onEdit, onRemove }) {
                   </div>
                 </td>
                 <td>{entry.notes || '-'}</td>
+                <td>
+                  {entry.attachmentFileData ? (
+                    <a
+                      className="mini-link-button"
+                      download={entry.attachmentFileName || `garantia-${entry.warrantyNumber}.pdf`}
+                      href={entry.attachmentFileData}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      <FileText size={15} />
+                      PDF
+                    </a>
+                  ) : (
+                    '-'
+                  )}
+                </td>
                 <td>{entry.updatedAt ? formatDateTime(entry.updatedAt) : '-'}</td>
                 <td>
                   <div className="row-actions">
@@ -8897,14 +8997,14 @@ function WarrantiesWorkspace({ entries, onAdd, onEdit, onRemove }) {
       {entries.length === 0 && (
         <div className="empty-state">
           <ShieldCheck size={28} />
-          <p>Nenhuma garantia cadastrada.</p>
+          <p>Nenhuma garantia nesta aba.</p>
         </div>
       )}
     </section>
   );
 }
 
-function WarrantyEntryModal({ errors = {}, form, isEditing, onCancel, onSubmit, onToggleStatus, onUpdate }) {
+function WarrantyEntryModal({ errors = {}, form, isEditing, onCancel, onSubmit, onToggleStatus, onUpdate, onUploadAttachment }) {
   return (
     <div className="modal-backdrop" role="presentation">
       <form className="close-modal warranty-modal" onSubmit={onSubmit} noValidate>
@@ -8922,6 +9022,11 @@ function WarrantyEntryModal({ errors = {}, form, isEditing, onCancel, onSubmit, 
           Nº garantia
           <input value={form.warrantyNumber} onChange={(event) => onUpdate('warrantyNumber', event.target.value)} placeholder="Ex: GAR-1024" />
           {errors.warrantyNumber && <small>{errors.warrantyNumber}</small>}
+        </label>
+
+        <label>
+          Nº série motor
+          <input value={form.motorSerialNumber} onChange={(event) => onUpdate('motorSerialNumber', event.target.value)} placeholder="Ex: 914-123456" />
         </label>
 
         <fieldset className="warranty-status-fieldset">
@@ -8946,6 +9051,52 @@ function WarrantyEntryModal({ errors = {}, form, isEditing, onCancel, onSubmit, 
             rows="5"
           />
         </label>
+
+        <div className="warranty-upload-field">
+          <span>Arquivo PDF</span>
+          <div className="warranty-upload-actions">
+            <label className="secondary-button compact file-button">
+              <Upload size={16} />
+              Upload PDF
+              <input
+                accept="application/pdf,.pdf"
+                className="visually-hidden"
+                type="file"
+                onChange={(event) => {
+                  onUploadAttachment(event.target.files?.[0] || null);
+                  event.target.value = '';
+                }}
+              />
+            </label>
+            {form.attachmentFileData && (
+              <>
+                <a
+                  className="mini-link-button"
+                  download={form.attachmentFileName || `garantia-${form.warrantyNumber || 'arquivo'}.pdf`}
+                  href={form.attachmentFileData}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  <FileText size={15} />
+                  Ver PDF
+                </a>
+                <button
+                  className="secondary-button compact"
+                  type="button"
+                  onClick={() => {
+                    onUpdate('attachmentFileName', '');
+                    onUpdate('attachmentFileData', '');
+                    onUpdate('attachmentMimeType', '');
+                  }}
+                >
+                  Remover
+                </button>
+              </>
+            )}
+          </div>
+          {form.attachmentFileName && <small>{form.attachmentFileName}</small>}
+          {errors.attachment && <small>{errors.attachment}</small>}
+        </div>
 
         <div className="modal-actions">
           <button className="secondary-button" type="button" onClick={onCancel}>

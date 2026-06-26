@@ -175,8 +175,12 @@ create table if not exists public.return_entries (
 create table if not exists public.warranty_entries (
   id uuid primary key,
   warranty_number text not null,
+  motor_serial_number text,
   statuses jsonb not null default '[]'::jsonb,
   notes text,
+  attachment_file_name text,
+  attachment_file_data text,
+  attachment_mime_type text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -251,6 +255,10 @@ alter table public.contract_templates add column if not exists mime_type text no
 alter table public.rotax_revenue_entries add column if not exists matriz_value numeric not null default 0;
 alter table public.rotax_revenue_entries add column if not exists campinas_value numeric not null default 0;
 alter table public.rotax_revenue_entries add column if not exists goiania_value numeric not null default 0;
+alter table public.warranty_entries add column if not exists motor_serial_number text;
+alter table public.warranty_entries add column if not exists attachment_file_name text;
+alter table public.warranty_entries add column if not exists attachment_file_data text;
+alter table public.warranty_entries add column if not exists attachment_mime_type text;
 
 alter table public.quotes drop constraint if exists quotes_follow_up_amount_check;
 alter table public.quotes add constraint quotes_follow_up_amount_check check (follow_up_amount > 0);
