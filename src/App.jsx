@@ -4341,14 +4341,10 @@ export function App() {
             dataStatus={dataStatus}
             errors={errors}
             form={form}
-            isUploadingCustomers={isUploadingCustomers}
-            isUploadingQuotes={isUploadingQuotes}
             metrics={metrics}
             onNavigate={navigateFromSideMenu}
             onSubmitQuote={handleSubmit}
-            onUploadCustomersClick={() => customerUploadInputRef.current?.click()}
             onUpdateForm={updateForm}
-            onUploadClick={() => uploadInputRef.current?.click()}
             quoteFormOpen={sideQuoteFormOpen}
             setActiveTab={setActiveTab}
             setActiveTrackingTab={setActiveTrackingTab}
@@ -4372,6 +4368,7 @@ export function App() {
           activeTab={activeTab}
           errors={errors}
           form={form}
+          isUploadingQuotes={isUploadingQuotes}
           metrics={metrics}
           isSimpleLayout={layoutMode === 'simple'}
           now={now}
@@ -4383,6 +4380,7 @@ export function App() {
           onRestartFollowUp={restartFollowUp}
           onSubmit={handleSubmit}
           onUpdateForm={updateForm}
+          onUploadClick={() => uploadInputRef.current?.click()}
           openCloseModal={openCloseModal}
           quoteSort={quoteSort}
           expandedQuoteIds={expandedQuoteIds}
@@ -5563,14 +5561,10 @@ function SideNavigation({
   dataStatus,
   errors,
   form,
-  isUploadingCustomers,
-  isUploadingQuotes,
   metrics,
   onNavigate,
   onSubmitQuote,
-  onUploadCustomersClick,
   onUpdateForm,
-  onUploadClick,
   quoteFormOpen,
   setActiveTab,
   setActiveTrackingTab,
@@ -5726,10 +5720,6 @@ function SideNavigation({
           <FileText size={17} />
           Cotações
         </button>
-        <button className="side-nav-button" type="button" disabled={isUploadingQuotes} onClick={onUploadClick}>
-          <Upload size={17} />
-          {isUploadingQuotes ? 'Importando' : 'Upload'}
-        </button>
         <button className={activeView === 'tracking' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('tracking')}>
           <Truck size={17} />
           Rastreio
@@ -5749,10 +5739,6 @@ function SideNavigation({
         <button className={activeView === 'returns' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('returns')}>
           <RefreshCw size={17} />
           Devoluções
-        </button>
-        <button className="side-nav-button" type="button" disabled={isUploadingCustomers} onClick={onUploadCustomersClick}>
-          <Upload size={17} />
-          {isUploadingCustomers ? 'Importando' : 'Upload clientes'}
         </button>
         <button className={activeView === 'info' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('info')}>
           <BookOpenText size={17} />
@@ -5808,6 +5794,7 @@ function QuotesWorkspace({
   activeTab,
   errors,
   form,
+  isUploadingQuotes,
   isSimpleLayout,
   metrics,
   now,
@@ -5819,6 +5806,7 @@ function QuotesWorkspace({
   onRestartFollowUp,
   onSubmit,
   onUpdateForm,
+  onUploadClick,
   openCloseModal,
   quoteSort,
   expandedQuoteIds,
@@ -6020,6 +6008,12 @@ function QuotesWorkspace({
               <button className="secondary-button compact" type="button" onClick={() => setActiveView('tracking')}>
                 <Truck size={16} />
                 Rastreio
+              </button>
+            )}
+            {!isSimpleLayout && (
+              <button className="secondary-button compact" type="button" disabled={isUploadingQuotes} onClick={onUploadClick}>
+                <Upload size={16} />
+                {isUploadingQuotes ? 'Importando...' : 'Upload'}
               </button>
             )}
             <label className="search-box">
