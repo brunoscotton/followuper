@@ -2438,6 +2438,20 @@ td {
   gap: 10px;
 }
 
+.billing-panel .panel-actions {
+  align-items: center;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.billing-last-upload {
+  color: #596674;
+  font-size: 0.78rem;
+  font-weight: 800;
+  max-width: 420px;
+}
+
 .billing-search-box {
   max-width: 520px;
   width: 100%;

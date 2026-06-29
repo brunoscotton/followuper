@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient';
 
 const STORAGE_KEY = 'followuper.billingEntries.v1';
+const UPLOADS_STORAGE_KEY = 'followuper.billingUploads.v1';
 
 function loadLocalBillingEntries() {
   try {
@@ -12,6 +13,18 @@ function loadLocalBillingEntries() {
 
 function saveLocalBillingEntries(entries) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(sortBillingEntries(entries)));
+}
+
+function loadLocalBillingUploads() {
+  try {
+    return JSON.parse(localStorage.getItem(UPLOADS_STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalBillingUploads(uploads) {
+  localStorage.setItem(UPLOADS_STORAGE_KEY, JSON.stringify(uploads));
 }
 
 function isMissingTableError(error) {
@@ -41,6 +54,18 @@ function toBillingEntry(row) {
     orderIndex: Number(row.order_index || 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function toBillingUpload(row) {
+  return {
+    seller: row.seller,
+    fileName: row.file_name || '',
+    userId: row.user_id || '',
+    userEmail: row.user_email || '',
+    userName: row.user_name || row.user_email || '',
+    entryCount: Number(row.entry_count || 0),
+    uploadedAt: row.uploaded_at,
   };
 }
 
@@ -85,25 +110,74 @@ function mergeRowsWithNotes(seller, rows, existingRows) {
 
 export async function loadBillingEntries() {
   if (!supabase) {
-    return { entries: sortBillingEntries(loadLocalBillingEntries()), mode: 'local' };
+    return { entries: sortBillingEntries(loadLocalBillingEntries()), uploads: loadLocalBillingUploads(), mode: 'local' };
+  }
+
+  const [entriesResult, uploadsResult] = await Promise.all([
+    supabase
+      .from('billing_entries')
+      .select('*')
+      .order('seller', { ascending: true })
+      .order('order_index', { ascending: true }),
+    supabase.from('billing_uploads').select('*').order('uploaded_at', { ascending: false }),
+  ]);
+
+  if (entriesResult.error) {
+    if (isMissingTableError(entriesResult.error)) {
+      return { entries: sortBillingEntries(loadLocalBillingEntries()), uploads: loadLocalBillingUploads(), mode: 'local' };
+    }
+    throw entriesResult.error;
+  }
+
+  const entries = sortBillingEntries(entriesResult.data.map(toBillingEntry));
+  const uploads = uploadsResult.error && isMissingTableError(uploadsResult.error)
+    ? loadLocalBillingUploads()
+    : (uploadsResult.data || []).map(toBillingUpload);
+  if (uploadsResult.error && !isMissingTableError(uploadsResult.error)) throw uploadsResult.error;
+  saveLocalBillingEntries(entries);
+  saveLocalBillingUploads(uploads);
+  return { entries, uploads, mode: 'supabase' };
+}
+
+export async function recordBillingUpload(upload) {
+  const nextUpload = {
+    ...upload,
+    uploadedAt: upload.uploadedAt || new Date().toISOString(),
+  };
+
+  if (!supabase) {
+    const uploads = [nextUpload, ...loadLocalBillingUploads().filter((item) => item.seller !== nextUpload.seller)];
+    saveLocalBillingUploads(uploads);
+    return nextUpload;
   }
 
   const { data, error } = await supabase
-    .from('billing_entries')
+    .from('billing_uploads')
+    .upsert(
+      {
+        seller: nextUpload.seller,
+        file_name: nextUpload.fileName || '',
+        user_id: nextUpload.userId || null,
+        user_email: nextUpload.userEmail || '',
+        user_name: nextUpload.userName || nextUpload.userEmail || '',
+        entry_count: Number(nextUpload.entryCount || 0),
+        uploaded_at: nextUpload.uploadedAt,
+      },
+      { onConflict: 'seller' },
+    )
     .select('*')
-    .order('seller', { ascending: true })
-    .order('order_index', { ascending: true });
+    .single();
 
   if (error) {
     if (isMissingTableError(error)) {
-      return { entries: sortBillingEntries(loadLocalBillingEntries()), mode: 'local' };
+      const uploads = [nextUpload, ...loadLocalBillingUploads().filter((item) => item.seller !== nextUpload.seller)];
+      saveLocalBillingUploads(uploads);
+      return nextUpload;
     }
     throw error;
   }
 
-  const entries = sortBillingEntries(data.map(toBillingEntry));
-  saveLocalBillingEntries(entries);
-  return { entries, mode: 'supabase' };
+  return toBillingUpload(data);
 }
 
 export async function replaceBillingEntriesForSeller(seller, rows) {
@@ -176,9 +250,18 @@ export function subscribeToBillingChanges(onChange) {
     .channel('public:billing_entries')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'billing_entries' }, (payload) => {
       onChange({
+        collection: 'entries',
         eventType: payload.eventType,
         entry: payload.new?.id ? toBillingEntry(payload.new) : null,
         oldId: payload.old?.id,
+      });
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'billing_uploads' }, (payload) => {
+      onChange({
+        collection: 'uploads',
+        eventType: payload.eventType,
+        upload: payload.new?.seller ? toBillingUpload(payload.new) : null,
+        oldId: payload.old?.seller,
       });
     })
     .subscribe();

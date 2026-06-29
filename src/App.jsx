@@ -126,6 +126,7 @@ import {
   cacheBillingEntries,
   deleteBillingEntry,
   loadBillingEntries,
+  recordBillingUpload,
   replaceBillingEntriesForSeller,
   sortBillingEntries,
   subscribeToBillingChanges,
@@ -1218,6 +1219,7 @@ export function App() {
   const [activeRotaxRevenueYear, setActiveRotaxRevenueYear] = useState(2026);
   const [customers, setCustomers] = useState([]);
   const [billingEntries, setBillingEntries] = useState([]);
+  const [billingUploads, setBillingUploads] = useState([]);
   const [returnEntries, setReturnEntries] = useState([]);
   const [warrantyEntries, setWarrantyEntries] = useState([]);
   const [contractTemplates, setContractTemplates] = useState([]);
@@ -1432,6 +1434,7 @@ export function App() {
       setRotaxRevenueEntries([]);
       setCustomers([]);
       setBillingEntries([]);
+      setBillingUploads([]);
       setReturnEntries([]);
       setWarrantyEntries([]);
       setContractTemplates([]);
@@ -1480,6 +1483,7 @@ export function App() {
         setCustomers(customerResult.customers);
         setContractTemplates(contractTemplateResult.templates);
         setBillingEntries(billingResult.entries);
+        setBillingUploads(billingResult.uploads || []);
         setReturnEntries(returnResult.entries);
         setWarrantyEntries(warrantyResult.entries);
         setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
@@ -1535,7 +1539,15 @@ export function App() {
               return sortedTemplates;
             });
           });
-          const unsubscribeBilling = subscribeToBillingChanges(({ eventType, entry, oldId }) => {
+          const unsubscribeBilling = subscribeToBillingChanges(({ collection, eventType, entry, upload, oldId }) => {
+            if (collection === 'uploads') {
+              setBillingUploads((current) => {
+                if (eventType === 'DELETE') return current.filter((item) => item.seller !== oldId);
+                if (!upload) return current;
+                return [upload, ...current.filter((item) => item.seller !== upload.seller)];
+              });
+              return;
+            }
             setBillingEntries((current) => syncCollection(current, eventType, entry, oldId, sortBillingEntries, cacheBillingEntries));
           });
           const unsubscribeReturns = subscribeToReturnChanges(({ eventType, entry, oldId }) => {
@@ -2996,7 +3008,16 @@ export function App() {
     try {
       const importedRows = await parseBillingUploadFile(file);
       const savedEntries = await replaceBillingEntriesForSeller(seller, importedRows);
+      const savedUpload = await recordBillingUpload({
+        seller,
+        fileName: file.name,
+        userId: user?.id || '',
+        userEmail: user?.email || '',
+        userName: user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email || '',
+        entryCount: savedEntries.length,
+      });
       setBillingEntries((current) => sortBillingEntries([...current.filter((entry) => entry.seller !== seller), ...savedEntries]));
+      setBillingUploads((current) => [savedUpload, ...current.filter((upload) => upload.seller !== seller)]);
       setActiveView('billing');
       setActiveBillingSeller(seller);
       setAppError(`Cobrança de ${seller} atualizada: ${savedEntries.length} titulo(s) importado(s).`);
@@ -4728,8 +4749,9 @@ export function App() {
         />
       ) : activeView === 'billing' ? (
         <BillingWorkspace
-          activeSeller={activeBillingSeller}
-          entries={billingEntries}
+        activeSeller={activeBillingSeller}
+        entries={billingEntries}
+        uploads={billingUploads}
           isUploading={isUploadingBilling}
           noteDrafts={billingNoteDrafts}
           onChangeNote={updateBillingNoteDraft}
@@ -8600,6 +8622,7 @@ function getBillingCurrentValue(entry) {
 function BillingWorkspace({
   activeSeller,
   entries,
+  uploads,
   isUploading,
   noteDrafts,
   onChangeNote,
@@ -8617,6 +8640,7 @@ function BillingWorkspace({
   const sellerEntries = useMemo(() => entries.filter((entry) => entry.seller === activeSeller), [activeSeller, entries]);
   const activeSearchTerm = searchTermsBySeller[activeSeller] || '';
   const activeSort = sortStateBySeller[activeSeller] || { key: '', direction: 'asc' };
+  const activeUpload = uploads.find((upload) => upload.seller === activeSeller);
   const totalsBySeller = useMemo(
     () =>
       billingSellers.reduce((acc, seller) => {
@@ -8738,6 +8762,11 @@ function BillingWorkspace({
               }}
             />
           </label>
+          {activeUpload && (
+            <span className="billing-last-upload">
+              Último upload: {formatActivityDate(activeUpload.uploadedAt)} por {activeUpload.userName || activeUpload.userEmail}
+            </span>
+          )}
         </div>
       </div>
 
@@ -8833,6 +8862,7 @@ function BillingWorkspace({
 
 const activityEntityLabels = {
   billing_entries: 'Cobranças',
+  billing_uploads: 'Uploads de cobrança',
   contract_templates: 'Contratos',
   customers: 'Clientes',
   info_blocks: 'Painel de informações',
