@@ -208,6 +208,128 @@ create table if not exists public.rotax_revenue_entries (
   unique (entry_year, entry_month)
 );
 
+create table if not exists public.user_profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  email text not null,
+  display_name text,
+  current_view text,
+  last_seen_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.activity_logs (
+  id bigint generated always as identity primary key,
+  user_id uuid,
+  user_email text,
+  action text not null check (action in ('INSERT', 'UPDATE', 'DELETE')),
+  entity_type text not null,
+  entity_id text,
+  identifier text,
+  changed_fields jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create or replace function public.log_user_activity()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  old_data jsonb := '{}'::jsonb;
+  new_data jsonb := '{}'::jsonb;
+  record_data jsonb := '{}'::jsonb;
+  changed_fields jsonb := '[]'::jsonb;
+  record_id text;
+  record_identifier text;
+  actor_email text;
+begin
+  if tg_op <> 'INSERT' then
+    old_data := to_jsonb(old);
+  end if;
+
+  if tg_op <> 'DELETE' then
+    new_data := to_jsonb(new);
+  end if;
+
+  old_data := old_data - array['attachment_file_data', 'file_data', 'purchases'];
+  new_data := new_data - array['attachment_file_data', 'file_data', 'purchases'];
+  record_data := case when tg_op = 'DELETE' then old_data else new_data end;
+
+  if tg_op = 'UPDATE' then
+    select coalesce(jsonb_agg(changed.key order by changed.key), '[]'::jsonb)
+      into changed_fields
+      from (
+        select keys.key
+        from jsonb_object_keys(new_data || old_data) as keys(key)
+        where new_data -> keys.key is distinct from old_data -> keys.key
+          and keys.key not in ('updated_at', 'last_seen_at')
+      ) changed;
+  end if;
+
+  record_id := coalesce(
+    record_data ->> 'id',
+    record_data ->> 'template_type',
+    record_data ->> 'user_id'
+  );
+  record_identifier := coalesce(
+    record_data ->> 'quote_number',
+    record_data ->> 'order_number',
+    record_data ->> 'invoice_number',
+    record_data ->> 'warranty_number',
+    record_data ->> 'client_name',
+    record_data ->> 'name',
+    record_data ->> 'training_date',
+    record_data ->> 'template_type',
+    record_id
+  );
+  actor_email := coalesce(auth.jwt() ->> 'email', 'Sistema');
+
+  insert into public.activity_logs (
+    user_id, user_email, action, entity_type, entity_id, identifier, changed_fields
+  )
+  values (
+    auth.uid(), actor_email, tg_op, tg_table_name, record_id, record_identifier, changed_fields
+  );
+
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+
+  return new;
+end;
+$$;
+
+do $$
+declare
+  audited_table text;
+begin
+  foreach audited_table in array array[
+    'quotes',
+    'tracking_entries',
+    'info_blocks',
+    'rotax_training_blocks',
+    'rotax_training_sessions',
+    'rotax_training_students',
+    'rotax_training_contacts',
+    'upload_audits',
+    'customers',
+    'billing_entries',
+    'return_entries',
+    'warranty_entries',
+    'contract_templates',
+    'rotax_revenue_entries'
+  ]
+  loop
+    execute format('drop trigger if exists audit_user_changes on public.%I', audited_table);
+    execute format(
+      'create trigger audit_user_changes after insert or update or delete on public.%I for each row execute function public.log_user_activity()',
+      audited_table
+    );
+  end loop;
+end;
+$$;
+
 alter table public.info_blocks drop constraint if exists info_blocks_block_type_check;
 alter table public.info_blocks
   add constraint info_blocks_block_type_check
@@ -287,6 +409,8 @@ alter table public.return_entries replica identity full;
 alter table public.warranty_entries replica identity full;
 alter table public.contract_templates replica identity full;
 alter table public.rotax_revenue_entries replica identity full;
+alter table public.user_profiles replica identity full;
+alter table public.activity_logs replica identity full;
 
 alter table public.quotes enable row level security;
 alter table public.tracking_entries enable row level security;
@@ -302,6 +426,8 @@ alter table public.return_entries enable row level security;
 alter table public.warranty_entries enable row level security;
 alter table public.contract_templates enable row level security;
 alter table public.rotax_revenue_entries enable row level security;
+alter table public.user_profiles enable row level security;
+alter table public.activity_logs enable row level security;
 
 drop policy if exists "Authenticated users can read quotes" on public.quotes;
 drop policy if exists "Authenticated users can insert quotes" on public.quotes;
@@ -361,6 +487,12 @@ drop policy if exists "Authenticated users can read rotax revenue entries" on pu
 drop policy if exists "Authenticated users can insert rotax revenue entries" on public.rotax_revenue_entries;
 drop policy if exists "Authenticated users can update rotax revenue entries" on public.rotax_revenue_entries;
 drop policy if exists "Authenticated users can delete rotax revenue entries" on public.rotax_revenue_entries;
+drop policy if exists "Users can read own profile and master can read all" on public.user_profiles;
+drop policy if exists "Users can create own profile" on public.user_profiles;
+drop policy if exists "Users can update own profile" on public.user_profiles;
+drop policy if exists "Master user can read activity logs" on public.activity_logs;
+drop policy if exists "Authenticated users can track FollowUper presence" on realtime.messages;
+drop policy if exists "Master user can read FollowUper presence" on realtime.messages;
 
 create policy "Authenticated users can read quotes"
   on public.quotes
@@ -699,6 +831,59 @@ create policy "Authenticated users can delete rotax revenue entries"
   to authenticated
   using (true);
 
+create policy "Users can read own profile and master can read all"
+  on public.user_profiles
+  for select
+  to authenticated
+  using (
+    user_id = auth.uid()
+    or lower(coalesce(auth.jwt() ->> 'email', '')) = 'bruno.scotton@cdsav.com.br'
+  );
+
+create policy "Users can create own profile"
+  on public.user_profiles
+  for insert
+  to authenticated
+  with check (
+    user_id = auth.uid()
+    and lower(email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+  );
+
+create policy "Users can update own profile"
+  on public.user_profiles
+  for update
+  to authenticated
+  using (user_id = auth.uid())
+  with check (
+    user_id = auth.uid()
+    and lower(email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+  );
+
+create policy "Master user can read activity logs"
+  on public.activity_logs
+  for select
+  to authenticated
+  using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'bruno.scotton@cdsav.com.br');
+
+create policy "Authenticated users can track FollowUper presence"
+  on realtime.messages
+  for insert
+  to authenticated
+  with check (
+    realtime.topic() = 'followuper:online-users'
+    and realtime.messages.extension = 'presence'
+  );
+
+create policy "Master user can read FollowUper presence"
+  on realtime.messages
+  for select
+  to authenticated
+  using (
+    realtime.topic() = 'followuper:online-users'
+    and realtime.messages.extension = 'presence'
+    and lower(coalesce(auth.jwt() ->> 'email', '')) = 'bruno.scotton@cdsav.com.br'
+  );
+
 do $$
 begin
   if not exists (
@@ -839,5 +1024,25 @@ begin
       and tablename = 'rotax_revenue_entries'
   ) then
     alter publication supabase_realtime add table public.rotax_revenue_entries;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'user_profiles'
+  ) then
+    alter publication supabase_realtime add table public.user_profiles;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'activity_logs'
+  ) then
+    alter publication supabase_realtime add table public.activity_logs;
   end if;
 end $$;

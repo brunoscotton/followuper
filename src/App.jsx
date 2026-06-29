@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Activity,
   Bell,
   BookOpenText,
   CalendarClock,
@@ -49,6 +50,13 @@ import {
   updateQuote,
 } from './services/quotesRepository';
 import { isSupabaseConfigured } from './services/supabaseClient';
+import {
+  loadUserActivity,
+  registerUserProfile,
+  startUserPresence,
+  subscribeToUserActivity,
+  userIsMaster,
+} from './services/userActivityRepository';
 import { isCorreiosTrackingCandidate, requestCorreiosTrackingUpdate } from './services/correiosTrackingService';
 import {
   cacheTrackingEntries,
@@ -1218,6 +1226,9 @@ export function App() {
   const [isSavingContractTemplate, setIsSavingContractTemplate] = useState(false);
   const [isGeneratingContract, setIsGeneratingContract] = useState(false);
   const [uploadAudits, setUploadAudits] = useState([]);
+  const [userProfiles, setUserProfiles] = useState([]);
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [onlineUsers, setOnlineUsers] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [activeView, setActiveView] = useState('quotes');
   const [activeTab, setActiveTab] = useState('abertas');
@@ -1295,6 +1306,82 @@ export function App() {
   const autoArchiveRunningRef = useRef(false);
   const closedUnarchiveRunningRef = useRef(false);
   const celebrationTimeoutRef = useRef(null);
+  const presenceSessionRef = useRef(null);
+  const currentPresenceStateRef = useRef({ currentView: activeView, layoutMode });
+  currentPresenceStateRef.current = { currentView: activeView, layoutMode };
+
+  const isMasterUser = userIsMaster(user);
+
+  useEffect(() => {
+    if (!user) {
+      setUserProfiles([]);
+      setActivityLogs([]);
+      setOnlineUsers([]);
+      return () => {};
+    }
+
+    let active = true;
+    let unsubscribeActivity = () => {};
+    const presenceSession = startUserPresence(user, { currentView: activeView, layoutMode }, (presences) => {
+      if (active && userIsMaster(user)) setOnlineUsers(presences);
+    });
+    presenceSessionRef.current = presenceSession;
+
+    registerUserProfile(user, activeView).catch((error) => {
+      if (active && error.code !== '42P01') setAppError(error.message || 'Não foi possível registrar a presença do usuário.');
+    });
+
+    if (userIsMaster(user)) {
+      loadUserActivity()
+        .then(({ profiles, logs }) => {
+          if (!active) return;
+          setUserProfiles(profiles);
+          setActivityLogs(logs);
+        })
+        .catch((error) => {
+          if (active) setAppError(error.message || 'Não foi possível carregar a atividade dos usuários.');
+        });
+
+      unsubscribeActivity = subscribeToUserActivity(({ collection, eventType, item, oldId }) => {
+        if (!active) return;
+
+        if (collection === 'logs' && item) {
+          setActivityLogs((current) => [item, ...current.filter((log) => log.id !== item.id)].slice(0, 500));
+          return;
+        }
+
+        if (collection === 'profiles') {
+          setUserProfiles((current) => {
+            if (eventType === 'DELETE') return current.filter((profile) => profile.id !== oldId);
+            if (!item) return current;
+            return [item, ...current.filter((profile) => profile.id !== item.id)].sort(
+              (a, b) => new Date(b.lastSeenAt) - new Date(a.lastSeenAt),
+            );
+          });
+        }
+      });
+    }
+
+    const heartbeat = window.setInterval(() => {
+      const currentState = currentPresenceStateRef.current;
+      registerUserProfile(user, currentState.currentView).catch(() => {});
+      presenceSession.update(currentState).catch(() => {});
+    }, 60_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(heartbeat);
+      unsubscribeActivity();
+      presenceSession.unsubscribe();
+      if (presenceSessionRef.current === presenceSession) presenceSessionRef.current = null;
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    registerUserProfile(user, activeView).catch(() => {});
+    presenceSessionRef.current?.update({ currentView: activeView, layoutMode }).catch(() => {});
+  }, [activeView, layoutMode, user]);
   useEffect(() => {
     let active = true;
 
@@ -4540,6 +4627,7 @@ export function App() {
             dataStatus={dataStatus}
             errors={errors}
             form={form}
+            isMasterUser={isMasterUser}
             metrics={metrics}
             onNavigate={navigateFromSideMenu}
             onSubmitQuote={handleSubmit}
@@ -4691,6 +4779,12 @@ export function App() {
             andamento: warrantyEntries.filter((entry) => !isWarrantyFinalized(entry)).length,
             finalizada: warrantyEntries.filter(isWarrantyFinalized).length,
           }}
+        />
+      ) : activeView === 'users' && isMasterUser ? (
+        <UsersWorkspace
+          activityLogs={activityLogs}
+          onlineUsers={onlineUsers}
+          profiles={userProfiles}
         />
       ) : activeView === 'rotax' ? (
         <RotaxTrainingWorkspace
@@ -5790,6 +5884,7 @@ function SideNavigation({
   dataStatus,
   errors,
   form,
+  isMasterUser,
   metrics,
   onNavigate,
   onSubmitQuote,
@@ -5973,6 +6068,12 @@ function SideNavigation({
           <ShieldCheck size={17} />
           Garantias
         </button>
+        {isMasterUser && (
+          <button className={activeView === 'users' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('users')}>
+            <Users size={17} />
+            Usuários
+          </button>
+        )}
         <button className={activeView === 'info' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('info')}>
           <BookOpenText size={17} />
           Painel infos.
@@ -8726,6 +8827,230 @@ function BillingWorkspace({
           <p>Nenhuma cobrança encontrada para a busca atual.</p>
         </div>
       )}
+    </section>
+  );
+}
+
+const activityEntityLabels = {
+  billing_entries: 'Cobranças',
+  contract_templates: 'Contratos',
+  customers: 'Clientes',
+  info_blocks: 'Painel de informações',
+  quotes: 'Cotações',
+  return_entries: 'Devoluções',
+  rotax_revenue_entries: 'Faturamento Rotax',
+  rotax_training_blocks: 'Informações do treinamento',
+  rotax_training_contacts: 'Contatos do treinamento',
+  rotax_training_sessions: 'Treinamentos',
+  rotax_training_students: 'Alunos',
+  tracking_entries: 'Rastreios',
+  upload_audits: 'Uploads',
+  warranty_entries: 'Garantias',
+};
+
+const activityFieldLabels = {
+  archived_at: 'arquivamento',
+  carrier: 'transportadora',
+  client_name: 'cliente',
+  close_details: 'dados do pedido',
+  current_view: 'tela atual',
+  delivery_situation: 'situação da entrega',
+  email: 'e-mail',
+  expected_delivery_date: 'previsão de entrega',
+  follow_up_started_at: 'follow-up',
+  invoice_number: 'nota fiscal',
+  notes: 'observações',
+  payment_terms: 'pagamento',
+  phone: 'telefone',
+  quote_value: 'valor',
+  seller: 'vendedor',
+  status: 'status',
+  tracking_code: 'código de rastreio',
+};
+
+const userViewLabels = {
+  billing: 'Cobranças',
+  contracts: 'Contratos',
+  customers: 'Clientes',
+  info: 'Painel de informações',
+  quotes: 'Cotações',
+  returns: 'Devoluções',
+  rotax: 'Treinamento Rotax',
+  rotaxRevenue: 'Faturamento Rotax',
+  tracking: 'Rastreios',
+  users: 'Usuários',
+  warranties: 'Garantias',
+};
+
+function formatActivityDate(value) {
+  if (!value) return 'Sem registro';
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(new Date(value));
+}
+
+function getActivityDescription(log) {
+  const actionLabels = {
+    DELETE: 'Excluiu',
+    INSERT: 'Incluiu',
+    UPDATE: 'Editou',
+  };
+  const entityLabel = activityEntityLabels[log.entityType] || log.entityType;
+  const identifier = log.identifier ? ` ${log.identifier}` : '';
+  return `${actionLabels[log.action] || log.action} em ${entityLabel}${identifier}`;
+}
+
+function UsersWorkspace({ activityLogs, onlineUsers, profiles }) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedUser, setSelectedUser] = useState('all');
+  const [selectedArea, setSelectedArea] = useState('all');
+
+  const onlineByUserId = useMemo(() => {
+    const usersById = new Map();
+    onlineUsers.forEach((presence) => {
+      const current = usersById.get(presence.userId);
+      if (!current || new Date(presence.onlineAt) > new Date(current.onlineAt)) {
+        usersById.set(presence.userId, presence);
+      }
+    });
+    return usersById;
+  }, [onlineUsers]);
+
+  const displayedProfiles = useMemo(() => {
+    const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
+    onlineByUserId.forEach((presence, userId) => {
+      if (!profilesById.has(userId)) {
+        profilesById.set(userId, {
+          id: userId,
+          email: presence.email,
+          displayName: presence.displayName,
+          currentView: presence.currentView,
+          lastSeenAt: presence.onlineAt,
+        });
+      }
+    });
+    return [...profilesById.values()].sort((a, b) => {
+      const onlineDifference = Number(onlineByUserId.has(b.id)) - Number(onlineByUserId.has(a.id));
+      return onlineDifference || new Date(b.lastSeenAt) - new Date(a.lastSeenAt);
+    });
+  }, [onlineByUserId, profiles]);
+
+  const areas = useMemo(
+    () => [...new Set(activityLogs.map((log) => log.entityType))].sort(),
+    [activityLogs],
+  );
+
+  const filteredLogs = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    return activityLogs.filter((log) => {
+      if (selectedUser !== 'all' && log.userId !== selectedUser) return false;
+      if (selectedArea !== 'all' && log.entityType !== selectedArea) return false;
+      if (!normalizedSearch) return true;
+      return `${log.userEmail} ${log.identifier} ${getActivityDescription(log)}`
+        .toLowerCase()
+        .includes(normalizedSearch);
+    });
+  }, [activityLogs, searchTerm, selectedArea, selectedUser]);
+
+  return (
+    <section className="users-panel">
+      <div className="section-heading users-heading">
+        <div>
+          <span className="eyebrow">Acesso master</span>
+          <h1>
+            <Users size={24} />
+            Usuários
+          </h1>
+          <p>Presença em tempo real e histórico das alterações realizadas no FollowUper.</p>
+        </div>
+        <span className="users-online-summary">
+          <i />
+          {onlineByUserId.size} online
+        </span>
+      </div>
+
+      <div className="user-presence-grid">
+        {displayedProfiles.map((profile) => {
+          const presence = onlineByUserId.get(profile.id);
+          const latestLog = activityLogs.find((log) => log.userId === profile.id);
+          return (
+            <article className={presence ? 'user-presence-card online' : 'user-presence-card'} key={profile.id}>
+              <div className="user-avatar">{(profile.displayName || profile.email || 'U').slice(0, 1).toUpperCase()}</div>
+              <div>
+                <strong>{profile.displayName || profile.email}</strong>
+                <span>{profile.email}</span>
+                <small>
+                  {presence
+                    ? `Em ${userViewLabels[presence.currentView] || presence.currentView || 'FollowUper'}`
+                    : `Último acesso: ${formatActivityDate(profile.lastSeenAt)}`}
+                </small>
+                {latestLog && <small>Última ação: {formatActivityDate(latestLog.createdAt)}</small>}
+              </div>
+              <span className={presence ? 'presence-status online' : 'presence-status'}>
+                {presence ? 'Online' : 'Offline'}
+              </span>
+            </article>
+          );
+        })}
+        {displayedProfiles.length === 0 && <div className="empty-state">Nenhum usuário registrado ainda.</div>}
+      </div>
+
+      <div className="activity-section-heading">
+        <div>
+          <Activity size={21} />
+          <h2>Últimas atualizações</h2>
+        </div>
+        <span>{filteredLogs.length} registro(s)</span>
+      </div>
+
+      <div className="activity-filters">
+        <label className="search-field">
+          <Search size={18} />
+          <input
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Buscar usuário, registro ou alteração"
+          />
+        </label>
+        <select value={selectedUser} onChange={(event) => setSelectedUser(event.target.value)}>
+          <option value="all">Todos os usuários</option>
+          {displayedProfiles.map((profile) => (
+            <option key={profile.id} value={profile.id}>
+              {profile.displayName || profile.email}
+            </option>
+          ))}
+        </select>
+        <select value={selectedArea} onChange={(event) => setSelectedArea(event.target.value)}>
+          <option value="all">Todas as áreas</option>
+          {areas.map((area) => (
+            <option key={area} value={area}>
+              {activityEntityLabels[area] || area}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="activity-list">
+        {filteredLogs.map((log) => (
+          <article className="activity-row" key={log.id}>
+            <span className={`activity-action ${log.action.toLowerCase()}`}>
+              {log.action === 'INSERT' ? 'Inclusão' : log.action === 'DELETE' ? 'Exclusão' : 'Edição'}
+            </span>
+            <div>
+              <strong>{getActivityDescription(log)}</strong>
+              <span>{log.userEmail}</span>
+              {log.changedFields.length > 0 && (
+                <small>
+                  Campos: {log.changedFields.map((field) => activityFieldLabels[field] || field).join(', ')}
+                </small>
+              )}
+            </div>
+            <time dateTime={log.createdAt}>{formatActivityDate(log.createdAt)}</time>
+          </article>
+        ))}
+        {filteredLogs.length === 0 && <div className="empty-state">Nenhuma alteração encontrada.</div>}
+      </div>
     </section>
   );
 }
