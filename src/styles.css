@@ -2452,6 +2452,144 @@ td {
   max-width: 420px;
 }
 
+.rotax-parts-panel {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(31, 48, 65, 0.08);
+  display: grid;
+  gap: 18px;
+  margin: 0 auto;
+  max-width: 1440px;
+  padding: 18px;
+}
+
+.rotax-parts-panel .section-title {
+  align-items: flex-start;
+}
+
+.rotax-parts-panel .section-title h1,
+.rotax-parts-panel .section-title p {
+  margin: 0;
+}
+
+.rotax-parts-panel .section-title p {
+  color: #657383;
+  font-size: 0.82rem;
+  margin-top: 3px;
+}
+
+.rotax-parts-upload-area {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.catalog-meta {
+  color: #657383;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.rotax-pn-search {
+  display: grid;
+  font-size: 0.92rem;
+  font-weight: 900;
+  gap: 7px;
+  max-width: 720px;
+}
+
+.rotax-pn-search > div {
+  align-items: center;
+  background: #ffffff;
+  border: 2px solid #9bb8b5;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 38px;
+  min-height: 56px;
+  padding: 0 9px 0 14px;
+}
+
+.rotax-pn-search > div:focus-within {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+.rotax-pn-search input {
+  border: 0;
+  font-size: 1.08rem;
+  font-weight: 800;
+  min-width: 0;
+  outline: 0;
+  padding: 12px;
+}
+
+.rotax-pn-search button {
+  align-items: center;
+  background: #f1f4f7;
+  border: 0;
+  border-radius: 7px;
+  color: #526171;
+  display: flex;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.rotax-parts-empty {
+  min-height: 260px;
+}
+
+.rotax-parts-table {
+  min-width: 900px;
+}
+
+.rotax-parts-table th:nth-child(1),
+.rotax-parts-table td:nth-child(1) {
+  min-width: 150px;
+}
+
+.rotax-parts-table th:nth-child(2),
+.rotax-parts-table td:nth-child(2) {
+  min-width: 100px;
+}
+
+.rotax-parts-table th:nth-child(3),
+.rotax-parts-table td:nth-child(3) {
+  min-width: 300px;
+  white-space: normal;
+}
+
+.rotax-parts-table th:nth-child(4),
+.rotax-parts-table td:nth-child(4),
+.rotax-parts-table th:nth-child(5),
+.rotax-parts-table td:nth-child(5) {
+  min-width: 150px;
+  text-align: right;
+}
+
+.rotax-parts-table .cruzeiro-price {
+  color: #087f5b;
+  font-weight: 900;
+}
+
+.rotax-results-limit {
+  color: #657383;
+  font-size: 0.76rem;
+  margin: 10px 0 0;
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .billing-search-box {
   max-width: 520px;
   width: 100%;
@@ -3644,5 +3782,9 @@ button:disabled {
   .activity-row time {
     grid-column: 2;
     text-align: left;
+  }
+
+  .rotax-parts-upload-area {
+    align-items: stretch;
   }
 }

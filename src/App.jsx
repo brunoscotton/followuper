@@ -152,6 +152,13 @@ import {
 } from './services/warrantiesRepository';
 import { generateContractPdf } from './services/contractsPdfService';
 import { createUploadAudit, loadUploadAudits } from './services/uploadAuditsRepository';
+import {
+  loadRotaxPartsCatalog,
+  normalizePartNumber,
+  replaceRotaxParts,
+  searchRotaxParts,
+  subscribeToRotaxPartsCatalog,
+} from './services/rotaxPartsRepository';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 const billingSellers = ['Bruno', 'Elton', 'Stephanie'];
@@ -1036,6 +1043,66 @@ async function parseBillingUploadFile(file) {
   return entries;
 }
 
+function parseRotaxPartPrice(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const cleaned = String(value || '').replace(/[^\d,.-]/g, '').trim();
+  if (!cleaned) return 0;
+
+  const lastComma = cleaned.lastIndexOf(',');
+  const lastDot = cleaned.lastIndexOf('.');
+  let normalizedValue = cleaned;
+
+  if (lastComma > lastDot) normalizedValue = cleaned.replace(/\./g, '').replace(',', '.');
+  else if (lastDot > lastComma && lastComma >= 0) normalizedValue = cleaned.replace(/,/g, '');
+  else if (lastComma >= 0) normalizedValue = cleaned.replace(',', '.');
+
+  const parsed = Number(normalizedValue);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function parseRotaxPartsUploadFile(file) {
+  const rows = await readSheet(file);
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('item') && headers.includes('descript');
+  });
+  if (headerIndex < 0) throw new Error('Não encontrei os cabeçalhos Item# e Descript na planilha.');
+
+  const headers = rows[headerIndex].map(normalizeUploadHeader);
+  const findColumn = (...aliases) => aliases.map((alias) => headers.indexOf(alias)).find((index) => index >= 0) ?? -1;
+  const columns = {
+    partNumber: findColumn('item'),
+    description: findColumn('descript', 'description'),
+    unit: findColumn('ficlass', 'fitclass'),
+    suggestedPrice: findColumn('suggestedbahamianretail'),
+    cruzeiroPrice: findColumn('servicecenterprice', 'servicecentreprice'),
+  };
+
+  if (Object.values(columns).some((index) => index < 0)) {
+    throw new Error('A planilha precisa conter Item#, Descript, ficlass, Suggested Bahamian Retail e Service Center Price.');
+  }
+
+  const partsByKey = new Map();
+  rows.slice(headerIndex + 1).forEach((row) => {
+    const partNumber = normalizeUploadValue(row[columns.partNumber]);
+    const pnKey = normalizePartNumber(partNumber);
+    if (!pnKey) return;
+
+    partsByKey.set(pnKey, {
+      pnKey,
+      partNumber,
+      description: normalizeUploadValue(row[columns.description]),
+      unit: normalizeUploadValue(row[columns.unit]),
+      suggestedPrice: parseRotaxPartPrice(row[columns.suggestedPrice]),
+      cruzeiroPrice: parseRotaxPartPrice(row[columns.cruzeiroPrice]),
+    });
+  });
+
+  const parts = [...partsByKey.values()];
+  if (parts.length === 0) throw new Error('Nenhum PN válido foi encontrado na planilha.');
+  return parts;
+}
+
 function addDays(dateValue, days) {
   const date = new Date(dateValue);
   date.setDate(date.getDate() + Number(days || 0));
@@ -1216,6 +1283,7 @@ export function App() {
   const [rotaxStudents, setRotaxStudents] = useState([]);
   const [rotaxContacts, setRotaxContacts] = useState([]);
   const [rotaxRevenueEntries, setRotaxRevenueEntries] = useState([]);
+  const [rotaxPartsCatalog, setRotaxPartsCatalog] = useState(null);
   const [activeRotaxRevenueYear, setActiveRotaxRevenueYear] = useState(2026);
   const [customers, setCustomers] = useState([]);
   const [billingEntries, setBillingEntries] = useState([]);
@@ -1249,6 +1317,7 @@ export function App() {
   const [isUploadingQuotes, setIsUploadingQuotes] = useState(false);
   const [isUploadingCustomers, setIsUploadingCustomers] = useState(false);
   const [isUploadingBilling, setIsUploadingBilling] = useState(false);
+  const [isUploadingRotaxParts, setIsUploadingRotaxParts] = useState(false);
   const [uploadPreview, setUploadPreview] = useState(null);
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
   const [expandedCustomerIds, setExpandedCustomerIds] = useState([]);
@@ -1582,6 +1651,34 @@ export function App() {
     return () => {
       active = false;
       unsubscribeRealtime();
+    };
+  }, [authChecked, user]);
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribe = () => {};
+    if (!authChecked || (isSupabaseConfigured && !user)) {
+      setRotaxPartsCatalog(null);
+      return () => {};
+    }
+
+    loadRotaxPartsCatalog()
+      .then(({ catalog, mode }) => {
+        if (!active) return;
+        setRotaxPartsCatalog(catalog);
+        if (mode === 'supabase') {
+          unsubscribe = subscribeToRotaxPartsCatalog((nextCatalog) => {
+            if (active) setRotaxPartsCatalog(nextCatalog);
+          });
+        }
+      })
+      .catch((error) => {
+        if (active) setAppError(error.message || 'Não foi possível carregar o catálogo Rotax.');
+      });
+
+    return () => {
+      active = false;
+      unsubscribe();
     };
   }, [authChecked, user]);
 
@@ -3025,6 +3122,26 @@ export function App() {
       setAppError(error.message || 'Nao foi possivel importar a planilha de cobranca.');
     } finally {
       setIsUploadingBilling(false);
+    }
+  }
+
+  async function handleRotaxPartsUpload(file) {
+    if (!file) return;
+    setIsUploadingRotaxParts(true);
+
+    try {
+      const parts = await parseRotaxPartsUploadFile(file);
+      const catalog = await replaceRotaxParts(parts, {
+        fileName: file.name,
+        updatedBy: user?.email || '',
+      });
+      setRotaxPartsCatalog(catalog);
+      setActiveView('rotaxParts');
+      setAppError(`Catálogo Rotax atualizado: ${parts.length} PN(s) importado(s).`);
+    } catch (error) {
+      setAppError(error.message || 'Não foi possível importar a tabela de PN Rotax.');
+    } finally {
+      setIsUploadingRotaxParts(false);
     }
   }
 
@@ -4802,6 +4919,13 @@ export function App() {
             finalizada: warrantyEntries.filter(isWarrantyFinalized).length,
           }}
         />
+      ) : activeView === 'rotaxParts' ? (
+        <RotaxPartsWorkspace
+          catalog={rotaxPartsCatalog}
+          isUploading={isUploadingRotaxParts}
+          onSearch={searchRotaxParts}
+          onUpload={handleRotaxPartsUpload}
+        />
       ) : activeView === 'users' && isMasterUser ? (
         <UsersWorkspace
           activityLogs={activityLogs}
@@ -6096,6 +6220,10 @@ function SideNavigation({
             Usuários
           </button>
         )}
+        <button className={activeView === 'rotaxParts' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('rotaxParts')}>
+          <PackageSearch size={17} />
+          Consulta PN Rotax
+        </button>
         <button className={activeView === 'info' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('info')}>
           <BookOpenText size={17} />
           Painel infos.
@@ -8860,6 +8988,162 @@ function BillingWorkspace({
   );
 }
 
+function formatRotaxPartPrice(value) {
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+  }).format(Number(value || 0));
+}
+
+function RotaxPartsWorkspace({ catalog, isUploading, onSearch, onUpload }) {
+  const [partNumber, setPartNumber] = useState('');
+  const [results, setResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    const query = partNumber.trim();
+    if (!query) {
+      setResults([]);
+      setIsSearching(false);
+      setSearchError('');
+      return () => {
+        active = false;
+      };
+    }
+
+    setIsSearching(true);
+    const timer = window.setTimeout(() => {
+      onSearch(query)
+        .then((items) => {
+          if (!active) return;
+          const queryKey = normalizePartNumber(query);
+          setResults(
+            [...items].sort((a, b) => {
+              const exactDifference = Number(b.pnKey === queryKey) - Number(a.pnKey === queryKey);
+              return exactDifference || a.partNumber.localeCompare(b.partNumber, 'pt-BR');
+            }),
+          );
+          setSearchError('');
+        })
+        .catch((error) => {
+          if (!active) return;
+          setResults([]);
+          setSearchError(error.message || 'Não foi possível consultar o PN.');
+        })
+        .finally(() => {
+          if (active) setIsSearching(false);
+        });
+    }, 250);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [catalog?.batchId, onSearch, partNumber]);
+
+  return (
+    <section className="rotax-parts-panel">
+      <div className="panel-toolbar">
+        <div className="section-title">
+          <PackageSearch size={22} />
+          <div>
+            <h1>Consulta PN Rotax</h1>
+            <p>Consulte preços e informações do catálogo por número da peça.</p>
+          </div>
+        </div>
+        <div className="rotax-parts-upload-area">
+          {catalog && (
+            <span className="catalog-meta">
+              {catalog.itemCount.toLocaleString('pt-BR')} itens · Atualizado em {formatActivityDate(catalog.updatedAt)}
+            </span>
+          )}
+          <label className="secondary-button compact file-button">
+            <Upload size={16} />
+            {isUploading ? 'Importando tabela...' : 'Upload tabela'}
+            <input
+              accept=".xlsx"
+              disabled={isUploading}
+              hidden
+              type="file"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                onUpload(file);
+              }}
+            />
+          </label>
+        </div>
+      </div>
+
+      <label className="rotax-pn-search">
+        <span>PN:</span>
+        <div>
+          <Search size={22} />
+          <input
+            autoComplete="off"
+            value={partNumber}
+            onChange={(event) => setPartNumber(event.target.value)}
+            placeholder="Digite o número da peça"
+          />
+          {partNumber && (
+            <button type="button" title="Limpar busca" aria-label="Limpar busca" onClick={() => setPartNumber('')}>
+              <X size={18} />
+            </button>
+          )}
+        </div>
+      </label>
+
+      {searchError && <div className="app-alert">{searchError}</div>}
+
+      {!partNumber.trim() ? (
+        <div className="empty-state rotax-parts-empty">
+          <PackageSearch size={32} />
+          <p>Digite um PN para iniciar a consulta.</p>
+        </div>
+      ) : isSearching ? (
+        <div className="empty-state rotax-parts-empty">
+          <RefreshCw className="spin-icon" size={28} />
+          <p>Consultando catálogo...</p>
+        </div>
+      ) : results.length === 0 ? (
+        <div className="empty-state rotax-parts-empty">
+          <AlertTriangle size={30} />
+          <p>Nenhum PN encontrado.</p>
+        </div>
+      ) : (
+        <div className="table-wrap">
+          <table className="quote-table rotax-parts-table">
+            <thead>
+              <tr>
+                <th>PN</th>
+                <th>Unidade</th>
+                <th>Descrição</th>
+                <th>Preço sugerido</th>
+                <th>Preço Cruzeiro</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((part) => (
+                <tr key={part.pnKey}>
+                  <td><strong>{part.partNumber}</strong></td>
+                  <td>{part.unit || '-'}</td>
+                  <td>{part.description || '-'}</td>
+                  <td>{formatRotaxPartPrice(part.suggestedPrice)}</td>
+                  <td className="cruzeiro-price">{formatRotaxPartPrice(part.cruzeiroPrice)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {results.length === 30 && <p className="rotax-results-limit">Mostrando os 30 primeiros resultados. Digite mais números para refinar.</p>}
+        </div>
+      )}
+    </section>
+  );
+}
+
 const activityEntityLabels = {
   billing_entries: 'Cobranças',
   billing_uploads: 'Uploads de cobrança',
@@ -8869,6 +9153,7 @@ const activityEntityLabels = {
   quotes: 'Cotações',
   return_entries: 'Devoluções',
   rotax_revenue_entries: 'Faturamento Rotax',
+  rotax_parts_catalog: 'Catálogo PN Rotax',
   rotax_training_blocks: 'Informações do treinamento',
   rotax_training_contacts: 'Contatos do treinamento',
   rotax_training_sessions: 'Treinamentos',

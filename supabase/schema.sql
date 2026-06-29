@@ -164,6 +164,26 @@ create table if not exists public.billing_uploads (
   uploaded_at timestamptz not null default now()
 );
 
+create table if not exists public.rotax_parts (
+  pn_key text primary key,
+  part_number text not null,
+  description text,
+  unit text,
+  suggested_price numeric not null default 0,
+  cruzeiro_price numeric not null default 0,
+  batch_id uuid not null,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.rotax_parts_catalog (
+  id text primary key,
+  batch_id uuid not null,
+  file_name text,
+  item_count integer not null default 0,
+  updated_by text,
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.return_entries (
   id uuid primary key,
   invoice_number text not null,
@@ -326,6 +346,7 @@ begin
     'customers',
     'billing_entries',
     'billing_uploads',
+    'rotax_parts_catalog',
     'return_entries',
     'warranty_entries',
     'contract_templates',
@@ -417,6 +438,8 @@ alter table public.upload_audits replica identity full;
 alter table public.customers replica identity full;
 alter table public.billing_entries replica identity full;
 alter table public.billing_uploads replica identity full;
+alter table public.rotax_parts replica identity full;
+alter table public.rotax_parts_catalog replica identity full;
 alter table public.return_entries replica identity full;
 alter table public.warranty_entries replica identity full;
 alter table public.contract_templates replica identity full;
@@ -435,6 +458,8 @@ alter table public.upload_audits enable row level security;
 alter table public.customers enable row level security;
 alter table public.billing_entries enable row level security;
 alter table public.billing_uploads enable row level security;
+alter table public.rotax_parts enable row level security;
+alter table public.rotax_parts_catalog enable row level security;
 alter table public.return_entries enable row level security;
 alter table public.warranty_entries enable row level security;
 alter table public.contract_templates enable row level security;
@@ -483,6 +508,13 @@ drop policy if exists "Authenticated users can delete billing entries" on public
 drop policy if exists "Authenticated users can read billing uploads" on public.billing_uploads;
 drop policy if exists "Authenticated users can insert billing uploads" on public.billing_uploads;
 drop policy if exists "Authenticated users can update billing uploads" on public.billing_uploads;
+drop policy if exists "Authenticated users can read Rotax parts" on public.rotax_parts;
+drop policy if exists "Authenticated users can insert Rotax parts" on public.rotax_parts;
+drop policy if exists "Authenticated users can update Rotax parts" on public.rotax_parts;
+drop policy if exists "Authenticated users can delete Rotax parts" on public.rotax_parts;
+drop policy if exists "Authenticated users can read Rotax parts catalog" on public.rotax_parts_catalog;
+drop policy if exists "Authenticated users can insert Rotax parts catalog" on public.rotax_parts_catalog;
+drop policy if exists "Authenticated users can update Rotax parts catalog" on public.rotax_parts_catalog;
 drop policy if exists "Authenticated users can read return entries" on public.return_entries;
 drop policy if exists "Authenticated users can insert return entries" on public.return_entries;
 drop policy if exists "Authenticated users can update return entries" on public.return_entries;
@@ -766,6 +798,50 @@ create policy "Authenticated users can update billing uploads"
   using (true)
   with check (true);
 
+create policy "Authenticated users can read Rotax parts"
+  on public.rotax_parts
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert Rotax parts"
+  on public.rotax_parts
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update Rotax parts"
+  on public.rotax_parts
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete Rotax parts"
+  on public.rotax_parts
+  for delete
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can read Rotax parts catalog"
+  on public.rotax_parts_catalog
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert Rotax parts catalog"
+  on public.rotax_parts_catalog
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update Rotax parts catalog"
+  on public.rotax_parts_catalog
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
 create policy "Authenticated users can read return entries"
   on public.return_entries
   for select
@@ -1029,6 +1105,16 @@ begin
       and tablename = 'billing_uploads'
   ) then
     alter publication supabase_realtime add table public.billing_uploads;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'rotax_parts_catalog'
+  ) then
+    alter publication supabase_realtime add table public.rotax_parts_catalog;
   end if;
 
   if not exists (
