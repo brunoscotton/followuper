@@ -160,14 +160,18 @@ import {
   subscribeToRotaxPartsCatalog,
 } from './services/rotaxPartsRepository';
 import {
+  clearStockTransferCandidates,
   createStockTransferList,
+  deleteStockTransferCandidate,
   deleteStockTransferList,
+  ensureManualStockItem,
   loadStockItems,
   loadStockTransferData,
   normalizeStockProduct,
   replaceStockItems,
   subscribeToStockTransferChanges,
   updateStockTransferList,
+  upsertStockTransferCandidate,
 } from './services/stockTransfersRepository';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
@@ -1358,6 +1362,7 @@ export function App() {
   const [stockCatalog, setStockCatalog] = useState(null);
   const [stockItems, setStockItems] = useState([]);
   const [stockTransferLists, setStockTransferLists] = useState([]);
+  const [stockTransferCandidates, setStockTransferCandidates] = useState([]);
   const [activeRotaxRevenueYear, setActiveRotaxRevenueYear] = useState(2026);
   const [customers, setCustomers] = useState([]);
   const [billingEntries, setBillingEntries] = useState([]);
@@ -1736,6 +1741,7 @@ export function App() {
       setStockCatalog(null);
       setStockItems([]);
       setStockTransferLists([]);
+      setStockTransferCandidates([]);
       return () => {};
     }
 
@@ -1745,6 +1751,7 @@ export function App() {
         setStockCatalog(result.catalog);
         setStockItems(result.items);
         setStockTransferLists(result.lists);
+        setStockTransferCandidates(result.candidates || []);
 
         if (result.mode === 'supabase') {
           unsubscribe = subscribeToStockTransferChanges(({ collection, eventType, item, oldId }) => {
@@ -1756,6 +1763,15 @@ export function App() {
                   if (active) setStockItems(items);
                 })
                 .catch(() => {});
+              return;
+            }
+
+            if (collection === 'candidates') {
+              setStockTransferCandidates((current) => {
+                if (eventType === 'DELETE') return current.filter((candidate) => candidate.productKey !== oldId);
+                if (!item) return current;
+                return [item, ...current.filter((candidate) => candidate.productKey !== item.productKey)];
+              });
               return;
             }
 
@@ -3315,8 +3331,8 @@ export function App() {
       items: items.map((item) => ({
         productKey: item.productKey,
         product: item.product,
-        availableQuantity: item.quantity,
-        quantity: 0,
+        availableQuantity: Number(item.availableQuantity ?? item.stockQuantity ?? item.quantity ?? 0),
+        quantity: Number(item.transferQuantity || 0),
       })),
       createdBy: user?.email || '',
       createdAt: nowIso,
@@ -3362,6 +3378,70 @@ export function App() {
       setStockTransferLists(previousLists);
       setAppError(error.message || 'Não foi possível excluir a transferência.');
     }
+  }
+
+  async function saveStockTransferCandidate(form) {
+    const product = form.product.trim();
+    const candidate = {
+      productKey: normalizeStockProduct(product),
+      product,
+      quantity: Math.max(1, Number(form.quantity || 0)),
+      groupCode: form.groupCode,
+      createdBy: user?.email || '',
+    };
+
+    try {
+      const stockItem = await ensureManualStockItem(candidate);
+      const savedCandidate = await upsertStockTransferCandidate(candidate);
+      setStockItems((current) =>
+        current.some((item) => item.productKey === stockItem.productKey)
+          ? current
+          : [...current, stockItem].sort((a, b) => a.product.localeCompare(b.product, 'pt-BR')),
+      );
+      setStockTransferCandidates((current) => [
+        savedCandidate,
+        ...current.filter((item) => item.productKey !== savedCandidate.productKey),
+      ]);
+      setAppError('');
+      return savedCandidate;
+    } catch (error) {
+      setAppError(error.message || 'Não foi possível cadastrar o item.');
+      return null;
+    }
+  }
+
+  async function removeStockTransferCandidate(productKey) {
+    const previousCandidates = stockTransferCandidates;
+    setStockTransferCandidates((current) => current.filter((item) => item.productKey !== productKey));
+    try {
+      await deleteStockTransferCandidate(productKey);
+      setAppError('');
+    } catch (error) {
+      setStockTransferCandidates(previousCandidates);
+      setAppError(error.message || 'Não foi possível excluir o item cadastrado.');
+    }
+  }
+
+  async function createTransferFromCandidates() {
+    if (stockTransferCandidates.length === 0) return null;
+    const transferItems = stockTransferCandidates.map((candidate) => {
+      const stockItem = stockItems.find((item) => item.productKey === candidate.productKey);
+      return {
+        ...candidate,
+        stockQuantity: Number(stockItem?.quantity || 0),
+        transferQuantity: Number(candidate.quantity || 0),
+      };
+    });
+    const savedList = await createNewStockTransfer(transferItems);
+    if (!savedList) return null;
+
+    try {
+      await clearStockTransferCandidates();
+      setStockTransferCandidates([]);
+    } catch (error) {
+      setAppError(error.message || 'A transferência foi criada, mas não foi possível limpar os itens cadastrados.');
+    }
+    return savedList;
   }
 
   function updateBillingNoteDraft(id, value) {
@@ -5148,12 +5228,16 @@ export function App() {
       ) : activeView === 'stockTransfers' ? (
         <StockTransfersWorkspace
           catalog={stockCatalog}
+          candidates={stockTransferCandidates}
           isUploading={isUploadingStock}
           items={stockItems}
           lists={stockTransferLists}
           onCreateTransfer={createNewStockTransfer}
+          onCreateTransferFromCandidates={createTransferFromCandidates}
+          onDeleteCandidate={removeStockTransferCandidate}
           onDeleteTransfer={removeStockTransfer}
           onUpdateQuantity={changeStockTransferQuantity}
+          onSaveCandidate={saveStockTransferCandidate}
           onUpload={handleStockUpload}
         />
       ) : activeView === 'users' && isMasterUser ? (
@@ -9379,6 +9463,7 @@ function RotaxPartsWorkspace({ catalog, isUploading, onSearch, onUpload }) {
 }
 
 const stockGroupTabs = [
+  { value: 'register', label: 'Cadastrar item' },
   { value: 'all', label: 'Todos' },
   { value: '9001', label: '9001 - Homologado' },
   { value: '9002', label: '9002 - Rotax Exp.' },
@@ -9397,11 +9482,15 @@ function getStockQuantityClass(quantity) {
 
 function StockTransfersWorkspace({
   catalog,
+  candidates,
   isUploading,
   items,
   lists,
   onCreateTransfer,
+  onCreateTransferFromCandidates,
+  onDeleteCandidate,
   onDeleteTransfer,
+  onSaveCandidate,
   onUpdateQuantity,
   onUpload,
 }) {
@@ -9412,6 +9501,10 @@ function StockTransfersWorkspace({
   const [isCreatingTransfer, setIsCreatingTransfer] = useState(false);
   const [orderDialog, setOrderDialog] = useState(null);
   const [copyFeedback, setCopyFeedback] = useState('');
+  const [candidateModal, setCandidateModal] = useState(null);
+  const [candidateForm, setCandidateForm] = useState({ product: '', quantity: '', groupCode: '9001' });
+  const [candidateErrors, setCandidateErrors] = useState({});
+  const [isSavingCandidate, setIsSavingCandidate] = useState(false);
   const activeListId = activeTab.startsWith('list:') ? activeTab.slice(5) : '';
   const activeList = lists.find((list) => list.id === activeListId);
 
@@ -9445,6 +9538,17 @@ function StockTransfersWorkspace({
       });
   }, [activeList, quantitySort, searchTerm]);
 
+  const visibleCandidates = useMemo(() => {
+    const normalizedSearch = normalizeStockProduct(searchTerm);
+    return candidates
+      .filter((candidate) => !normalizedSearch || candidate.productKey.includes(normalizedSearch))
+      .sort((a, b) => {
+        const difference = Number(a.quantity || 0) - Number(b.quantity || 0);
+        if (difference !== 0) return quantitySort === 'asc' ? difference : difference * -1;
+        return a.product.localeCompare(b.product, 'pt-BR');
+      });
+  }, [candidates, quantitySort, searchTerm]);
+
   async function createTransfer() {
     const selectedItems = items.filter((item) => selectedKeys.includes(item.productKey));
     if (selectedItems.length === 0 || isCreatingTransfer) return;
@@ -9456,6 +9560,45 @@ function StockTransfersWorkspace({
       setActiveTab(`list:${savedList.id}`);
     } finally {
       setIsCreatingTransfer(false);
+    }
+  }
+
+  async function createCandidateTransfer() {
+    if (candidates.length === 0 || isCreatingTransfer) return;
+    setIsCreatingTransfer(true);
+    try {
+      const savedList = await onCreateTransferFromCandidates();
+      if (savedList) setActiveTab(`list:${savedList.id}`);
+    } finally {
+      setIsCreatingTransfer(false);
+    }
+  }
+
+  function openCandidateModal(candidate = null) {
+    setCandidateForm(
+      candidate
+        ? { product: candidate.product, quantity: candidate.quantity, groupCode: candidate.groupCode || '9001' }
+        : { product: '', quantity: '', groupCode: '9001' },
+    );
+    setCandidateErrors({});
+    setCandidateModal({ editing: Boolean(candidate) });
+  }
+
+  async function submitCandidate(event) {
+    event.preventDefault();
+    const errors = {};
+    if (!candidateForm.product.trim()) errors.product = 'Informe o PN.';
+    if (Number(candidateForm.quantity || 0) <= 0) errors.quantity = 'Informe uma quantidade maior que zero.';
+    if (!candidateForm.groupCode) errors.groupCode = 'Selecione o grupo.';
+    setCandidateErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+
+    setIsSavingCandidate(true);
+    try {
+      const saved = await onSaveCandidate(candidateForm);
+      if (saved) setCandidateModal(null);
+    } finally {
+      setIsSavingCandidate(false);
     }
   }
 
@@ -9520,7 +9663,9 @@ function StockTransfersWorkspace({
       <div className="stock-tabs" role="tablist" aria-label="Grupos de estoque">
         {stockGroupTabs.map((tab) => {
           const count =
-            tab.value === 'all'
+            tab.value === 'register'
+              ? candidates.length
+              : tab.value === 'all'
               ? items.length
               : tab.value === 'transfer'
                 ? items.filter((item) => Number(item.quantity) === 0).length
@@ -9555,6 +9700,24 @@ function StockTransfersWorkspace({
           <Search size={18} />
           <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Buscar PN" />
         </label>
+
+        {activeTab === 'register' && (
+          <div className="stock-selection-actions">
+            <button className="secondary-button compact" type="button" onClick={() => openCandidateModal()}>
+              <Plus size={16} />
+              Incluir
+            </button>
+            <button
+              className="primary-button compact"
+              disabled={candidates.length === 0 || isCreatingTransfer}
+              type="button"
+              onClick={createCandidateTransfer}
+            >
+              <RefreshCw size={16} />
+              {isCreatingTransfer ? 'Criando...' : 'Incluir em nova transferência'}
+            </button>
+          </div>
+        )}
 
         {activeTab === 'transfer' && (
           <div className="stock-selection-actions">
@@ -9600,6 +9763,58 @@ function StockTransfersWorkspace({
         )}
       </div>
 
+      {activeTab === 'register' ? (
+        <div className="table-wrap">
+          <table className="quote-table stock-table stock-candidate-table">
+            <thead>
+              <tr>
+                <th>PN</th>
+                <th>Grupo</th>
+                <th>
+                  <button
+                    className="sortable-header-button"
+                    type="button"
+                    onClick={() => setQuantitySort((current) => (current === 'asc' ? 'desc' : 'asc'))}
+                  >
+                    Quantidade
+                    <span>{quantitySort === 'asc' ? '↑' : '↓'}</span>
+                  </button>
+                </th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleCandidates.map((candidate) => (
+                <tr key={candidate.productKey}>
+                  <td><strong>{candidate.product}</strong></td>
+                  <td>{candidate.groupCode}</td>
+                  <td>{candidate.quantity}</td>
+                  <td className="candidate-actions">
+                    <button
+                      className="icon-button"
+                      type="button"
+                      title="Editar item"
+                      aria-label={`Editar ${candidate.product}`}
+                      onClick={() => openCandidateModal(candidate)}
+                    >
+                      <Pencil size={16} />
+                    </button>
+                    <button
+                      className="icon-button danger"
+                      type="button"
+                      title="Excluir item"
+                      aria-label={`Excluir ${candidate.product}`}
+                      onClick={() => onDeleteCandidate(candidate.productKey)}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
       <div className="table-wrap">
         <table className="quote-table stock-table">
           <thead>
@@ -9659,11 +9874,70 @@ function StockTransfersWorkspace({
           </tbody>
         </table>
       </div>
+      )}
 
-      {(activeList ? visibleListItems : visibleItems).length === 0 && (
+      {(activeTab === 'register' ? visibleCandidates : activeList ? visibleListItems : visibleItems).length === 0 && (
         <div className="empty-state">
           <PackageSearch size={28} />
           <p>Nenhum PN encontrado nesta aba.</p>
+        </div>
+      )}
+
+      {candidateModal && (
+        <div className="modal-backdrop" role="presentation">
+          <form className="modal-panel stock-candidate-modal" role="dialog" aria-modal="true" onSubmit={submitCandidate}>
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">Transferência</span>
+                <h2>Cadastrar item</h2>
+              </div>
+              <button className="modal-close" type="button" aria-label="Fechar" onClick={() => setCandidateModal(null)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="form-pair">
+              <label>
+                PN:
+                <input
+                  autoFocus
+                  disabled={candidateModal.editing}
+                  value={candidateForm.product}
+                  onChange={(event) => setCandidateForm((current) => ({ ...current, product: event.target.value }))}
+                />
+                {candidateErrors.product && <small>{candidateErrors.product}</small>}
+              </label>
+              <label>
+                Quantidade:
+                <input
+                  inputMode="numeric"
+                  min="1"
+                  type="number"
+                  value={candidateForm.quantity}
+                  onChange={(event) => setCandidateForm((current) => ({ ...current, quantity: event.target.value }))}
+                />
+                {candidateErrors.quantity && <small>{candidateErrors.quantity}</small>}
+              </label>
+            </div>
+            <label>
+              Grupo:
+              <select
+                value={candidateForm.groupCode}
+                onChange={(event) => setCandidateForm((current) => ({ ...current, groupCode: event.target.value }))}
+              >
+                {stockGroupTabs
+                  .filter((tab) => /^\d+$/.test(tab.value))
+                  .map((tab) => <option key={tab.value} value={tab.value}>{tab.label}</option>)}
+              </select>
+              {candidateErrors.groupCode && <small>{candidateErrors.groupCode}</small>}
+            </label>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={() => setCandidateModal(null)}>Cancelar</button>
+              <button className="primary-button" disabled={isSavingCandidate} type="submit">
+                <Save size={16} />
+                {isSavingCandidate ? 'Salvando...' : 'Salvar item'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
@@ -9710,6 +9984,7 @@ const activityEntityLabels = {
   rotax_revenue_entries: 'Faturamento Rotax',
   rotax_parts_catalog: 'Catálogo PN Rotax',
   stock_catalog: 'Estoque para transferência',
+  stock_transfer_candidates: 'Itens para transferência',
   stock_transfer_lists: 'Listas de transferência',
   rotax_training_blocks: 'Informações do treinamento',
   rotax_training_contacts: 'Contatos do treinamento',

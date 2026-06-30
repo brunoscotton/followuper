@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 const ITEMS_STORAGE_KEY = 'followuper.stockItems.v1';
 const CATALOG_STORAGE_KEY = 'followuper.stockCatalog.v1';
 const LISTS_STORAGE_KEY = 'followuper.stockTransferLists.v1';
+const CANDIDATES_STORAGE_KEY = 'followuper.stockTransferCandidates.v1';
 
 function loadLocal(key, fallback) {
   try {
@@ -31,6 +32,7 @@ function toStockItem(row) {
     product: row.product,
     quantity: Number(row.quantity || 0),
     groupCode: row.group_code || '',
+    isManual: row.is_manual === true,
   };
 }
 
@@ -57,29 +59,44 @@ function toTransferList(row) {
   };
 }
 
+function toCandidate(row) {
+  return {
+    productKey: row.product_key,
+    product: row.product,
+    quantity: Number(row.quantity || 0),
+    groupCode: row.group_code || '',
+    createdBy: row.created_by || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export async function loadStockTransferData() {
   if (!supabase) {
     return {
       catalog: loadLocal(CATALOG_STORAGE_KEY, null),
       items: loadLocal(ITEMS_STORAGE_KEY, []),
       lists: loadLocal(LISTS_STORAGE_KEY, []),
+      candidates: loadLocal(CANDIDATES_STORAGE_KEY, []),
       mode: 'local',
     };
   }
 
-  const [itemsResult, catalogResult, listsResult] = await Promise.all([
+  const [itemsResult, catalogResult, listsResult, candidatesResult] = await Promise.all([
     supabase.from('stock_items').select('*').order('product', { ascending: true }),
     supabase.from('stock_catalog').select('*').eq('id', 'current').maybeSingle(),
     supabase.from('stock_transfer_lists').select('*').order('created_at', { ascending: false }),
+    supabase.from('stock_transfer_candidates').select('*').order('created_at', { ascending: true }),
   ]);
 
-  const firstError = [itemsResult.error, catalogResult.error, listsResult.error].find(Boolean);
+  const firstError = [itemsResult.error, catalogResult.error, listsResult.error, candidatesResult.error].find(Boolean);
   if (firstError) {
     if (isMissingTableError(firstError)) {
       return {
         catalog: loadLocal(CATALOG_STORAGE_KEY, null),
         items: loadLocal(ITEMS_STORAGE_KEY, []),
         lists: loadLocal(LISTS_STORAGE_KEY, []),
+        candidates: loadLocal(CANDIDATES_STORAGE_KEY, []),
         mode: 'local',
       };
     }
@@ -89,10 +106,12 @@ export async function loadStockTransferData() {
   const items = itemsResult.data.map(toStockItem);
   const catalog = toCatalog(catalogResult.data);
   const lists = listsResult.data.map(toTransferList);
+  const candidates = candidatesResult.data.map(toCandidate);
   saveLocal(ITEMS_STORAGE_KEY, items);
   saveLocal(CATALOG_STORAGE_KEY, catalog);
   saveLocal(LISTS_STORAGE_KEY, lists);
-  return { catalog, items, lists, mode: 'supabase' };
+  saveLocal(CANDIDATES_STORAGE_KEY, candidates);
+  return { catalog, items, lists, candidates, mode: 'supabase' };
 }
 
 export async function loadStockItems() {
@@ -117,9 +136,14 @@ export async function replaceStockItems(items, metadata) {
   };
 
   if (!supabase) {
-    saveLocal(ITEMS_STORAGE_KEY, items);
-    saveLocal(CATALOG_STORAGE_KEY, catalog);
-    return catalog;
+    const manualItems = loadLocal(ITEMS_STORAGE_KEY, []).filter(
+      (item) => item.isManual && !items.some((nextItem) => nextItem.productKey === item.productKey),
+    );
+    const allItems = [...items, ...manualItems].sort((a, b) => a.product.localeCompare(b.product, 'pt-BR'));
+    const savedCatalog = { ...catalog, itemCount: allItems.length };
+    saveLocal(ITEMS_STORAGE_KEY, allItems);
+    saveLocal(CATALOG_STORAGE_KEY, savedCatalog);
+    return savedCatalog;
   }
 
   for (let index = 0; index < items.length; index += 500) {
@@ -128,6 +152,7 @@ export async function replaceStockItems(items, metadata) {
       product: item.product,
       quantity: Number(item.quantity || 0),
       group_code: item.groupCode || null,
+      is_manual: false,
       batch_id: batchId,
       updated_at: updatedAt,
     }));
@@ -135,8 +160,15 @@ export async function replaceStockItems(items, metadata) {
     if (error) throw error;
   }
 
-  const { error: cleanupError } = await supabase.from('stock_items').delete().neq('batch_id', batchId);
+  const { error: cleanupError } = await supabase
+    .from('stock_items')
+    .delete()
+    .eq('is_manual', false)
+    .neq('batch_id', batchId);
   if (cleanupError) throw cleanupError;
+
+  const { count } = await supabase.from('stock_items').select('*', { count: 'exact', head: true });
+  catalog.itemCount = Number(count || items.length);
 
   const { error: catalogError } = await supabase.from('stock_catalog').upsert(
     {
@@ -212,6 +244,125 @@ export async function deleteStockTransferList(id) {
   if (error) throw error;
 }
 
+export async function ensureManualStockItem(candidate) {
+  if (!supabase) {
+    const items = loadLocal(ITEMS_STORAGE_KEY, []);
+    const existing = items.find((item) => item.productKey === candidate.productKey);
+    if (existing) return existing;
+    const item = {
+      productKey: candidate.productKey,
+      product: candidate.product,
+      quantity: 0,
+      groupCode: candidate.groupCode,
+      isManual: true,
+    };
+    const nextItems = [...items, item].sort((a, b) => a.product.localeCompare(b.product, 'pt-BR'));
+    saveLocal(ITEMS_STORAGE_KEY, nextItems);
+    const catalog = loadLocal(CATALOG_STORAGE_KEY, null);
+    saveLocal(CATALOG_STORAGE_KEY, {
+      ...(catalog || {
+        id: 'current',
+        batchId: crypto.randomUUID(),
+        fileName: '',
+        updatedBy: candidate.createdBy || '',
+      }),
+      itemCount: nextItems.length,
+      updatedAt: new Date().toISOString(),
+    });
+    return item;
+  }
+
+  const { data: existing, error: lookupError } = await supabase
+    .from('stock_items')
+    .select('*')
+    .eq('product_key', candidate.productKey)
+    .maybeSingle();
+  if (lookupError) throw lookupError;
+  if (existing) return toStockItem(existing);
+
+  const { data, error } = await supabase
+    .from('stock_items')
+    .insert({
+      product_key: candidate.productKey,
+      product: candidate.product,
+      quantity: 0,
+      group_code: candidate.groupCode || null,
+      batch_id: crypto.randomUUID(),
+      is_manual: true,
+      updated_at: new Date().toISOString(),
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+
+  const [{ count }, { data: currentCatalog }] = await Promise.all([
+    supabase.from('stock_items').select('*', { count: 'exact', head: true }),
+    supabase.from('stock_catalog').select('*').eq('id', 'current').maybeSingle(),
+  ]);
+  await supabase.from('stock_catalog').upsert(
+    {
+      id: 'current',
+      batch_id: currentCatalog?.batch_id || crypto.randomUUID(),
+      file_name: currentCatalog?.file_name || '',
+      item_count: Number(count || 0),
+      updated_by: candidate.createdBy || currentCatalog?.updated_by || '',
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'id' },
+  );
+  return toStockItem(data);
+}
+
+export async function upsertStockTransferCandidate(candidate) {
+  const nowIso = new Date().toISOString();
+  if (!supabase) {
+    const candidates = loadLocal(CANDIDATES_STORAGE_KEY, []);
+    const existing = candidates.find((item) => item.productKey === candidate.productKey);
+    const saved = { ...existing, ...candidate, createdAt: existing?.createdAt || nowIso, updatedAt: nowIso };
+    saveLocal(CANDIDATES_STORAGE_KEY, [saved, ...candidates.filter((item) => item.productKey !== candidate.productKey)]);
+    return saved;
+  }
+
+  const { data, error } = await supabase
+    .from('stock_transfer_candidates')
+    .upsert(
+      {
+        product_key: candidate.productKey,
+        product: candidate.product,
+        quantity: Number(candidate.quantity || 0),
+        group_code: candidate.groupCode || null,
+        created_by: candidate.createdBy || null,
+        updated_at: nowIso,
+      },
+      { onConflict: 'product_key' },
+    )
+    .select('*')
+    .single();
+  if (error) throw error;
+  return toCandidate(data);
+}
+
+export async function deleteStockTransferCandidate(productKey) {
+  if (!supabase) {
+    saveLocal(
+      CANDIDATES_STORAGE_KEY,
+      loadLocal(CANDIDATES_STORAGE_KEY, []).filter((item) => item.productKey !== productKey),
+    );
+    return;
+  }
+  const { error } = await supabase.from('stock_transfer_candidates').delete().eq('product_key', productKey);
+  if (error) throw error;
+}
+
+export async function clearStockTransferCandidates() {
+  if (!supabase) {
+    saveLocal(CANDIDATES_STORAGE_KEY, []);
+    return;
+  }
+  const { error } = await supabase.from('stock_transfer_candidates').delete().neq('product_key', '');
+  if (error) throw error;
+}
+
 export function subscribeToStockTransferChanges(onChange) {
   if (!supabase) return () => {};
 
@@ -230,6 +381,14 @@ export function subscribeToStockTransferChanges(onChange) {
         eventType: payload.eventType,
         item: payload.new?.id ? toTransferList(payload.new) : null,
         oldId: payload.old?.id,
+      });
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_transfer_candidates' }, (payload) => {
+      onChange({
+        collection: 'candidates',
+        eventType: payload.eventType,
+        item: payload.new?.product_key ? toCandidate(payload.new) : null,
+        oldId: payload.old?.product_key,
       });
     })
     .subscribe();

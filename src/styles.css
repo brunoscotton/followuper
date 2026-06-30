@@ -2746,6 +2746,27 @@ td {
   text-align: right;
 }
 
+.stock-candidate-table th:last-child,
+.stock-candidate-table td:last-child {
+  min-width: 110px;
+  text-align: center;
+}
+
+.candidate-actions {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+  justify-content: center;
+}
+
+.candidate-actions .icon-button.danger {
+  color: #be123c;
+}
+
+.stock-candidate-modal {
+  max-width: 620px;
+}
+
 .stock-order-dialog {
   max-width: 680px;
 }

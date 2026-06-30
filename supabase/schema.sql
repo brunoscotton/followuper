@@ -189,6 +189,7 @@ create table if not exists public.stock_items (
   product text not null,
   quantity numeric not null default 0,
   group_code text,
+  is_manual boolean not null default false,
   batch_id uuid not null,
   updated_at timestamptz not null default now()
 );
@@ -206,6 +207,16 @@ create table if not exists public.stock_transfer_lists (
   id uuid primary key,
   name text not null,
   items jsonb not null default '[]'::jsonb,
+  created_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.stock_transfer_candidates (
+  product_key text primary key,
+  product text not null,
+  quantity numeric not null default 0 check (quantity > 0),
+  group_code text,
   created_by text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -376,6 +387,7 @@ begin
     'rotax_parts_catalog',
     'stock_catalog',
     'stock_transfer_lists',
+    'stock_transfer_candidates',
     'return_entries',
     'warranty_entries',
     'contract_templates',
@@ -442,6 +454,7 @@ alter table public.warranty_entries add column if not exists motor_serial_number
 alter table public.warranty_entries add column if not exists attachment_file_name text;
 alter table public.warranty_entries add column if not exists attachment_file_data text;
 alter table public.warranty_entries add column if not exists attachment_mime_type text;
+alter table public.stock_items add column if not exists is_manual boolean not null default false;
 
 alter table public.quotes drop constraint if exists quotes_follow_up_amount_check;
 alter table public.quotes add constraint quotes_follow_up_amount_check check (follow_up_amount > 0);
@@ -472,6 +485,7 @@ alter table public.rotax_parts_catalog replica identity full;
 alter table public.stock_items replica identity full;
 alter table public.stock_catalog replica identity full;
 alter table public.stock_transfer_lists replica identity full;
+alter table public.stock_transfer_candidates replica identity full;
 alter table public.return_entries replica identity full;
 alter table public.warranty_entries replica identity full;
 alter table public.contract_templates replica identity full;
@@ -495,6 +509,7 @@ alter table public.rotax_parts_catalog enable row level security;
 alter table public.stock_items enable row level security;
 alter table public.stock_catalog enable row level security;
 alter table public.stock_transfer_lists enable row level security;
+alter table public.stock_transfer_candidates enable row level security;
 alter table public.return_entries enable row level security;
 alter table public.warranty_entries enable row level security;
 alter table public.contract_templates enable row level security;
@@ -561,6 +576,10 @@ drop policy if exists "Authenticated users can read stock transfer lists" on pub
 drop policy if exists "Authenticated users can insert stock transfer lists" on public.stock_transfer_lists;
 drop policy if exists "Authenticated users can update stock transfer lists" on public.stock_transfer_lists;
 drop policy if exists "Authenticated users can delete stock transfer lists" on public.stock_transfer_lists;
+drop policy if exists "Authenticated users can read stock transfer candidates" on public.stock_transfer_candidates;
+drop policy if exists "Authenticated users can insert stock transfer candidates" on public.stock_transfer_candidates;
+drop policy if exists "Authenticated users can update stock transfer candidates" on public.stock_transfer_candidates;
+drop policy if exists "Authenticated users can delete stock transfer candidates" on public.stock_transfer_candidates;
 drop policy if exists "Authenticated users can read return entries" on public.return_entries;
 drop policy if exists "Authenticated users can insert return entries" on public.return_entries;
 drop policy if exists "Authenticated users can update return entries" on public.return_entries;
@@ -957,6 +976,31 @@ create policy "Authenticated users can delete stock transfer lists"
   to authenticated
   using (true);
 
+create policy "Authenticated users can read stock transfer candidates"
+  on public.stock_transfer_candidates
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert stock transfer candidates"
+  on public.stock_transfer_candidates
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update stock transfer candidates"
+  on public.stock_transfer_candidates
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete stock transfer candidates"
+  on public.stock_transfer_candidates
+  for delete
+  to authenticated
+  using (true);
+
 create policy "Authenticated users can read return entries"
   on public.return_entries
   for select
@@ -1250,6 +1294,16 @@ begin
       and tablename = 'stock_transfer_lists'
   ) then
     alter publication supabase_realtime add table public.stock_transfer_lists;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'stock_transfer_candidates'
+  ) then
+    alter publication supabase_realtime add table public.stock_transfer_candidates;
   end if;
 
   if not exists (
