@@ -159,6 +159,16 @@ import {
   searchRotaxParts,
   subscribeToRotaxPartsCatalog,
 } from './services/rotaxPartsRepository';
+import {
+  createStockTransferList,
+  deleteStockTransferList,
+  loadStockItems,
+  loadStockTransferData,
+  normalizeStockProduct,
+  replaceStockItems,
+  subscribeToStockTransferChanges,
+  updateStockTransferList,
+} from './services/stockTransfersRepository';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 const billingSellers = ['Bruno', 'Elton', 'Stephanie'];
@@ -1103,6 +1113,50 @@ async function parseRotaxPartsUploadFile(file) {
   return parts;
 }
 
+function parseStockQuantity(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const normalizedValue = String(value || '').trim().replace(/\./g, '').replace(',', '.');
+  const parsed = Number(normalizedValue);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function parseStockUploadFile(file) {
+  const rows = await readSheet(file);
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('produto') && headers.includes('saldoatual') && headers.includes('grupo');
+  });
+  if (headerIndex < 0) throw new Error('Não encontrei os cabeçalhos Produto, Saldo Atual e Grupo.');
+
+  const headers = rows[headerIndex].map(normalizeUploadHeader);
+  const columns = {
+    product: headers.indexOf('produto'),
+    quantity: headers.indexOf('saldoatual'),
+    groupCode: headers.indexOf('grupo'),
+  };
+  const itemsByProduct = new Map();
+
+  rows.slice(headerIndex + 1).forEach((row) => {
+    const product = normalizeUploadValue(row[columns.product]);
+    const productKey = normalizeStockProduct(product);
+    if (!productKey) return;
+
+    const current = itemsByProduct.get(productKey) || {
+      productKey,
+      product,
+      quantity: 0,
+      groupCode: normalizeUploadValue(row[columns.groupCode]).replace(/\.0$/, ''),
+    };
+    current.quantity += parseStockQuantity(row[columns.quantity]);
+    current.groupCode = current.groupCode || normalizeUploadValue(row[columns.groupCode]).replace(/\.0$/, '');
+    itemsByProduct.set(productKey, current);
+  });
+
+  const items = [...itemsByProduct.values()].sort((a, b) => a.product.localeCompare(b.product, 'pt-BR'));
+  if (items.length === 0) throw new Error('Nenhum produto válido foi encontrado na planilha.');
+  return items;
+}
+
 function addDays(dateValue, days) {
   const date = new Date(dateValue);
   date.setDate(date.getDate() + Number(days || 0));
@@ -1175,6 +1229,23 @@ function isWarrantyFinalized(entry) {
 
 function isArchived(quote) {
   return Boolean(quote.archivedAt);
+}
+
+function isManuallyArchived(quote) {
+  if (!isArchived(quote)) return false;
+
+  const latestArchiveEvent = (Array.isArray(quote.history) ? quote.history : [])
+    .filter((event) => event.type === 'archived')
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+
+  if (latestArchiveEvent) {
+    const label = normalizeUploadText(latestArchiveEvent.label);
+    return !label.includes('AUTOMATICAMENTE') && !label.includes('PELO UPLOAD');
+  }
+
+  const lossNotes = normalizeUploadText(quote.lossReason?.notes);
+  if (lossNotes.includes('ARQUIVADA AUTOMATICAMENTE')) return false;
+  return Boolean(quote.lossReason);
 }
 
 function getFollowUpDueAt(quote) {
@@ -1284,6 +1355,9 @@ export function App() {
   const [rotaxContacts, setRotaxContacts] = useState([]);
   const [rotaxRevenueEntries, setRotaxRevenueEntries] = useState([]);
   const [rotaxPartsCatalog, setRotaxPartsCatalog] = useState(null);
+  const [stockCatalog, setStockCatalog] = useState(null);
+  const [stockItems, setStockItems] = useState([]);
+  const [stockTransferLists, setStockTransferLists] = useState([]);
   const [activeRotaxRevenueYear, setActiveRotaxRevenueYear] = useState(2026);
   const [customers, setCustomers] = useState([]);
   const [billingEntries, setBillingEntries] = useState([]);
@@ -1318,6 +1392,7 @@ export function App() {
   const [isUploadingCustomers, setIsUploadingCustomers] = useState(false);
   const [isUploadingBilling, setIsUploadingBilling] = useState(false);
   const [isUploadingRotaxParts, setIsUploadingRotaxParts] = useState(false);
+  const [isUploadingStock, setIsUploadingStock] = useState(false);
   const [uploadPreview, setUploadPreview] = useState(null);
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
   const [expandedCustomerIds, setExpandedCustomerIds] = useState([]);
@@ -1658,6 +1733,56 @@ export function App() {
     let active = true;
     let unsubscribe = () => {};
     if (!authChecked || (isSupabaseConfigured && !user)) {
+      setStockCatalog(null);
+      setStockItems([]);
+      setStockTransferLists([]);
+      return () => {};
+    }
+
+    loadStockTransferData()
+      .then((result) => {
+        if (!active) return;
+        setStockCatalog(result.catalog);
+        setStockItems(result.items);
+        setStockTransferLists(result.lists);
+
+        if (result.mode === 'supabase') {
+          unsubscribe = subscribeToStockTransferChanges(({ collection, eventType, item, oldId }) => {
+            if (!active) return;
+            if (collection === 'catalog') {
+              setStockCatalog(item);
+              loadStockItems()
+                .then((items) => {
+                  if (active) setStockItems(items);
+                })
+                .catch(() => {});
+              return;
+            }
+
+            setStockTransferLists((current) => {
+              if (eventType === 'DELETE') return current.filter((list) => list.id !== oldId);
+              if (!item) return current;
+              return [item, ...current.filter((list) => list.id !== item.id)].sort(
+                (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
+              );
+            });
+          });
+        }
+      })
+      .catch((error) => {
+        if (active) setAppError(error.message || 'Não foi possível carregar os dados de transferência.');
+      });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [authChecked, user]);
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribe = () => {};
+    if (!authChecked || (isSupabaseConfigured && !user)) {
       setRotaxPartsCatalog(null);
       return () => {};
     }
@@ -1815,7 +1940,9 @@ export function App() {
   useEffect(() => {
     if (isLoading || closedUnarchiveRunningRef.current) return;
 
-    const closedArchivedQuotes = quotes.filter((quote) => isClosed(quote) && isArchived(quote));
+    const closedArchivedQuotes = quotes.filter(
+      (quote) => isClosed(quote) && isArchived(quote) && !isManuallyArchived(quote),
+    );
     if (closedArchivedQuotes.length === 0) return;
 
     closedUnarchiveRunningRef.current = true;
@@ -2769,19 +2896,24 @@ export function App() {
         const hasUploadClientName = row.clientName && !isFinalClientName(row.clientName);
         const shouldUpdateClientName = hasUploadClientName && (isFinalClientName(existingQuote.clientName) || existingQuote.clientName !== row.clientName);
         const changes = {
-          archivedAt: '',
+          archivedAt: isManuallyArchived(existingQuote) ? existingQuote.archivedAt : '',
           quoteValue: formattedTotalValue,
           isInterest: existingQuote.isInterest || row.totalValue >= 5000,
         };
         if (shouldUpdateClientName) changes.clientName = row.clientName;
 
         if (isClosedUpload) {
+          const existingTrackingEntry = trackingEntries.find((entry) => entry.quoteId === existingQuote.id);
           changes.status = 'fechada';
           changes.statusUpdatedAt = existingQuote.status === 'fechada' ? existingQuote.statusUpdatedAt || closedAt : closedAt;
           changes.closeDetails = {
             orderNumber: row.orderNumber,
             agreedPaymentTerms: existingQuote.closeDetails?.agreedPaymentTerms || '',
-            carrier: existingQuote.closeDetails?.carrier || existingQuote.closeDetails?.freight || '',
+            carrier:
+              existingTrackingEntry?.carrier ||
+              existingQuote.closeDetails?.carrier ||
+              existingQuote.closeDetails?.freight ||
+              '',
             totalValue: formattedTotalValue,
             notes: existingQuote.closeDetails?.notes || '',
             closedAt: existingQuote.closeDetails?.closedAt || closedAt,
@@ -2914,7 +3046,7 @@ export function App() {
         const shouldUpdateClientName =
           hasUploadClientName && (isFinalClientName(existingQuote.clientName) || existingQuote.clientName !== row.clientName);
         const changes = {
-          archivedAt: '',
+          archivedAt: isManuallyArchived(existingQuote) ? existingQuote.archivedAt : '',
           quoteValue: formattedTotalValue,
           isInterest: existingQuote.isInterest || row.totalValue >= 5000,
         };
@@ -2930,12 +3062,17 @@ export function App() {
         }
 
         if (isClosedUpload) {
+          const existingTrackingEntry = trackingEntries.find((entry) => entry.quoteId === existingQuote.id);
           changes.status = 'fechada';
           changes.statusUpdatedAt = existingQuote.status === 'fechada' ? existingQuote.statusUpdatedAt || changedAt : changedAt;
           changes.closeDetails = {
             orderNumber: row.orderNumber,
             agreedPaymentTerms: existingQuote.closeDetails?.agreedPaymentTerms || '',
-            carrier: existingQuote.closeDetails?.carrier || existingQuote.closeDetails?.freight || '',
+            carrier:
+              existingTrackingEntry?.carrier ||
+              existingQuote.closeDetails?.carrier ||
+              existingQuote.closeDetails?.freight ||
+              '',
             totalValue: formattedTotalValue,
             notes: existingQuote.closeDetails?.notes || '',
             closedAt: existingQuote.closeDetails?.closedAt || changedAt,
@@ -3142,6 +3279,88 @@ export function App() {
       setAppError(error.message || 'Não foi possível importar a tabela de PN Rotax.');
     } finally {
       setIsUploadingRotaxParts(false);
+    }
+  }
+
+  async function handleStockUpload(file) {
+    if (!file) return;
+    setIsUploadingStock(true);
+    try {
+      const items = await parseStockUploadFile(file);
+      const catalog = await replaceStockItems(items, {
+        fileName: file.name,
+        updatedBy: user?.email || '',
+      });
+      setStockItems(items);
+      setStockCatalog(catalog);
+      setActiveView('stockTransfers');
+      setAppError(`Estoque atualizado: ${items.length} PN(s) importado(s).`);
+    } catch (error) {
+      setAppError(error.message || 'Não foi possível importar o relatório de estoque.');
+    } finally {
+      setIsUploadingStock(false);
+    }
+  }
+
+  async function createNewStockTransfer(items) {
+    const nextNumber =
+      stockTransferLists.reduce((highest, list) => {
+        const number = Number(String(list.name || '').match(/(\d+)$/)?.[1] || 0);
+        return Math.max(highest, number);
+      }, 0) + 1;
+    const nowIso = new Date().toISOString();
+    const nextList = {
+      id: crypto.randomUUID(),
+      name: `Transferência ${String(nextNumber).padStart(2, '0')}`,
+      items: items.map((item) => ({
+        productKey: item.productKey,
+        product: item.product,
+        availableQuantity: item.quantity,
+        quantity: 0,
+      })),
+      createdBy: user?.email || '',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    try {
+      const savedList = await createStockTransferList(nextList);
+      setStockTransferLists((current) => [savedList, ...current.filter((list) => list.id !== savedList.id)]);
+      setAppError('');
+      return savedList;
+    } catch (error) {
+      setAppError(error.message || 'Não foi possível criar a transferência.');
+      return null;
+    }
+  }
+
+  async function changeStockTransferQuantity(listId, productKey, quantity) {
+    const list = stockTransferLists.find((item) => item.id === listId);
+    if (!list) return;
+    const items = list.items.map((item) =>
+      item.productKey === productKey ? { ...item, quantity: Math.max(0, Number(quantity || 0)) } : item,
+    );
+    setStockTransferLists((current) =>
+      current.map((item) => (item.id === listId ? { ...item, items, updatedAt: new Date().toISOString() } : item)),
+    );
+
+    try {
+      const savedList = await updateStockTransferList(listId, { items });
+      setStockTransferLists((current) => current.map((item) => (item.id === listId ? savedList : item)));
+    } catch (error) {
+      setAppError(error.message || 'Não foi possível salvar a quantidade da transferência.');
+    }
+  }
+
+  async function removeStockTransfer(listId) {
+    const previousLists = stockTransferLists;
+    setStockTransferLists((current) => current.filter((list) => list.id !== listId));
+    try {
+      await deleteStockTransferList(listId);
+      setAppError('');
+    } catch (error) {
+      setStockTransferLists(previousLists);
+      setAppError(error.message || 'Não foi possível excluir a transferência.');
     }
   }
 
@@ -4030,7 +4249,7 @@ export function App() {
         clientName: quote.clientName,
         phone,
         orderNumber: details.orderNumber,
-        carrier: details.carrier,
+        carrier: existingEntry.carrier || details.carrier || '',
       });
       setTrackingEntries((current) =>
         sortTrackingEntries(current.map((entry) => (entry.id === savedEntry.id ? savedEntry : entry))),
@@ -4925,6 +5144,17 @@ export function App() {
           isUploading={isUploadingRotaxParts}
           onSearch={searchRotaxParts}
           onUpload={handleRotaxPartsUpload}
+        />
+      ) : activeView === 'stockTransfers' ? (
+        <StockTransfersWorkspace
+          catalog={stockCatalog}
+          isUploading={isUploadingStock}
+          items={stockItems}
+          lists={stockTransferLists}
+          onCreateTransfer={createNewStockTransfer}
+          onDeleteTransfer={removeStockTransfer}
+          onUpdateQuantity={changeStockTransferQuantity}
+          onUpload={handleStockUpload}
         />
       ) : activeView === 'users' && isMasterUser ? (
         <UsersWorkspace
@@ -6223,6 +6453,10 @@ function SideNavigation({
         <button className={activeView === 'rotaxParts' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('rotaxParts')}>
           <PackageSearch size={17} />
           Consulta PN Rotax
+        </button>
+        <button className={activeView === 'stockTransfers' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('stockTransfers')}>
+          <RefreshCw size={17} />
+          Transferência
         </button>
         <button className={activeView === 'info' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('info')}>
           <BookOpenText size={17} />
@@ -9144,6 +9378,327 @@ function RotaxPartsWorkspace({ catalog, isUploading, onSearch, onUpload }) {
   );
 }
 
+const stockGroupTabs = [
+  { value: 'all', label: 'Todos' },
+  { value: '9001', label: '9001 - Homologado' },
+  { value: '9002', label: '9002 - Rotax Exp.' },
+  { value: '9016', label: '9016 - Lubrificantes' },
+  { value: '9009', label: '9009 - Pneus' },
+  { value: '9017', label: '9017 - Rotax cert.' },
+  { value: 'transfer', label: 'Transferência' },
+];
+
+function getStockQuantityClass(quantity) {
+  const numericQuantity = Number(quantity || 0);
+  if (numericQuantity <= 1) return 'stock-quantity critical';
+  if (numericQuantity === 2) return 'stock-quantity warning';
+  return 'stock-quantity';
+}
+
+function StockTransfersWorkspace({
+  catalog,
+  isUploading,
+  items,
+  lists,
+  onCreateTransfer,
+  onDeleteTransfer,
+  onUpdateQuantity,
+  onUpload,
+}) {
+  const [activeTab, setActiveTab] = useState('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [quantitySort, setQuantitySort] = useState('asc');
+  const [selectedKeys, setSelectedKeys] = useState([]);
+  const [isCreatingTransfer, setIsCreatingTransfer] = useState(false);
+  const [orderDialog, setOrderDialog] = useState(null);
+  const [copyFeedback, setCopyFeedback] = useState('');
+  const activeListId = activeTab.startsWith('list:') ? activeTab.slice(5) : '';
+  const activeList = lists.find((list) => list.id === activeListId);
+
+  useEffect(() => {
+    if (activeListId && !lists.some((list) => list.id === activeListId)) setActiveTab('transfer');
+  }, [activeListId, lists]);
+
+  const visibleItems = useMemo(() => {
+    const normalizedSearch = normalizeStockProduct(searchTerm);
+    const filtered = items.filter((item) => {
+      if (activeTab === 'transfer' && Number(item.quantity) !== 0) return false;
+      if (activeTab !== 'all' && activeTab !== 'transfer' && item.groupCode !== activeTab) return false;
+      return !normalizedSearch || item.productKey.includes(normalizedSearch);
+    });
+    return [...filtered].sort((a, b) => {
+      const difference = Number(a.quantity || 0) - Number(b.quantity || 0);
+      if (difference !== 0) return quantitySort === 'asc' ? difference : difference * -1;
+      return a.product.localeCompare(b.product, 'pt-BR');
+    });
+  }, [activeTab, items, quantitySort, searchTerm]);
+
+  const visibleListItems = useMemo(() => {
+    if (!activeList) return [];
+    const normalizedSearch = normalizeStockProduct(searchTerm);
+    return [...activeList.items]
+      .filter((item) => !normalizedSearch || normalizeStockProduct(item.product).includes(normalizedSearch))
+      .sort((a, b) => {
+        const difference = Number(a.availableQuantity || 0) - Number(b.availableQuantity || 0);
+        if (difference !== 0) return quantitySort === 'asc' ? difference : difference * -1;
+        return a.product.localeCompare(b.product, 'pt-BR');
+      });
+  }, [activeList, quantitySort, searchTerm]);
+
+  async function createTransfer() {
+    const selectedItems = items.filter((item) => selectedKeys.includes(item.productKey));
+    if (selectedItems.length === 0 || isCreatingTransfer) return;
+    setIsCreatingTransfer(true);
+    try {
+      const savedList = await onCreateTransfer(selectedItems);
+      if (!savedList) return;
+      setSelectedKeys([]);
+      setActiveTab(`list:${savedList.id}`);
+    } finally {
+      setIsCreatingTransfer(false);
+    }
+  }
+
+  function toggleSelection(productKey) {
+    setSelectedKeys((current) =>
+      current.includes(productKey) ? current.filter((key) => key !== productKey) : [...current, productKey],
+    );
+  }
+
+  function generateOrder(list) {
+    const lines = list.items
+      .filter((item) => Number(item.quantity || 0) > 0)
+      .map((item) => `${Number(item.quantity)}\t${item.product}`);
+    setCopyFeedback('');
+    setOrderDialog({ name: list.name, content: lines.join('\n'), itemCount: lines.length });
+  }
+
+  async function copyOrder() {
+    if (!orderDialog?.content) return;
+    try {
+      await navigator.clipboard.writeText(orderDialog.content);
+      setCopyFeedback('Copiado');
+    } catch {
+      setCopyFeedback('Selecione e copie o texto');
+    }
+  }
+
+  return (
+    <section className="stock-transfer-panel">
+      <div className="panel-toolbar">
+        <div className="section-title">
+          <RefreshCw size={22} />
+          <div>
+            <h1>Transferência</h1>
+            <p>Estoque de Campinas e preparação de pedidos de transferência.</p>
+          </div>
+        </div>
+        <div className="stock-upload-area">
+          {catalog && (
+            <span className="catalog-meta">
+              {catalog.itemCount.toLocaleString('pt-BR')} PNs · Atualizado em {formatActivityDate(catalog.updatedAt)}
+            </span>
+          )}
+          <label className="secondary-button compact file-button">
+            <Upload size={16} />
+            {isUploading ? 'Importando...' : 'Upload estoque'}
+            <input
+              accept=".xlsx"
+              disabled={isUploading}
+              hidden
+              type="file"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                onUpload(file);
+              }}
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="stock-tabs" role="tablist" aria-label="Grupos de estoque">
+        {stockGroupTabs.map((tab) => {
+          const count =
+            tab.value === 'all'
+              ? items.length
+              : tab.value === 'transfer'
+                ? items.filter((item) => Number(item.quantity) === 0).length
+                : items.filter((item) => item.groupCode === tab.value).length;
+          return (
+            <button
+              className={activeTab === tab.value ? 'stock-tab active' : 'stock-tab'}
+              key={tab.value}
+              type="button"
+              onClick={() => setActiveTab(tab.value)}
+            >
+              {tab.label}
+              <strong>{count}</strong>
+            </button>
+          );
+        })}
+        {lists.map((list) => (
+          <button
+            className={activeTab === `list:${list.id}` ? 'stock-tab saved active' : 'stock-tab saved'}
+            key={list.id}
+            type="button"
+            onClick={() => setActiveTab(`list:${list.id}`)}
+          >
+            {list.name}
+            <strong>{list.items.length}</strong>
+          </button>
+        ))}
+      </div>
+
+      <div className="stock-toolbar">
+        <label className="search-box stock-search-box">
+          <Search size={18} />
+          <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Buscar PN" />
+        </label>
+
+        {activeTab === 'transfer' && (
+          <div className="stock-selection-actions">
+            <button
+              className="secondary-button compact"
+              type="button"
+              onClick={() => setSelectedKeys((current) => [...new Set([...current, ...visibleItems.map((item) => item.productKey)])])}
+            >
+              Selecionar tudo
+            </button>
+            <button className="secondary-button compact" type="button" onClick={() => setSelectedKeys([])}>
+              Desselecionar tudo
+            </button>
+            <button
+              className="primary-button compact"
+              disabled={selectedKeys.length === 0 || isCreatingTransfer}
+              type="button"
+              onClick={createTransfer}
+            >
+              <Plus size={16} />
+              {isCreatingTransfer ? 'Criando...' : 'Nova transferência'}
+            </button>
+          </div>
+        )}
+
+        {activeList && (
+          <div className="stock-selection-actions">
+            <button className="primary-button compact" type="button" onClick={() => generateOrder(activeList)}>
+              <FileText size={16} />
+              Gerar pedido
+            </button>
+            <button
+              className="danger-button compact"
+              type="button"
+              onClick={() => {
+                if (window.confirm(`Excluir ${activeList.name}?`)) onDeleteTransfer(activeList.id);
+              }}
+            >
+              <Trash2 size={16} />
+              Excluir transferência
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="table-wrap">
+        <table className="quote-table stock-table">
+          <thead>
+            <tr>
+              {activeTab === 'transfer' && <th className="stock-checkbox-column">Selecionar</th>}
+              <th>Produto</th>
+              {!activeList && <th>Grupo</th>}
+              <th>
+                <button
+                  className="sortable-header-button"
+                  type="button"
+                  onClick={() => setQuantitySort((current) => (current === 'asc' ? 'desc' : 'asc'))}
+                >
+                  Saldo Atual
+                  <span>{quantitySort === 'asc' ? '↑' : '↓'}</span>
+                </button>
+              </th>
+              {activeList && <th>Unidades para transferir</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {activeList
+              ? visibleListItems.map((item) => (
+                  <tr key={item.productKey}>
+                    <td><strong>{item.product}</strong></td>
+                    <td><span className={getStockQuantityClass(item.availableQuantity)}>{item.availableQuantity}</span></td>
+                    <td>
+                      <input
+                        className="stock-transfer-quantity-input"
+                        inputMode="numeric"
+                        min="0"
+                        type="number"
+                        value={item.quantity || ''}
+                        onChange={(event) => onUpdateQuantity(activeList.id, item.productKey, event.target.value)}
+                        placeholder="0"
+                      />
+                    </td>
+                  </tr>
+                ))
+              : visibleItems.map((item) => (
+                  <tr key={item.productKey}>
+                    {activeTab === 'transfer' && (
+                      <td className="stock-checkbox-column">
+                        <input
+                          checked={selectedKeys.includes(item.productKey)}
+                          type="checkbox"
+                          onChange={() => toggleSelection(item.productKey)}
+                          aria-label={`Selecionar ${item.product}`}
+                        />
+                      </td>
+                    )}
+                    <td><strong>{item.product}</strong></td>
+                    <td>{item.groupCode || '-'}</td>
+                    <td><span className={getStockQuantityClass(item.quantity)}>{item.quantity}</span></td>
+                  </tr>
+                ))}
+          </tbody>
+        </table>
+      </div>
+
+      {(activeList ? visibleListItems : visibleItems).length === 0 && (
+        <div className="empty-state">
+          <PackageSearch size={28} />
+          <p>Nenhum PN encontrado nesta aba.</p>
+        </div>
+      )}
+
+      {orderDialog && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel stock-order-dialog" role="dialog" aria-modal="true" aria-label="Pedido de transferência">
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">{orderDialog.name}</span>
+                <h2>Pedido de transferência</h2>
+                <p>{orderDialog.itemCount} item(ns) com quantidade preenchida.</p>
+              </div>
+              <button className="modal-close" type="button" aria-label="Fechar" onClick={() => setOrderDialog(null)}>
+                <X size={18} />
+              </button>
+            </div>
+            {orderDialog.content ? (
+              <textarea className="stock-order-output" readOnly value={orderDialog.content} rows="12" />
+            ) : (
+              <div className="empty-state">Preencha ao menos uma quantidade maior que zero.</div>
+            )}
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={() => setOrderDialog(null)}>Fechar</button>
+              <button className="primary-button" disabled={!orderDialog.content} type="button" onClick={copyOrder}>
+                <Save size={16} />
+                {copyFeedback || 'Copiar TSV'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
 const activityEntityLabels = {
   billing_entries: 'Cobranças',
   billing_uploads: 'Uploads de cobrança',
@@ -9154,6 +9709,8 @@ const activityEntityLabels = {
   return_entries: 'Devoluções',
   rotax_revenue_entries: 'Faturamento Rotax',
   rotax_parts_catalog: 'Catálogo PN Rotax',
+  stock_catalog: 'Estoque para transferência',
+  stock_transfer_lists: 'Listas de transferência',
   rotax_training_blocks: 'Informações do treinamento',
   rotax_training_contacts: 'Contatos do treinamento',
   rotax_training_sessions: 'Treinamentos',

@@ -2584,6 +2584,190 @@ td {
   animation: spin 1s linear infinite;
 }
 
+.stock-transfer-panel {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(31, 48, 65, 0.08);
+  display: grid;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: 1440px;
+  padding: 18px;
+}
+
+.stock-transfer-panel .section-title {
+  align-items: flex-start;
+}
+
+.stock-transfer-panel .section-title h1,
+.stock-transfer-panel .section-title p {
+  margin: 0;
+}
+
+.stock-transfer-panel .section-title p {
+  color: #657383;
+  font-size: 0.82rem;
+  margin-top: 3px;
+}
+
+.stock-upload-area {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stock-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 5px;
+}
+
+.stock-tab {
+  align-items: center;
+  background: #f7f9fb;
+  border: 1px solid #ccd6df;
+  border-radius: 8px;
+  color: #354353;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 900;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 11px;
+}
+
+.stock-tab strong {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d7e0e8;
+  border-radius: 50%;
+  display: flex;
+  font-size: 0.7rem;
+  height: 24px;
+  justify-content: center;
+  min-width: 24px;
+}
+
+.stock-tab:hover,
+.stock-tab.active {
+  background: #e8f5f3;
+  border-color: #0f766e;
+  color: #0f5f59;
+}
+
+.stock-tab.saved {
+  background: #eef5ff;
+  border-color: #a9c8ef;
+  color: #24558a;
+}
+
+.stock-tab.saved.active {
+  background: #dcecff;
+  border-color: #397cc2;
+}
+
+.stock-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.stock-search-box {
+  max-width: 480px;
+  width: 100%;
+}
+
+.stock-selection-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.stock-table {
+  min-width: 720px;
+}
+
+.stock-table th,
+.stock-table td {
+  vertical-align: middle;
+}
+
+.stock-table th:nth-last-child(1),
+.stock-table td:nth-last-child(1) {
+  text-align: right;
+}
+
+.stock-checkbox-column {
+  max-width: 90px;
+  min-width: 90px;
+  text-align: center !important;
+  width: 90px;
+}
+
+.stock-checkbox-column input {
+  height: 18px;
+  width: 18px;
+}
+
+.stock-quantity {
+  display: inline-flex;
+  font-size: 0.9rem;
+  font-weight: 900;
+  justify-content: flex-end;
+  min-width: 48px;
+  padding: 6px 9px;
+}
+
+.stock-quantity.warning {
+  background: #fff1df;
+  border: 1px solid #fdba74;
+  border-radius: 7px;
+  color: #c2410c;
+}
+
+.stock-quantity.critical {
+  background: #fff0f0;
+  border: 1px solid #f6a6ae;
+  border-radius: 7px;
+  color: #be123c;
+}
+
+.stock-transfer-quantity-input {
+  margin-left: auto;
+  max-width: 150px;
+  min-height: 40px;
+  text-align: right;
+}
+
+.stock-order-dialog {
+  max-width: 680px;
+}
+
+.stock-order-dialog .modal-header p {
+  color: #657383;
+  font-size: 0.82rem;
+  margin: 4px 0 0;
+}
+
+.stock-order-output {
+  background: #f7f9fb;
+  border: 1px solid #cbd5df;
+  border-radius: 8px;
+  font-family: Consolas, monospace;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  min-height: 260px;
+  resize: vertical;
+  white-space: pre;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -3786,5 +3970,22 @@ button:disabled {
 
   .rotax-parts-upload-area {
     align-items: stretch;
+  }
+
+  .stock-upload-area {
+    align-items: stretch;
+  }
+
+  .stock-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .stock-selection-actions {
+    justify-content: stretch;
+  }
+
+  .stock-selection-actions button {
+    flex: 1;
   }
 }

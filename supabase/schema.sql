@@ -184,6 +184,33 @@ create table if not exists public.rotax_parts_catalog (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.stock_items (
+  product_key text primary key,
+  product text not null,
+  quantity numeric not null default 0,
+  group_code text,
+  batch_id uuid not null,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.stock_catalog (
+  id text primary key,
+  batch_id uuid not null,
+  file_name text,
+  item_count integer not null default 0,
+  updated_by text,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.stock_transfer_lists (
+  id uuid primary key,
+  name text not null,
+  items jsonb not null default '[]'::jsonb,
+  created_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.return_entries (
   id uuid primary key,
   invoice_number text not null,
@@ -347,6 +374,8 @@ begin
     'billing_entries',
     'billing_uploads',
     'rotax_parts_catalog',
+    'stock_catalog',
+    'stock_transfer_lists',
     'return_entries',
     'warranty_entries',
     'contract_templates',
@@ -440,6 +469,9 @@ alter table public.billing_entries replica identity full;
 alter table public.billing_uploads replica identity full;
 alter table public.rotax_parts replica identity full;
 alter table public.rotax_parts_catalog replica identity full;
+alter table public.stock_items replica identity full;
+alter table public.stock_catalog replica identity full;
+alter table public.stock_transfer_lists replica identity full;
 alter table public.return_entries replica identity full;
 alter table public.warranty_entries replica identity full;
 alter table public.contract_templates replica identity full;
@@ -460,6 +492,9 @@ alter table public.billing_entries enable row level security;
 alter table public.billing_uploads enable row level security;
 alter table public.rotax_parts enable row level security;
 alter table public.rotax_parts_catalog enable row level security;
+alter table public.stock_items enable row level security;
+alter table public.stock_catalog enable row level security;
+alter table public.stock_transfer_lists enable row level security;
 alter table public.return_entries enable row level security;
 alter table public.warranty_entries enable row level security;
 alter table public.contract_templates enable row level security;
@@ -515,6 +550,17 @@ drop policy if exists "Authenticated users can delete Rotax parts" on public.rot
 drop policy if exists "Authenticated users can read Rotax parts catalog" on public.rotax_parts_catalog;
 drop policy if exists "Authenticated users can insert Rotax parts catalog" on public.rotax_parts_catalog;
 drop policy if exists "Authenticated users can update Rotax parts catalog" on public.rotax_parts_catalog;
+drop policy if exists "Authenticated users can read stock items" on public.stock_items;
+drop policy if exists "Authenticated users can insert stock items" on public.stock_items;
+drop policy if exists "Authenticated users can update stock items" on public.stock_items;
+drop policy if exists "Authenticated users can delete stock items" on public.stock_items;
+drop policy if exists "Authenticated users can read stock catalog" on public.stock_catalog;
+drop policy if exists "Authenticated users can insert stock catalog" on public.stock_catalog;
+drop policy if exists "Authenticated users can update stock catalog" on public.stock_catalog;
+drop policy if exists "Authenticated users can read stock transfer lists" on public.stock_transfer_lists;
+drop policy if exists "Authenticated users can insert stock transfer lists" on public.stock_transfer_lists;
+drop policy if exists "Authenticated users can update stock transfer lists" on public.stock_transfer_lists;
+drop policy if exists "Authenticated users can delete stock transfer lists" on public.stock_transfer_lists;
 drop policy if exists "Authenticated users can read return entries" on public.return_entries;
 drop policy if exists "Authenticated users can insert return entries" on public.return_entries;
 drop policy if exists "Authenticated users can update return entries" on public.return_entries;
@@ -842,6 +888,75 @@ create policy "Authenticated users can update Rotax parts catalog"
   using (true)
   with check (true);
 
+create policy "Authenticated users can read stock items"
+  on public.stock_items
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert stock items"
+  on public.stock_items
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update stock items"
+  on public.stock_items
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete stock items"
+  on public.stock_items
+  for delete
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can read stock catalog"
+  on public.stock_catalog
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert stock catalog"
+  on public.stock_catalog
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update stock catalog"
+  on public.stock_catalog
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can read stock transfer lists"
+  on public.stock_transfer_lists
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert stock transfer lists"
+  on public.stock_transfer_lists
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update stock transfer lists"
+  on public.stock_transfer_lists
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete stock transfer lists"
+  on public.stock_transfer_lists
+  for delete
+  to authenticated
+  using (true);
+
 create policy "Authenticated users can read return entries"
   on public.return_entries
   for select
@@ -1115,6 +1230,26 @@ begin
       and tablename = 'rotax_parts_catalog'
   ) then
     alter publication supabase_realtime add table public.rotax_parts_catalog;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'stock_catalog'
+  ) then
+    alter publication supabase_realtime add table public.stock_catalog;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'stock_transfer_lists'
+  ) then
+    alter publication supabase_realtime add table public.stock_transfer_lists;
   end if;
 
   if not exists (
