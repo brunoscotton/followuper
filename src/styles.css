@@ -2442,7 +2442,38 @@ td {
   align-items: center;
   flex-direction: row;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: space-between;
+}
+
+.dashboard-period-control {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  min-width: 0;
+}
+
+.dashboard-period-control > span {
+  color: #657383;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.dashboard-period-control select {
+  background: #f7f9fb;
+  border: 1px solid #bdc9d5;
+  border-radius: 8px;
+  color: #17212b;
+  font-size: 0.84rem;
+  font-weight: 900;
+  min-height: 34px;
+  min-width: 230px;
+  padding: 5px 30px 5px 9px;
+}
+
+.dashboard-period-control strong {
+  color: #0f766e;
+  font-size: 0.88rem;
 }
 
 .billing-last-upload {
@@ -4008,5 +4039,16 @@ button:disabled {
 
   .stock-selection-actions button {
     flex: 1;
+  }
+
+  .dashboard-header,
+  .dashboard-period-control {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dashboard-period-control select {
+    min-width: 0;
+    width: 100%;
   }
 }

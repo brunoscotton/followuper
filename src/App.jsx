@@ -173,6 +173,13 @@ import {
   updateStockTransferList,
   upsertStockTransferCandidate,
 } from './services/stockTransfersRepository';
+import {
+  loadDashboardControl,
+  loadDashboardSnapshot,
+  saveDashboardSnapshot,
+  subscribeToDashboardSetting,
+  updateDashboardPeriod,
+} from './services/dashboardRepository';
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 const billingSellers = ['Bruno', 'Elton', 'Stephanie'];
@@ -648,6 +655,44 @@ function getQuoteSortDate(quote) {
   const dateValue = quote.closeDetails?.closedAt || (quote.quoteDate ? `${quote.quoteDate}T12:00:00` : quote.createdAt);
   const timestamp = new Date(dateValue).getTime();
   return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function getDashboardMonthKey(dateValue = new Date()) {
+  const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getQuoteDashboardMonthKey(quote) {
+  if (isClosed(quote)) {
+    return getDashboardMonthKey(quote.closeDetails?.closedAt || quote.statusUpdatedAt || quote.createdAt);
+  }
+  if (quote.quoteDate && /^\d{4}-\d{2}/.test(quote.quoteDate)) return quote.quoteDate.slice(0, 7);
+  return getDashboardMonthKey(quote.createdAt);
+}
+
+function serializeDashboardQuotes(quotes) {
+  return quotes.map((quote) => ({
+    id: quote.id,
+    quoteNumber: quote.quoteNumber,
+    clientName: quote.clientName,
+    quoteValue: quote.quoteValue,
+    seller: quote.seller,
+    status: quote.status,
+    isInterest: quote.isInterest,
+    archivedAt: quote.archivedAt,
+    quoteDate: quote.quoteDate,
+    createdAt: quote.createdAt,
+    statusUpdatedAt: quote.statusUpdatedAt,
+    closeDetails: quote.closeDetails,
+  }));
+}
+
+function formatDashboardMonthLabel(periodKey) {
+  const match = String(periodKey || '').match(/^(\d{4})-(\d{2})$/);
+  if (!match) return periodKey;
+  const [, year, month] = match;
+  return `${monthNames[Number(month) - 1]} ${year}`;
 }
 
 function getLossReasonLabel(value) {
@@ -1363,6 +1408,10 @@ export function App() {
   const [stockItems, setStockItems] = useState([]);
   const [stockTransferLists, setStockTransferLists] = useState([]);
   const [stockTransferCandidates, setStockTransferCandidates] = useState([]);
+  const [dashboardPeriod, setDashboardPeriod] = useState('current');
+  const [dashboardSnapshotPeriods, setDashboardSnapshotPeriods] = useState([]);
+  const [dashboardSnapshotQuotes, setDashboardSnapshotQuotes] = useState([]);
+  const [dashboardControlLoaded, setDashboardControlLoaded] = useState(false);
   const [activeRotaxRevenueYear, setActiveRotaxRevenueYear] = useState(2026);
   const [customers, setCustomers] = useState([]);
   const [billingEntries, setBillingEntries] = useState([]);
@@ -1462,6 +1511,7 @@ export function App() {
   currentPresenceStateRef.current = { currentView: activeView, layoutMode };
 
   const isMasterUser = userIsMaster(user);
+  const currentDashboardMonthKey = getDashboardMonthKey(now);
 
   useEffect(() => {
     if (!user) {
@@ -1733,6 +1783,93 @@ export function App() {
       unsubscribeRealtime();
     };
   }, [authChecked, user]);
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribe = () => {};
+    if (!authChecked || (isSupabaseConfigured && !user)) {
+      setDashboardPeriod('current');
+      setDashboardSnapshotPeriods([]);
+      setDashboardSnapshotQuotes([]);
+      setDashboardControlLoaded(false);
+      return () => {};
+    }
+
+    loadDashboardControl()
+      .then(({ setting, snapshots, mode }) => {
+        if (!active) return;
+        setDashboardPeriod(setting.periodKey || 'current');
+        setDashboardSnapshotPeriods(snapshots);
+        setDashboardControlLoaded(true);
+        if (mode === 'supabase') {
+          unsubscribe = subscribeToDashboardSetting((nextSetting) => {
+            if (active) setDashboardPeriod(nextSetting.periodKey || 'current');
+          });
+        }
+      })
+      .catch((error) => {
+        if (!active) return;
+        setDashboardControlLoaded(true);
+        setAppError(error.message || 'Não foi possível carregar a configuração do dashboard.');
+      });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [authChecked, user]);
+
+  useEffect(() => {
+    let active = true;
+    if (!dashboardControlLoaded || dashboardPeriod === 'current' || dashboardPeriod === 'general') {
+      setDashboardSnapshotQuotes([]);
+      return () => {
+        active = false;
+      };
+    }
+
+    loadDashboardSnapshot(dashboardPeriod)
+      .then((snapshot) => {
+        if (active) setDashboardSnapshotQuotes(snapshot?.quotes || []);
+      })
+      .catch((error) => {
+        if (active) setAppError(error.message || 'Não foi possível carregar o histórico do dashboard.');
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [dashboardControlLoaded, dashboardPeriod]);
+
+  useEffect(() => {
+    if (!dashboardControlLoaded || isLoading || !user) return () => {};
+
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const periodQuotes = serializeDashboardQuotes(
+          quotes.filter((quote) => getQuoteDashboardMonthKey(quote) === currentDashboardMonthKey),
+        );
+        const savedSnapshot = await saveDashboardSnapshot(
+          currentDashboardMonthKey,
+          periodQuotes,
+          user.email || '',
+        );
+        if (!active) return;
+        setDashboardSnapshotPeriods((current) => [
+          { periodKey: savedSnapshot.periodKey, capturedAt: savedSnapshot.capturedAt },
+          ...current.filter((snapshot) => snapshot.periodKey !== savedSnapshot.periodKey),
+        ].sort((a, b) => b.periodKey.localeCompare(a.periodKey)));
+      } catch {
+        // The dashboard remains usable even if a background snapshot retry is needed.
+      }
+    }, 500);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [currentDashboardMonthKey, dashboardControlLoaded, isLoading, quotes, user]);
 
   useEffect(() => {
     let active = true;
@@ -2149,6 +2286,15 @@ export function App() {
       ),
     [activeWarrantyTab, warrantyEntries],
   );
+
+  const dashboardDisplayedQuotes = useMemo(() => {
+    if (dashboardPeriod === 'general') return quotes;
+    if (dashboardPeriod === 'current') {
+      const currentMonthKey = getDashboardMonthKey(now);
+      return quotes.filter((quote) => getQuoteDashboardMonthKey(quote) === currentMonthKey);
+    }
+    return dashboardSnapshotQuotes;
+  }, [dashboardPeriod, dashboardSnapshotQuotes, now, quotes]);
 
   const rotaxMetrics = useMemo(
     () => ({
@@ -4792,6 +4938,20 @@ export function App() {
     setLayoutMenuOpen(false);
   }
 
+  async function changeDashboardView(periodKey) {
+    if (!isMasterUser) return;
+    const previousPeriod = dashboardPeriod;
+    setDashboardPeriod(periodKey);
+    try {
+      const savedSetting = await updateDashboardPeriod(periodKey, user?.email || '');
+      setDashboardPeriod(savedSetting.periodKey);
+      setAppError('');
+    } catch (error) {
+      setDashboardPeriod(previousPeriod);
+      setAppError(error.message || 'Não foi possível alterar a visualização do dashboard.');
+    }
+  }
+
   function navigateFromSideMenu(view) {
     setActiveView(view);
     if (view !== 'quotes') setSideQuoteFormOpen(false);
@@ -5079,7 +5239,15 @@ export function App() {
         )}
         <div className={useSideMenu ? 'app-content-area' : undefined}>
       {layoutMode === 'dashboard' ? (
-        <SalesDashboard quotes={quotes} rotaxRevenueEntries={rotaxRevenueEntries} saleCelebration={saleCelebration} />
+        <SalesDashboard
+          isMasterUser={isMasterUser}
+          onChangePeriod={changeDashboardView}
+          periodKey={dashboardPeriod}
+          quotes={dashboardDisplayedQuotes}
+          rotaxRevenueEntries={rotaxRevenueEntries}
+          saleCelebration={dashboardPeriod === 'current' || dashboardPeriod === 'general' ? saleCelebration : null}
+          snapshotPeriods={dashboardSnapshotPeriods}
+        />
       ) : layoutMode === 'vovo' ? (
         <GrandpaWorkspace
           errors={grandpaErrors}
@@ -5504,10 +5672,34 @@ function normalizeInfoLink(url) {
   return /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
 }
 
-function SalesDashboard({ quotes, rotaxRevenueEntries = [], saleCelebration }) {
+function SalesDashboard({
+  isMasterUser,
+  onChangePeriod,
+  periodKey,
+  quotes,
+  rotaxRevenueEntries = [],
+  saleCelebration,
+  snapshotPeriods = [],
+}) {
   const [relevantPage, setRelevantPage] = useState(0);
   const [dollarQuote, setDollarQuote] = useState({ error: '', updatedAt: '', value: null });
-  const dashboardDate = new Date();
+  const periodMatch = String(periodKey || '').match(/^(\d{4})-(\d{2})$/);
+  const dashboardDate = periodMatch
+    ? new Date(Number(periodMatch[1]), Number(periodMatch[2]) - 1, 1)
+    : new Date();
+  const currentMonthKey = getDashboardMonthKey(new Date());
+  const periodLabel =
+    periodKey === 'general'
+      ? 'Visão geral'
+      : periodKey === 'current'
+        ? `Mês vigente · ${formatDashboardMonthLabel(currentMonthKey)}`
+        : formatDashboardMonthLabel(periodKey);
+  const historicalPeriods = snapshotPeriods
+    .map((snapshot) => snapshot.periodKey)
+    .filter((snapshotPeriod, index, periods) =>
+      snapshotPeriod !== currentMonthKey && periods.indexOf(snapshotPeriod) === index,
+    )
+    .sort((a, b) => b.localeCompare(a));
   const currentRotaxRevenue = rotaxRevenueEntries.find(
     (entry) =>
       Number(entry.year) === dashboardDate.getFullYear() &&
@@ -5613,6 +5805,22 @@ function SalesDashboard({ quotes, rotaxRevenueEntries = [], saleCelebration }) {
       {saleCelebration && <FireworksCelebration sale={saleCelebration} />}
 
       <div className="dashboard-header">
+        <div className="dashboard-period-control">
+          <span>Período exibido</span>
+          {isMasterUser ? (
+            <select value={periodKey} onChange={(event) => onChangePeriod(event.target.value)}>
+              <option value="current">Mês vigente · {formatDashboardMonthLabel(currentMonthKey)}</option>
+              {historicalPeriods.map((snapshotPeriod) => (
+                <option key={snapshotPeriod} value={snapshotPeriod}>
+                  {formatDashboardMonthLabel(snapshotPeriod)}
+                </option>
+              ))}
+              <option value="general">Geral · Todo o histórico</option>
+            </select>
+          ) : (
+            <strong>{periodLabel}</strong>
+          )}
+        </div>
         <div className="dashboard-clock">{new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date())}</div>
       </div>
 
@@ -9978,6 +10186,7 @@ const activityEntityLabels = {
   billing_uploads: 'Uploads de cobrança',
   contract_templates: 'Contratos',
   customers: 'Clientes',
+  dashboard_settings: 'Configuração do dashboard',
   info_blocks: 'Painel de informações',
   quotes: 'Cotações',
   return_entries: 'Devoluções',

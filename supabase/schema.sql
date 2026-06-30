@@ -222,6 +222,20 @@ create table if not exists public.stock_transfer_candidates (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.dashboard_settings (
+  id text primary key,
+  period_key text not null default 'current',
+  updated_by text,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.dashboard_monthly_snapshots (
+  period_key text primary key,
+  quotes_data jsonb not null default '[]'::jsonb,
+  captured_by text,
+  captured_at timestamptz not null default now()
+);
+
 create table if not exists public.return_entries (
   id uuid primary key,
   invoice_number text not null,
@@ -388,6 +402,7 @@ begin
     'stock_catalog',
     'stock_transfer_lists',
     'stock_transfer_candidates',
+    'dashboard_settings',
     'return_entries',
     'warranty_entries',
     'contract_templates',
@@ -486,6 +501,8 @@ alter table public.stock_items replica identity full;
 alter table public.stock_catalog replica identity full;
 alter table public.stock_transfer_lists replica identity full;
 alter table public.stock_transfer_candidates replica identity full;
+alter table public.dashboard_settings replica identity full;
+alter table public.dashboard_monthly_snapshots replica identity full;
 alter table public.return_entries replica identity full;
 alter table public.warranty_entries replica identity full;
 alter table public.contract_templates replica identity full;
@@ -510,6 +527,8 @@ alter table public.stock_items enable row level security;
 alter table public.stock_catalog enable row level security;
 alter table public.stock_transfer_lists enable row level security;
 alter table public.stock_transfer_candidates enable row level security;
+alter table public.dashboard_settings enable row level security;
+alter table public.dashboard_monthly_snapshots enable row level security;
 alter table public.return_entries enable row level security;
 alter table public.warranty_entries enable row level security;
 alter table public.contract_templates enable row level security;
@@ -580,6 +599,12 @@ drop policy if exists "Authenticated users can read stock transfer candidates" o
 drop policy if exists "Authenticated users can insert stock transfer candidates" on public.stock_transfer_candidates;
 drop policy if exists "Authenticated users can update stock transfer candidates" on public.stock_transfer_candidates;
 drop policy if exists "Authenticated users can delete stock transfer candidates" on public.stock_transfer_candidates;
+drop policy if exists "Authenticated users can read dashboard settings" on public.dashboard_settings;
+drop policy if exists "Master user can insert dashboard settings" on public.dashboard_settings;
+drop policy if exists "Master user can update dashboard settings" on public.dashboard_settings;
+drop policy if exists "Authenticated users can read dashboard snapshots" on public.dashboard_monthly_snapshots;
+drop policy if exists "Authenticated users can insert dashboard snapshots" on public.dashboard_monthly_snapshots;
+drop policy if exists "Authenticated users can update dashboard snapshots" on public.dashboard_monthly_snapshots;
 drop policy if exists "Authenticated users can read return entries" on public.return_entries;
 drop policy if exists "Authenticated users can insert return entries" on public.return_entries;
 drop policy if exists "Authenticated users can update return entries" on public.return_entries;
@@ -1001,6 +1026,44 @@ create policy "Authenticated users can delete stock transfer candidates"
   to authenticated
   using (true);
 
+create policy "Authenticated users can read dashboard settings"
+  on public.dashboard_settings
+  for select
+  to authenticated
+  using (true);
+
+create policy "Master user can insert dashboard settings"
+  on public.dashboard_settings
+  for insert
+  to authenticated
+  with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'bruno.scotton@cdsav.com.br');
+
+create policy "Master user can update dashboard settings"
+  on public.dashboard_settings
+  for update
+  to authenticated
+  using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'bruno.scotton@cdsav.com.br')
+  with check (lower(coalesce(auth.jwt() ->> 'email', '')) = 'bruno.scotton@cdsav.com.br');
+
+create policy "Authenticated users can read dashboard snapshots"
+  on public.dashboard_monthly_snapshots
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert dashboard snapshots"
+  on public.dashboard_monthly_snapshots
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update dashboard snapshots"
+  on public.dashboard_monthly_snapshots
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
 create policy "Authenticated users can read return entries"
   on public.return_entries
   for select
@@ -1304,6 +1367,16 @@ begin
       and tablename = 'stock_transfer_candidates'
   ) then
     alter publication supabase_realtime add table public.stock_transfer_candidates;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'dashboard_settings'
+  ) then
+    alter publication supabase_realtime add table public.dashboard_settings;
   end if;
 
   if not exists (
