@@ -2744,7 +2744,7 @@ td {
 }
 
 .stock-table {
-  min-width: 720px;
+  min-width: 920px;
 }
 
 .stock-table th,
@@ -2755,6 +2755,11 @@ td {
 .stock-table th:nth-last-child(1),
 .stock-table td:nth-last-child(1) {
   text-align: right;
+}
+
+.stock-description-cell {
+  min-width: 280px;
+  white-space: normal;
 }
 
 .stock-checkbox-column {

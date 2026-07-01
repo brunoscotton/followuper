@@ -187,10 +187,19 @@ create table if not exists public.rotax_parts_catalog (
 create table if not exists public.stock_items (
   product_key text primary key,
   product text not null,
+  description text,
   quantity numeric not null default 0,
   group_code text,
   is_manual boolean not null default false,
   batch_id uuid not null,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.stock_product_descriptions (
+  product_key text primary key,
+  product text not null,
+  description text not null,
+  group_code text,
   updated_at timestamptz not null default now()
 );
 
@@ -470,6 +479,7 @@ alter table public.warranty_entries add column if not exists attachment_file_nam
 alter table public.warranty_entries add column if not exists attachment_file_data text;
 alter table public.warranty_entries add column if not exists attachment_mime_type text;
 alter table public.stock_items add column if not exists is_manual boolean not null default false;
+alter table public.stock_items add column if not exists description text;
 
 alter table public.quotes drop constraint if exists quotes_follow_up_amount_check;
 alter table public.quotes add constraint quotes_follow_up_amount_check check (follow_up_amount > 0);
@@ -498,6 +508,7 @@ alter table public.billing_uploads replica identity full;
 alter table public.rotax_parts replica identity full;
 alter table public.rotax_parts_catalog replica identity full;
 alter table public.stock_items replica identity full;
+alter table public.stock_product_descriptions replica identity full;
 alter table public.stock_catalog replica identity full;
 alter table public.stock_transfer_lists replica identity full;
 alter table public.stock_transfer_candidates replica identity full;
@@ -524,6 +535,7 @@ alter table public.billing_uploads enable row level security;
 alter table public.rotax_parts enable row level security;
 alter table public.rotax_parts_catalog enable row level security;
 alter table public.stock_items enable row level security;
+alter table public.stock_product_descriptions enable row level security;
 alter table public.stock_catalog enable row level security;
 alter table public.stock_transfer_lists enable row level security;
 alter table public.stock_transfer_candidates enable row level security;
@@ -588,6 +600,9 @@ drop policy if exists "Authenticated users can read stock items" on public.stock
 drop policy if exists "Authenticated users can insert stock items" on public.stock_items;
 drop policy if exists "Authenticated users can update stock items" on public.stock_items;
 drop policy if exists "Authenticated users can delete stock items" on public.stock_items;
+drop policy if exists "Authenticated users can read stock descriptions" on public.stock_product_descriptions;
+drop policy if exists "Authenticated users can insert stock descriptions" on public.stock_product_descriptions;
+drop policy if exists "Authenticated users can update stock descriptions" on public.stock_product_descriptions;
 drop policy if exists "Authenticated users can read stock catalog" on public.stock_catalog;
 drop policy if exists "Authenticated users can insert stock catalog" on public.stock_catalog;
 drop policy if exists "Authenticated users can update stock catalog" on public.stock_catalog;
@@ -956,6 +971,25 @@ create policy "Authenticated users can delete stock items"
   for delete
   to authenticated
   using (true);
+
+create policy "Authenticated users can read stock descriptions"
+  on public.stock_product_descriptions
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert stock descriptions"
+  on public.stock_product_descriptions
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update stock descriptions"
+  on public.stock_product_descriptions
+  for update
+  to authenticated
+  using (true)
+  with check (true);
 
 create policy "Authenticated users can read stock catalog"
   on public.stock_catalog

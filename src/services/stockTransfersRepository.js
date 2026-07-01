@@ -30,10 +30,52 @@ function toStockItem(row) {
   return {
     productKey: row.product_key,
     product: row.product,
+    description: row.description || '',
     quantity: Number(row.quantity || 0),
     groupCode: row.group_code || '',
     isManual: row.is_manual === true,
   };
+}
+
+function mergeStockDescriptions(items, descriptions) {
+  const descriptionsByKey = new Map(
+    descriptions.map((description) => [description.product_key, description.description || '']),
+  );
+  return items.map((item) => ({
+    ...item,
+    description: descriptionsByKey.get(item.productKey) || item.description || '',
+  }));
+}
+
+async function loadAllStockDescriptions() {
+  const descriptions = [];
+  const pageSize = 1000;
+
+  for (let start = 0; ; start += pageSize) {
+    const { data, error } = await supabase
+      .from('stock_product_descriptions')
+      .select('product_key,description')
+      .range(start, start + pageSize - 1);
+    if (error) return { data: [], error };
+    descriptions.push(...data);
+    if (data.length < pageSize) return { data: descriptions, error: null };
+  }
+}
+
+async function loadAllStockItems() {
+  const items = [];
+  const pageSize = 1000;
+
+  for (let start = 0; ; start += pageSize) {
+    const { data, error } = await supabase
+      .from('stock_items')
+      .select('*')
+      .order('product', { ascending: true })
+      .range(start, start + pageSize - 1);
+    if (error) return { data: [], error };
+    items.push(...data);
+    if (data.length < pageSize) return { data: items, error: null };
+  }
 }
 
 function toCatalog(row) {
@@ -82,14 +124,21 @@ export async function loadStockTransferData() {
     };
   }
 
-  const [itemsResult, catalogResult, listsResult, candidatesResult] = await Promise.all([
-    supabase.from('stock_items').select('*').order('product', { ascending: true }),
+  const [itemsResult, descriptionsResult, catalogResult, listsResult, candidatesResult] = await Promise.all([
+    loadAllStockItems(),
+    loadAllStockDescriptions(),
     supabase.from('stock_catalog').select('*').eq('id', 'current').maybeSingle(),
     supabase.from('stock_transfer_lists').select('*').order('created_at', { ascending: false }),
     supabase.from('stock_transfer_candidates').select('*').order('created_at', { ascending: true }),
   ]);
 
-  const firstError = [itemsResult.error, catalogResult.error, listsResult.error, candidatesResult.error].find(Boolean);
+  const firstError = [
+    itemsResult.error,
+    descriptionsResult.error,
+    catalogResult.error,
+    listsResult.error,
+    candidatesResult.error,
+  ].find(Boolean);
   if (firstError) {
     if (isMissingTableError(firstError)) {
       return {
@@ -103,7 +152,7 @@ export async function loadStockTransferData() {
     throw firstError;
   }
 
-  const items = itemsResult.data.map(toStockItem);
+  const items = mergeStockDescriptions(itemsResult.data.map(toStockItem), descriptionsResult.data);
   const catalog = toCatalog(catalogResult.data);
   const lists = listsResult.data.map(toTransferList);
   const candidates = candidatesResult.data.map(toCandidate);
@@ -116,9 +165,13 @@ export async function loadStockTransferData() {
 
 export async function loadStockItems() {
   if (!supabase) return loadLocal(ITEMS_STORAGE_KEY, []);
-  const { data, error } = await supabase.from('stock_items').select('*').order('product', { ascending: true });
-  if (error) throw error;
-  const items = data.map(toStockItem);
+  const [itemsResult, descriptionsResult] = await Promise.all([
+    loadAllStockItems(),
+    loadAllStockDescriptions(),
+  ]);
+  if (itemsResult.error) throw itemsResult.error;
+  if (descriptionsResult.error) throw descriptionsResult.error;
+  const items = mergeStockDescriptions(itemsResult.data.map(toStockItem), descriptionsResult.data);
   saveLocal(ITEMS_STORAGE_KEY, items);
   return items;
 }
@@ -150,6 +203,7 @@ export async function replaceStockItems(items, metadata) {
     const rows = items.slice(index, index + 500).map((item) => ({
       product_key: item.productKey,
       product: item.product,
+      description: item.description || '',
       quantity: Number(item.quantity || 0),
       group_code: item.groupCode || null,
       is_manual: false,
@@ -252,6 +306,7 @@ export async function ensureManualStockItem(candidate) {
     const item = {
       productKey: candidate.productKey,
       product: candidate.product,
+      description: '',
       quantity: 0,
       groupCode: candidate.groupCode,
       isManual: true,
@@ -361,6 +416,53 @@ export async function clearStockTransferCandidates() {
   }
   const { error } = await supabase.from('stock_transfer_candidates').delete().neq('product_key', '');
   if (error) throw error;
+}
+
+export async function upsertStockProductDescriptions(descriptions, metadata = {}) {
+  if (!supabase) {
+    const items = loadLocal(ITEMS_STORAGE_KEY, []);
+    const descriptionsByKey = new Map(descriptions.map((item) => [item.productKey, item.description]));
+    const nextItems = items.map((item) => ({
+      ...item,
+      description: descriptionsByKey.get(item.productKey) || item.description || '',
+    }));
+    saveLocal(ITEMS_STORAGE_KEY, nextItems);
+    return descriptions;
+  }
+
+  const updatedAt = new Date().toISOString();
+  for (let index = 0; index < descriptions.length; index += 500) {
+    const rows = descriptions.slice(index, index + 500).map((item) => ({
+      product_key: item.productKey,
+      product: item.product,
+      description: item.description || '',
+      group_code: item.groupCode || null,
+      updated_at: updatedAt,
+    }));
+    const { error } = await supabase.from('stock_product_descriptions').upsert(rows, { onConflict: 'product_key' });
+    if (error) throw error;
+  }
+
+  const [{ data: currentCatalog, error: catalogLookupError }, { count, error: countError }] = await Promise.all([
+    supabase.from('stock_catalog').select('*').eq('id', 'current').maybeSingle(),
+    supabase.from('stock_items').select('*', { count: 'exact', head: true }),
+  ]);
+  if (catalogLookupError) throw catalogLookupError;
+  if (countError) throw countError;
+
+  const { error: catalogError } = await supabase.from('stock_catalog').upsert(
+    {
+      id: 'current',
+      batch_id: currentCatalog?.batch_id || crypto.randomUUID(),
+      file_name: currentCatalog?.file_name || '',
+      item_count: Number(count || 0),
+      updated_by: metadata.updatedBy || currentCatalog?.updated_by || '',
+      updated_at: updatedAt,
+    },
+    { onConflict: 'id' },
+  );
+  if (catalogError) throw catalogError;
+  return descriptions;
 }
 
 export function subscribeToStockTransferChanges(onChange) {

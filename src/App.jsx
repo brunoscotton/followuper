@@ -172,6 +172,7 @@ import {
   subscribeToStockTransferChanges,
   updateStockTransferList,
   upsertStockTransferCandidate,
+  upsertStockProductDescriptions,
 } from './services/stockTransfersRepository';
 import {
   loadDashboardControl,
@@ -1204,6 +1205,83 @@ async function parseStockUploadFile(file) {
   const items = [...itemsByProduct.values()].sort((a, b) => a.product.localeCompare(b.product, 'pt-BR'));
   if (items.length === 0) throw new Error('Nenhum produto válido foi encontrado na planilha.');
   return items;
+}
+
+async function parseStockTransferUploadFile(file) {
+  const rows = await readSheet(file);
+  const stockHeaderIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('produto') && headers.includes('saldoatual') && headers.includes('grupo');
+  });
+
+  if (stockHeaderIndex >= 0) {
+    const headers = rows[stockHeaderIndex].map(normalizeUploadHeader);
+    const columns = {
+      product: headers.indexOf('produto'),
+      quantity: headers.indexOf('saldoatual'),
+      groupCode: headers.indexOf('grupo'),
+    };
+    const itemsByProduct = new Map();
+
+    rows.slice(stockHeaderIndex + 1).forEach((row) => {
+      const product = normalizeUploadValue(row[columns.product]);
+      const productKey = normalizeStockProduct(product);
+      if (!productKey) return;
+
+      const current = itemsByProduct.get(productKey) || {
+        productKey,
+        product,
+        quantity: 0,
+        groupCode: normalizeUploadValue(row[columns.groupCode]).replace(/\.0$/, ''),
+      };
+      current.quantity += parseStockQuantity(row[columns.quantity]);
+      current.groupCode =
+        current.groupCode || normalizeUploadValue(row[columns.groupCode]).replace(/\.0$/, '');
+      itemsByProduct.set(productKey, current);
+    });
+
+    const items = [...itemsByProduct.values()].sort((a, b) =>
+      a.product.localeCompare(b.product, 'pt-BR'),
+    );
+    if (items.length === 0) throw new Error('Nenhum produto valido foi encontrado na planilha.');
+    return { type: 'stock', items };
+  }
+
+  const descriptionHeaderIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('partnumber') && headers.includes('descricao') && headers.includes('grupo');
+  });
+  if (descriptionHeaderIndex < 0) {
+    throw new Error('Nao encontrei os cabecalhos de estoque ou de descricao generica nesta planilha.');
+  }
+
+  const headers = rows[descriptionHeaderIndex].map(normalizeUploadHeader);
+  const columns = {
+    product: headers.indexOf('partnumber'),
+    description: headers.indexOf('descricao'),
+    groupCode: headers.indexOf('grupo'),
+  };
+  const descriptionsByProduct = new Map();
+
+  rows.slice(descriptionHeaderIndex + 1).forEach((row) => {
+    const product = normalizeUploadValue(row[columns.product]);
+    const productKey = normalizeStockProduct(product);
+    const description = normalizeUploadValue(row[columns.description]);
+    if (!productKey || !description) return;
+
+    descriptionsByProduct.set(productKey, {
+      productKey,
+      product,
+      description,
+      groupCode: normalizeUploadValue(row[columns.groupCode]).replace(/\.0$/, ''),
+    });
+  });
+
+  const descriptions = [...descriptionsByProduct.values()].sort((a, b) =>
+    a.product.localeCompare(b.product, 'pt-BR'),
+  );
+  if (descriptions.length === 0) throw new Error('Nenhuma descricao valida foi encontrada na planilha.');
+  return { type: 'descriptions', descriptions };
 }
 
 function addDays(dateValue, days) {
@@ -3469,15 +3547,23 @@ export function App() {
     if (!file) return;
     setIsUploadingStock(true);
     try {
-      const items = await parseStockUploadFile(file);
-      const catalog = await replaceStockItems(items, {
-        fileName: file.name,
-        updatedBy: user?.email || '',
-      });
-      setStockItems(items);
-      setStockCatalog(catalog);
+      const upload = await parseStockTransferUploadFile(file);
+      if (upload.type === 'descriptions') {
+        await upsertStockProductDescriptions(upload.descriptions, {
+          updatedBy: user?.email || '',
+        });
+        setStockItems(await loadStockItems());
+        setAppError(`Descrições atualizadas: ${upload.descriptions.length} PN(s) importado(s).`);
+      } else {
+        const catalog = await replaceStockItems(upload.items, {
+          fileName: file.name,
+          updatedBy: user?.email || '',
+        });
+        setStockItems(await loadStockItems());
+        setStockCatalog(catalog);
+        setAppError(`Estoque atualizado: ${upload.items.length} PN(s) importado(s).`);
+      }
       setActiveView('stockTransfers');
-      setAppError(`Estoque atualizado: ${items.length} PN(s) importado(s).`);
     } catch (error) {
       setAppError(error.message || 'Não foi possível importar o relatório de estoque.');
     } finally {
@@ -3498,6 +3584,7 @@ export function App() {
       items: items.map((item) => ({
         productKey: item.productKey,
         product: item.product,
+        description: item.description || '',
         availableQuantity: Number(item.availableQuantity ?? item.stockQuantity ?? item.quantity ?? 0),
         quantity: Number(item.transferQuantity || 0),
       })),
@@ -3595,6 +3682,7 @@ export function App() {
       const stockItem = stockItems.find((item) => item.productKey === candidate.productKey);
       return {
         ...candidate,
+        description: stockItem?.description || '',
         stockQuantity: Number(stockItem?.quantity || 0),
         transferQuantity: Number(candidate.quantity || 0),
       };
@@ -9785,10 +9873,15 @@ function StockTransfersWorkspace({
 
   const visibleItems = useMemo(() => {
     const normalizedSearch = normalizeStockProduct(searchTerm);
+    const normalizedTextSearch = searchTerm.trim().toLocaleLowerCase('pt-BR');
     const filtered = items.filter((item) => {
       if (activeTab === 'transfer' && Number(item.quantity) !== 0) return false;
       if (activeTab !== 'all' && activeTab !== 'transfer' && item.groupCode !== activeTab) return false;
-      return !normalizedSearch || item.productKey.includes(normalizedSearch);
+      return (
+        !normalizedSearch ||
+        item.productKey.includes(normalizedSearch) ||
+        String(item.description || '').toLocaleLowerCase('pt-BR').includes(normalizedTextSearch)
+      );
     });
     return [...filtered].sort((a, b) => {
       const difference = Number(a.quantity || 0) - Number(b.quantity || 0);
@@ -9800,14 +9893,25 @@ function StockTransfersWorkspace({
   const visibleListItems = useMemo(() => {
     if (!activeList) return [];
     const normalizedSearch = normalizeStockProduct(searchTerm);
-    return [...activeList.items]
-      .filter((item) => !normalizedSearch || normalizeStockProduct(item.product).includes(normalizedSearch))
+    const normalizedTextSearch = searchTerm.trim().toLocaleLowerCase('pt-BR');
+    const descriptionsByKey = new Map(items.map((item) => [item.productKey, item.description || '']));
+    return activeList.items
+      .map((item) => ({
+        ...item,
+        description: item.description || descriptionsByKey.get(item.productKey) || '',
+      }))
+      .filter(
+        (item) =>
+          !normalizedSearch ||
+          normalizeStockProduct(item.product).includes(normalizedSearch) ||
+          item.description.toLocaleLowerCase('pt-BR').includes(normalizedTextSearch),
+      )
       .sort((a, b) => {
         const difference = Number(a.availableQuantity || 0) - Number(b.availableQuantity || 0);
         if (difference !== 0) return quantitySort === 'asc' ? difference : difference * -1;
         return a.product.localeCompare(b.product, 'pt-BR');
       });
-  }, [activeList, quantitySort, searchTerm]);
+  }, [activeList, items, quantitySort, searchTerm]);
 
   const visibleCandidates = useMemo(() => {
     const normalizedSearch = normalizeStockProduct(searchTerm);
@@ -9915,7 +10019,7 @@ function StockTransfersWorkspace({
           )}
           <label className="secondary-button compact file-button">
             <Upload size={16} />
-            {isUploading ? 'Importando...' : 'Upload estoque'}
+            {isUploading ? 'Importando...' : 'Upload planilha'}
             <input
               accept=".xlsx"
               disabled={isUploading}
@@ -9969,7 +10073,11 @@ function StockTransfersWorkspace({
       <div className="stock-toolbar">
         <label className="search-box stock-search-box">
           <Search size={18} />
-          <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Buscar PN" />
+          <input
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Buscar PN ou descrição"
+          />
         </label>
 
         {activeTab === 'register' && (
@@ -10090,9 +10198,10 @@ function StockTransfersWorkspace({
         <table className="quote-table stock-table">
           <thead>
             <tr>
-              {activeTab === 'transfer' && <th className="stock-checkbox-column">Selecionar</th>}
-              <th>Produto</th>
-              {!activeList && <th>Grupo</th>}
+               {activeTab === 'transfer' && <th className="stock-checkbox-column">Selecionar</th>}
+               <th>Produto</th>
+               <th>Descrição</th>
+               {!activeList && <th>Grupo</th>}
               <th>
                 <button
                   className="sortable-header-button"
@@ -10109,9 +10218,10 @@ function StockTransfersWorkspace({
           <tbody>
             {activeList
               ? visibleListItems.map((item) => (
-                  <tr key={item.productKey}>
-                    <td><strong>{item.product}</strong></td>
-                    <td><span className={getStockQuantityClass(item.availableQuantity)}>{item.availableQuantity}</span></td>
+                   <tr key={item.productKey}>
+                     <td><strong>{item.product}</strong></td>
+                     <td className="stock-description-cell">{item.description || '-'}</td>
+                     <td><span className={getStockQuantityClass(item.availableQuantity)}>{item.availableQuantity}</span></td>
                     <td>
                       <input
                         className="stock-transfer-quantity-input"
@@ -10136,9 +10246,10 @@ function StockTransfersWorkspace({
                           aria-label={`Selecionar ${item.product}`}
                         />
                       </td>
-                    )}
-                    <td><strong>{item.product}</strong></td>
-                    <td>{item.groupCode || '-'}</td>
+                     )}
+                     <td><strong>{item.product}</strong></td>
+                     <td className="stock-description-cell">{item.description || '-'}</td>
+                     <td>{item.groupCode || '-'}</td>
                     <td><span className={getStockQuantityClass(item.quantity)}>{item.quantity}</span></td>
                   </tr>
                 ))}
