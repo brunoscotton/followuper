@@ -9853,10 +9853,18 @@ function StockTransfersWorkspace({
   onUpdateQuantity,
   onUpload,
 }) {
+  const selectedStockItemsStorageKey = 'followuper.selectedStockTransferItems.v1';
   const [activeTab, setActiveTab] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [quantitySort, setQuantitySort] = useState('asc');
-  const [selectedKeys, setSelectedKeys] = useState([]);
+  const [selectedKeys, setSelectedKeys] = useState(() => {
+    try {
+      const storedKeys = JSON.parse(localStorage.getItem(selectedStockItemsStorageKey) || '[]');
+      return Array.isArray(storedKeys) ? storedKeys.filter((key) => typeof key === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
   const [isCreatingTransfer, setIsCreatingTransfer] = useState(false);
   const [orderDialog, setOrderDialog] = useState(null);
   const [copyFeedback, setCopyFeedback] = useState('');
@@ -9870,6 +9878,20 @@ function StockTransfersWorkspace({
   useEffect(() => {
     if (activeListId && !lists.some((list) => list.id === activeListId)) setActiveTab('transfer');
   }, [activeListId, lists]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(selectedStockItemsStorageKey, JSON.stringify(selectedKeys));
+    } catch {
+      // The selection remains available for the current session if storage is unavailable.
+    }
+  }, [selectedKeys]);
+
+  useEffect(() => {
+    if (items.length === 0) return;
+    const availableKeys = new Set(items.map((item) => item.productKey));
+    setSelectedKeys((current) => current.filter((key) => availableKeys.has(key)));
+  }, [items]);
 
   const visibleItems = useMemo(() => {
     const normalizedSearch = normalizeStockProduct(searchTerm);
