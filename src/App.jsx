@@ -1297,6 +1297,14 @@ function isManuallyArchived(quote) {
   return Boolean(quote.lossReason);
 }
 
+function isArchivedByUpload(quote) {
+  if (!isArchived(quote)) return false;
+  const latestArchiveEvent = (Array.isArray(quote.history) ? quote.history : [])
+    .filter((event) => event.type === 'archived')
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+  return normalizeUploadText(latestArchiveEvent?.label).includes('PELO UPLOAD');
+}
+
 function getFollowUpDueAt(quote) {
   return addFollowUpTime(
     quote.followUpStartedAt || quote.createdAt,
@@ -1336,10 +1344,6 @@ function buildUploadPreview(importedRows, quotes, ignoredCruzeiroCount, fileName
   const existingQuoteNumbers = new Set(existingQuotesByNumber.keys());
   const existingRows = importedRows.filter((row) => existingQuoteNumbers.has(row.quoteNumber));
   const newRows = importedRows.filter((row) => !existingQuoteNumbers.has(row.quoteNumber));
-  const importedQuoteNumbers = new Set(importedRows.map((row) => row.quoteNumber));
-  const staleQuotes = quotes.filter(
-    (quote) => !isArchived(quote) && !importedQuoteNumbers.has(normalizeUploadQuoteNumber(quote.quoteNumber)),
-  );
   const finalizingRows = importedRows.filter((row) => {
     if (!row.orderNumber) return false;
     const quote = existingQuotesByNumber.get(row.quoteNumber);
@@ -1354,7 +1358,7 @@ function buildUploadPreview(importedRows, quotes, ignoredCruzeiroCount, fileName
       novos: newRows.length,
       atualizados: existingRows.length,
       finalizados: finalizingRows.length,
-      arquivados: staleQuotes.length,
+      arquivados: 0,
       ignorados: 0,
       cruzeiroIgnorados: ignoredCruzeiroCount,
     },
@@ -1504,6 +1508,7 @@ export function App() {
   const customerUploadInputRef = useRef(null);
   const previousClosedQuoteIdsRef = useRef(null);
   const autoArchiveRunningRef = useRef(false);
+  const uploadArchiveRecoveryRunningRef = useRef(false);
   const closedUnarchiveRunningRef = useRef(false);
   const celebrationTimeoutRef = useRef(null);
   const presenceSessionRef = useRef(null);
@@ -2042,6 +2047,50 @@ export function App() {
     if (celebrationTimeoutRef.current) window.clearTimeout(celebrationTimeoutRef.current);
     celebrationTimeoutRef.current = window.setTimeout(() => setSaleCelebration(null), 6500);
   }, [isLoading, quotes]);
+
+  useEffect(() => {
+    if (isLoading || uploadArchiveRecoveryRunningRef.current) return;
+
+    const quotesToRestore = quotes.filter((quote) => {
+      if (isClosed(quote) || !isArchivedByUpload(quote)) return false;
+      return !shouldAutoArchiveQuote({ ...quote, archivedAt: '' }, now);
+    });
+    if (quotesToRestore.length === 0) return;
+
+    uploadArchiveRecoveryRunningRef.current = true;
+    const previousQuotes = quotes;
+    const restoredAt = new Date().toISOString();
+    const changesById = new Map(
+      quotesToRestore.map((quote) => [
+        quote.id,
+        {
+          archivedAt: '',
+          history: appendQuoteHistory(
+            quote,
+            buildQuoteHistoryEvent('updated', 'Reativada após correção do upload', {}, restoredAt),
+          ),
+        },
+      ]),
+    );
+
+    setQuotes((current) =>
+      current.map((quote) => (changesById.has(quote.id) ? { ...quote, ...changesById.get(quote.id) } : quote)),
+    );
+
+    Promise.all(quotesToRestore.map((quote) => updateQuote(quote.id, changesById.get(quote.id))))
+      .then((savedQuotes) => {
+        const savedById = new Map(savedQuotes.map((quote) => [quote.id, quote]));
+        setQuotes((current) => current.map((quote) => savedById.get(quote.id) || quote));
+        setAppError('');
+      })
+      .catch((error) => {
+        setQuotes(previousQuotes);
+        setAppError(error.message || 'Não foi possível reativar as cotações arquivadas pelo upload.');
+      })
+      .finally(() => {
+        uploadArchiveRecoveryRunningRef.current = false;
+      });
+  }, [isLoading, now, quotes]);
 
   useEffect(() => {
     if (isLoading || autoArchiveRunningRef.current) return;
@@ -3036,7 +3085,6 @@ export function App() {
       const existingQuoteNumbers = new Set(existingQuotesByNumber.keys());
       const existingRows = importedRows.filter((row) => existingQuoteNumbers.has(row.quoteNumber));
       const newRows = importedRows.filter((row) => !existingQuoteNumbers.has(row.quoteNumber));
-      const importedQuoteNumbers = new Set(importedRows.map((row) => row.quoteNumber));
 
       if (newRows.length === 0 && existingRows.length === 0) {
         setAppError('Upload concluído: todos os orçamentos da planilha já existem no FollowUper.');
@@ -3046,7 +3094,6 @@ export function App() {
       const savedQuotes = [];
       const updatedQuotes = [];
       let closedCount = 0;
-      let archivedCount = 0;
 
       for (const row of existingRows) {
         const existingQuote = existingQuotesByNumber.get(row.quoteNumber);
@@ -3105,16 +3152,6 @@ export function App() {
         }
       }
 
-      const staleQuotes = quotes.filter(
-        (quote) => !isArchived(quote) && !importedQuoteNumbers.has(normalizeUploadQuoteNumber(quote.quoteNumber)),
-      );
-
-      for (const quote of staleQuotes) {
-        const savedQuote = await updateQuote(quote.id, { archivedAt: new Date().toISOString() });
-        updatedQuotes.push(savedQuote);
-        archivedCount += 1;
-      }
-
       for (const row of newRows) {
         const createdAt = new Date().toISOString();
         const isClosedUpload = Boolean(row.orderNumber);
@@ -3171,7 +3208,7 @@ export function App() {
       setActiveView('quotes');
       setActiveTab('abertas');
       setAppError(
-        `Upload concluído: ${savedQuotes.length} orçamento(s) novo(s), ${Math.max(updatedQuotes.length - archivedCount, 0)} atualizado(s), ${closedCount} finalizado(s), ${archivedCount} removido(s) do dashboard ativo.`,
+        `Upload concluído: ${savedQuotes.length} orçamento(s) novo(s), ${updatedQuotes.length} atualizado(s) e ${closedCount} finalizado(s).`,
       );
     } catch (error) {
       setAppError(error.message || 'Não foi possível importar a planilha.');
@@ -3191,11 +3228,9 @@ export function App() {
       const existingQuoteNumbers = new Set(existingQuotesByNumber.keys());
       const existingRows = importedRows.filter((row) => existingQuoteNumbers.has(row.quoteNumber));
       const newRows = importedRows.filter((row) => !existingQuoteNumbers.has(row.quoteNumber));
-      const importedQuoteNumbers = new Set(importedRows.map((row) => row.quoteNumber));
       const savedQuotes = [];
       const updatedQuotes = [];
       let closedCount = 0;
-      let archivedCount = 0;
 
       for (const row of existingRows) {
         const existingQuote = existingQuotesByNumber.get(row.quoteNumber);
@@ -3269,20 +3304,6 @@ export function App() {
         }
       }
 
-      const staleQuotes = quotes.filter(
-        (quote) => !isArchived(quote) && !importedQuoteNumbers.has(normalizeUploadQuoteNumber(quote.quoteNumber)),
-      );
-
-      for (const quote of staleQuotes) {
-        const archivedAt = new Date().toISOString();
-        const savedQuote = await updateQuote(quote.id, {
-          archivedAt,
-          history: appendQuoteHistory(quote, buildQuoteHistoryEvent('archived', 'Arquivada pelo upload', {}, archivedAt)),
-        });
-        updatedQuotes.push(savedQuote);
-        archivedCount += 1;
-      }
-
       for (const row of newRows) {
         const createdAt = new Date().toISOString();
         const isClosedUpload = Boolean(row.orderNumber);
@@ -3345,9 +3366,9 @@ export function App() {
         summary: {
           ...uploadPreview.summary,
           novos: savedQuotes.length,
-          atualizados: Math.max(updatedQuotes.length - archivedCount, 0),
+          atualizados: updatedQuotes.length,
           finalizados: closedCount,
-          arquivados: archivedCount,
+          arquivados: 0,
         },
         totalOpenValue: uploadPreview.totals.open,
         totalClosedValue: uploadPreview.totals.closed,
@@ -3359,7 +3380,7 @@ export function App() {
       setActiveView('quotes');
       setActiveTab('abertas');
       setAppError(
-        `Upload concluido: ${savedQuotes.length} orcamento(s) novo(s), ${Math.max(updatedQuotes.length - archivedCount, 0)} atualizado(s), ${closedCount} finalizado(s), ${archivedCount} removido(s) do dashboard ativo.`,
+        `Upload concluido: ${savedQuotes.length} orcamento(s) novo(s), ${updatedQuotes.length} atualizado(s) e ${closedCount} finalizado(s).`,
       );
     } catch (error) {
       setAppError(error.message || 'Nao foi possivel importar a planilha.');
@@ -6009,13 +6030,36 @@ function FireworksCelebration({ sale }) {
   );
 }
 
+function getInfoBlockSearchTitle(block) {
+  if (block.type === 'toggle') return splitToggleContent(block.content).title;
+  if (block.type === 'sidebar') return safeParseInfoContent(block.content, { title: '' }).title;
+  if (block.type === 'link') return safeParseInfoContent(block.content, { label: '' }).label;
+  if (block.type === 'image') {
+    const content = safeParseInfoContent(block.content, { caption: '', name: '' });
+    return content.caption || content.name;
+  }
+  if (block.type === 'table') {
+    return safeParseInfoContent(block.content, { headers: [] }).headers.join(' ');
+  }
+  return String(block.content || '').split('\n')[0];
+}
+
 function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onReorderBlocks, onSaveBlock, setActiveView }) {
   const [draggedBlockId, setDraggedBlockId] = useState(null);
   const [dragOverBlockId, setDragOverBlockId] = useState(null);
   const [menuTarget, setMenuTarget] = useState(null);
   const [pendingImageTarget, setPendingImageTarget] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
   const pendingImageTargetRef = useRef(null);
   const imageInputRef = useRef(null);
+  const normalizedSearchTerm = normalizeUploadText(searchTerm);
+  const visibleBlocks = useMemo(
+    () =>
+      normalizedSearchTerm
+        ? blocks.filter((block) => normalizeUploadText(getInfoBlockSearchTitle(block)).includes(normalizedSearchTerm))
+        : blocks,
+    [blocks, normalizedSearchTerm],
+  );
 
   function getAfterBlockId(targetId) {
     return targetId && targetId !== 'top' ? targetId : null;
@@ -6132,8 +6176,22 @@ function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onReorder
         </button>
       </div>
 
+      <label className="search-box info-search-box">
+        <Search size={18} />
+        <input
+          value={searchTerm}
+          onChange={(event) => setSearchTerm(event.target.value)}
+          placeholder="Buscar pelo título"
+        />
+        {searchTerm && (
+          <button type="button" title="Limpar busca" aria-label="Limpar busca" onClick={() => setSearchTerm('')}>
+            <X size={17} />
+          </button>
+        )}
+      </label>
+
       <div className="info-document">
-        {renderAddControl('top')}
+        {!normalizedSearchTerm && renderAddControl('top')}
         <input ref={imageInputRef} accept="image/*" hidden type="file" onChange={handleImageFileChange} />
 
         {blocks.length === 0 ? (
@@ -6141,9 +6199,14 @@ function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onReorder
             <BookOpenText size={30} />
             <p>Adicione o primeiro bloco pelo botão +.</p>
           </div>
+        ) : visibleBlocks.length === 0 ? (
+          <div className="info-empty-state">
+            <Search size={30} />
+            <p>Nenhum título encontrado.</p>
+          </div>
         ) : (
           <div className="info-block-list">
-            {blocks.map((block) => (
+            {visibleBlocks.map((block) => (
               <React.Fragment key={block.id}>
                 <InfoBlock
                   block={block}
@@ -6157,7 +6220,7 @@ function InfoPanel({ blocks, onAddBlock, onChangeBlock, onRemoveBlock, onReorder
                   onRemoveBlock={onRemoveBlock}
                   onSaveBlock={onSaveBlock}
                 />
-                {renderAddControl(block.id, true)}
+                {!normalizedSearchTerm && renderAddControl(block.id, true)}
               </React.Fragment>
             ))}
           </div>
