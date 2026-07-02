@@ -5520,6 +5520,7 @@ export function App() {
       ) : activeView === 'users' && isMasterUser ? (
         <UsersWorkspace
           activityLogs={activityLogs}
+          now={now}
           onlineUsers={onlineUsers}
           profiles={userProfiles}
         />
@@ -10453,7 +10454,7 @@ function getActivityDescription(log) {
   return `${actionLabels[log.action] || log.action} em ${entityLabel}${identifier}`;
 }
 
-function UsersWorkspace({ activityLogs, onlineUsers, profiles }) {
+function UsersWorkspace({ activityLogs, now, onlineUsers, profiles }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState('all');
   const [selectedArea, setSelectedArea] = useState('all');
@@ -10466,8 +10467,24 @@ function UsersWorkspace({ activityLogs, onlineUsers, profiles }) {
         usersById.set(presence.userId, presence);
       }
     });
+
+    const currentTime = now instanceof Date ? now.getTime() : Date.now();
+    profiles.forEach((profile) => {
+      const lastSeenTime = new Date(profile.lastSeenAt).getTime();
+      if (!Number.isFinite(lastSeenTime) || currentTime - lastSeenTime > 3 * 60 * 1000) return;
+      if (!usersById.has(profile.id)) {
+        usersById.set(profile.id, {
+          userId: profile.id,
+          email: profile.email,
+          displayName: profile.displayName,
+          currentView: profile.currentView,
+          onlineAt: profile.lastSeenAt,
+        });
+      }
+    });
+
     return usersById;
-  }, [onlineUsers]);
+  }, [now, onlineUsers, profiles]);
 
   const displayedProfiles = useMemo(() => {
     const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));

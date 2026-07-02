@@ -646,6 +646,7 @@ drop policy if exists "Users can update own profile" on public.user_profiles;
 drop policy if exists "Master user can read activity logs" on public.activity_logs;
 drop policy if exists "Authenticated users can track FollowUper presence" on realtime.messages;
 drop policy if exists "Master user can read FollowUper presence" on realtime.messages;
+drop policy if exists "Authenticated users can read FollowUper presence" on realtime.messages;
 
 create policy "Authenticated users can read quotes"
   on public.quotes
@@ -1241,14 +1242,13 @@ create policy "Authenticated users can track FollowUper presence"
     and realtime.messages.extension = 'presence'
   );
 
-create policy "Master user can read FollowUper presence"
+create policy "Authenticated users can read FollowUper presence"
   on realtime.messages
   for select
   to authenticated
   using (
     realtime.topic() = 'followuper:online-users'
     and realtime.messages.extension = 'presence'
-    and lower(coalesce(auth.jwt() ->> 'email', '')) = 'bruno.scotton@cdsav.com.br'
   );
 
 do $$
