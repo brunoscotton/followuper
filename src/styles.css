@@ -1338,7 +1338,8 @@ small {
 
 .dashboard-business-days b {
   color: #0f172a;
-  font-size: 0.78rem;
+  font-size: 0.95rem;
+  font-weight: 900;
 }
 
 .pie-card {
