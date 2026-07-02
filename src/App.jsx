@@ -5821,6 +5821,20 @@ function SalesDashboard({
   const rotaxMonthlyPercent = rotaxMonthlyTarget ? Math.round((rotaxMonthlyRevenue / rotaxMonthlyTarget) * 100) : 0;
   const rotaxMonthlyStatus = rotaxMonthlyDifference >= 0 ? 'above' : 'below';
   const rotaxMonthlyDiffLabel = rotaxMonthlyDifference >= 0 ? 'acima da meta' : 'para chegar na meta';
+  const dashboardBusinessDays = countBusinessDaysInMonth(
+    dashboardDate.getFullYear(),
+    dashboardDate.getMonth() + 1,
+  );
+  const dashboardRemainingBusinessDays = countRemainingBusinessDays(
+    dashboardDate.getFullYear(),
+    dashboardDate.getMonth() + 1,
+    new Date(),
+  );
+  const rotaxMonthlyMissing = Math.max(0, rotaxMonthlyTarget - rotaxMonthlyRevenue);
+  const rotaxDailyNeeded =
+    rotaxMonthlyMissing === 0 || dashboardRemainingBusinessDays === 0
+      ? 0
+      : rotaxMonthlyMissing / dashboardRemainingBusinessDays;
   const activeQuotes = quotes.filter((quote) => !isArchived(quote));
   const openQuotes = activeQuotes.filter((quote) => !isClosed(quote));
   const closedQuotes = activeQuotes.filter(isClosed);
@@ -5969,6 +5983,12 @@ function SalesDashboard({
                     )}`
                   : 'Atualiza a cada 15 min')}
             </small>
+            <div className="dashboard-business-days">
+              <span>Dias úteis do mês</span>
+              <b>
+                {dashboardBusinessDays} total · {dashboardRemainingBusinessDays} restante(s)
+              </b>
+            </div>
           </div>
         </section>
 
@@ -6045,6 +6065,10 @@ function SalesDashboard({
           <div>
             <span>% faturamento/meta</span>
             <strong>{rotaxMonthlyPercent}%</strong>
+          </div>
+          <div>
+            <span>Venda diária necessária</span>
+            <strong>{formatCurrencyValue(rotaxDailyNeeded)}</strong>
           </div>
         </div>
       </section>

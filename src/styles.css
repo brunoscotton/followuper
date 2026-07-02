@@ -1322,6 +1322,25 @@ small {
   grid-column: 1 / -1;
 }
 
+.dashboard-business-days {
+  align-items: center;
+  border-top: 1px solid #99f6e4;
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: space-between;
+  margin-top: 5px;
+  padding-top: 6px;
+}
+
+.dashboard-business-days span {
+  font-size: 0.72rem;
+}
+
+.dashboard-business-days b {
+  color: #0f172a;
+  font-size: 0.78rem;
+}
+
 .pie-card {
   align-items: center;
   display: grid;
@@ -1456,7 +1475,7 @@ small {
 .rotax-summary-grid {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .rotax-summary-grid div {
