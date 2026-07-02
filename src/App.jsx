@@ -6899,7 +6899,7 @@ function SideNavigation({
         </button>
         <button className={activeView === 'stockTransfers' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('stockTransfers')}>
           <RefreshCw size={17} />
-          Transferência
+          Transferência/Estoque
         </button>
         <button className={activeView === 'info' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('info')}>
           <BookOpenText size={17} />
@@ -10029,7 +10029,7 @@ function StockTransfersWorkspace({
         <div className="section-title">
           <RefreshCw size={22} />
           <div>
-            <h1>Transferência</h1>
+            <h1>Transferência/Estoque</h1>
             <p>Estoque de Campinas e preparação de pedidos de transferência.</p>
           </div>
         </div>
