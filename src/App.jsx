@@ -3604,6 +3604,42 @@ export function App() {
     }
   }
 
+  async function addItemsToStockTransfer(listId, newItems) {
+    const list = stockTransferLists.find((item) => item.id === listId);
+    if (!list) {
+      setAppError('A transferência selecionada não foi encontrada.');
+      return null;
+    }
+
+    const existingKeys = new Set(list.items.map((item) => item.productKey));
+    const appendedItems = newItems
+      .filter((item) => !existingKeys.has(item.productKey))
+      .map((item) => ({
+        productKey: item.productKey,
+        product: item.product,
+        description: item.description || '',
+        availableQuantity: Number(item.availableQuantity ?? item.stockQuantity ?? item.quantity ?? 0),
+        quantity: Number(item.transferQuantity || 0),
+      }));
+    const items = [...list.items, ...appendedItems];
+
+    try {
+      const savedList = await updateStockTransferList(listId, { items });
+      setStockTransferLists((current) =>
+        current.map((item) => (item.id === listId ? savedList : item)),
+      );
+      setAppError(
+        appendedItems.length > 0
+          ? `${appendedItems.length} item(ns) adicionado(s) à ${savedList.name}.`
+          : `Os itens selecionados já estavam na ${savedList.name}.`,
+      );
+      return savedList;
+    } catch (error) {
+      setAppError(error.message || 'Não foi possível incluir os itens na transferência.');
+      return null;
+    }
+  }
+
   async function changeStockTransferQuantity(listId, productKey, quantity) {
     const list = stockTransferLists.find((item) => item.id === listId);
     if (!list) return;
@@ -5509,6 +5545,7 @@ export function App() {
           isUploading={isUploadingStock}
           items={stockItems}
           lists={stockTransferLists}
+          onAddToTransfer={addItemsToStockTransfer}
           onCreateTransfer={createNewStockTransfer}
           onCreateTransferFromCandidates={createTransferFromCandidates}
           onDeleteCandidate={removeStockTransferCandidate}
@@ -9870,6 +9907,7 @@ function StockTransfersWorkspace({
   isUploading,
   items,
   lists,
+  onAddToTransfer,
   onCreateTransfer,
   onCreateTransferFromCandidates,
   onDeleteCandidate,
@@ -9891,6 +9929,7 @@ function StockTransfersWorkspace({
     }
   });
   const [isCreatingTransfer, setIsCreatingTransfer] = useState(false);
+  const [transferDestination, setTransferDestination] = useState('');
   const [orderDialog, setOrderDialog] = useState(null);
   const [copyFeedback, setCopyFeedback] = useState('');
   const [candidateModal, setCandidateModal] = useState(null);
@@ -9971,14 +10010,19 @@ function StockTransfersWorkspace({
       });
   }, [candidates, quantitySort, searchTerm]);
 
-  async function createTransfer() {
+  async function saveSelectedItemsToTransfer(event) {
+    event.preventDefault();
     const selectedItems = items.filter((item) => selectedKeys.includes(item.productKey));
-    if (selectedItems.length === 0 || isCreatingTransfer) return;
+    if (selectedItems.length === 0 || !transferDestination || isCreatingTransfer) return;
     setIsCreatingTransfer(true);
     try {
-      const savedList = await onCreateTransfer(selectedItems);
+      const savedList =
+        transferDestination === 'new'
+          ? await onCreateTransfer(selectedItems)
+          : await onAddToTransfer(transferDestination, selectedItems);
       if (!savedList) return;
       setSelectedKeys([]);
+      setTransferDestination('');
       setActiveTab(`list:${savedList.id}`);
     } finally {
       setIsCreatingTransfer(false);
@@ -10161,7 +10205,7 @@ function StockTransfersWorkspace({
               className="primary-button compact"
               disabled={selectedKeys.length === 0 || isCreatingTransfer}
               type="button"
-              onClick={createTransfer}
+              onClick={() => setTransferDestination('new')}
             >
               <Plus size={16} />
               {isCreatingTransfer ? 'Criando...' : 'Nova transferência'}
@@ -10364,6 +10408,60 @@ function StockTransfersWorkspace({
               <button className="primary-button" disabled={isSavingCandidate} type="submit">
                 <Save size={16} />
                 {isSavingCandidate ? 'Salvando...' : 'Salvar item'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {transferDestination && (
+        <div className="modal-backdrop" role="presentation">
+          <form
+            className="modal-panel stock-transfer-destination-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Escolher destino da transferência"
+            onSubmit={saveSelectedItemsToTransfer}
+          >
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">Transferência/Estoque</span>
+                <h2>Destino dos itens</h2>
+                <p>{selectedKeys.length} item(ns) selecionado(s).</p>
+              </div>
+              <button
+                className="modal-close"
+                type="button"
+                aria-label="Fechar"
+                onClick={() => setTransferDestination('')}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <label>
+              Incluir em:
+              <select
+                autoFocus
+                value={transferDestination}
+                onChange={(event) => setTransferDestination(event.target.value)}
+              >
+                <option value="new">Gerar nova transferência</option>
+                {lists.map((list) => (
+                  <option key={list.id} value={list.id}>
+                    {list.name} ({list.items.length} item(ns))
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={() => setTransferDestination('')}>
+                Cancelar
+              </button>
+              <button className="primary-button" disabled={isCreatingTransfer} type="submit">
+                <Save size={16} />
+                {isCreatingTransfer ? 'Salvando...' : 'Confirmar'}
               </button>
             </div>
           </form>
