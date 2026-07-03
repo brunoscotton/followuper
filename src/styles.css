@@ -296,6 +296,147 @@ h2 {
   grid-template-columns: 0.7fr 1fr;
 }
 
+.central-upload-workspace {
+  display: grid;
+  gap: 18px;
+}
+
+.central-upload-heading,
+.central-upload-actions,
+.central-upload-section-title {
+  align-items: center;
+  display: flex;
+}
+
+.central-upload-heading {
+  justify-content: space-between;
+}
+
+.central-upload-heading h2,
+.central-upload-section h3,
+.central-upload-results h3 {
+  margin: 0;
+}
+
+.central-upload-actions {
+  gap: 12px;
+}
+
+.central-upload-actions > span {
+  color: #657386;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.central-upload-section {
+  border-top: 1px solid #e4e9ef;
+  display: grid;
+  gap: 12px;
+  padding-top: 18px;
+}
+
+.central-upload-section-title {
+  gap: 10px;
+}
+
+.central-upload-section-title svg {
+  color: #0f766e;
+}
+
+.central-upload-section-title p {
+  color: #657386;
+  font-size: 0.82rem;
+  margin: 3px 0 0;
+}
+
+.central-upload-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.central-upload-field {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 94px;
+  padding: 12px;
+}
+
+.central-upload-field:hover,
+.central-upload-field.selected {
+  border-color: #66aaa4;
+}
+
+.central-upload-field.selected {
+  background: #f0f9f8;
+}
+
+.central-upload-field-title {
+  color: #1f3041;
+  font-size: 0.9rem;
+  font-weight: 900;
+  grid-column: 1 / -1;
+}
+
+.central-upload-file-name {
+  color: #657386;
+  font-size: 0.76rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.central-upload-select {
+  pointer-events: none;
+}
+
+.central-upload-results {
+  background: #f8fafc;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.central-upload-result {
+  align-items: center;
+  color: #536275;
+  display: flex;
+  font-size: 0.82rem;
+  gap: 9px;
+}
+
+.central-upload-result span {
+  display: flex;
+  gap: 6px;
+}
+
+.central-upload-result.success {
+  color: #0f766e;
+}
+
+.central-upload-result.error {
+  color: #b4233d;
+}
+
+.spin {
+  animation: central-upload-spin 0.9s linear infinite;
+}
+
+@keyframes central-upload-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .side-alerts {
   border-top: 1px solid #e6ebf0;
   padding-top: 10px;
@@ -4103,6 +4244,16 @@ button:disabled {
 
   .stock-selection-actions button {
     flex: 1;
+  }
+
+  .central-upload-heading,
+  .central-upload-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .central-upload-grid {
+    grid-template-columns: 1fr;
   }
 
   .dashboard-header,

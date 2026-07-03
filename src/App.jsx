@@ -3184,6 +3184,11 @@ export function App() {
     event.target.value = '';
     if (!file) return;
 
+    await prepareQuotesUpload(file);
+  }
+
+  async function prepareQuotesUpload(file, options = {}) {
+    if (!file) return false;
     setIsUploadingQuotes(true);
 
     try {
@@ -3194,7 +3199,7 @@ export function App() {
 
       setUploadPreview(buildUploadPreview(importedRows, quotes, ignoredCruzeiroCount, file.name));
       setAppError('');
-      return;
+      return true;
 
       const existingQuotesByNumber = new Map(
         quotes.map((quote) => [normalizeUploadQuoteNumber(quote.quoteNumber), quote]),
@@ -3329,6 +3334,8 @@ export function App() {
       );
     } catch (error) {
       setAppError(error.message || 'Não foi possível importar a planilha.');
+      if (options.rethrow) throw error;
+      return false;
     } finally {
       setIsUploadingQuotes(false);
     }
@@ -3515,6 +3522,11 @@ export function App() {
     event.target.value = '';
     if (!file) return;
 
+    await uploadCustomersFile(file);
+  }
+
+  async function uploadCustomersFile(file, options = {}) {
+    if (!file) return false;
     setIsUploadingCustomers(true);
 
     try {
@@ -3525,16 +3537,19 @@ export function App() {
         savedCustomers.forEach((customer) => byId.set(customer.id, customer));
         return sortCustomers([...byId.values()]);
       });
-      setActiveView('customers');
+      if (!options.keepView) setActiveView('customers');
       setAppError(`Clientes atualizados: ${savedCustomers.length} cadastro(s) processado(s).`);
+      return true;
     } catch (error) {
       setAppError(error.message || 'Nao foi possivel importar a base de clientes.');
+      if (options.rethrow) throw error;
+      return false;
     } finally {
       setIsUploadingCustomers(false);
     }
   }
 
-  async function handleBillingUpload(file, seller) {
+  async function handleBillingUpload(file, seller, options = {}) {
     if (!file || !seller) return;
 
     setIsUploadingBilling(true);
@@ -3552,17 +3567,22 @@ export function App() {
       });
       setBillingEntries((current) => sortBillingEntries([...current.filter((entry) => entry.seller !== seller), ...savedEntries]));
       setBillingUploads((current) => [savedUpload, ...current.filter((upload) => upload.seller !== seller)]);
-      setActiveView('billing');
-      setActiveBillingSeller(seller);
+      if (!options.keepView) {
+        setActiveView('billing');
+        setActiveBillingSeller(seller);
+      }
       setAppError(`Cobrança de ${seller} atualizada: ${savedEntries.length} titulo(s) importado(s).`);
+      return true;
     } catch (error) {
       setAppError(error.message || 'Nao foi possivel importar a planilha de cobranca.');
+      if (options.rethrow) throw error;
+      return false;
     } finally {
       setIsUploadingBilling(false);
     }
   }
 
-  async function handleRotaxPartsUpload(file) {
+  async function handleRotaxPartsUpload(file, options = {}) {
     if (!file) return;
     setIsUploadingRotaxParts(true);
 
@@ -3573,16 +3593,19 @@ export function App() {
         updatedBy: user?.email || '',
       });
       setRotaxPartsCatalog(catalog);
-      setActiveView('rotaxParts');
+      if (!options.keepView) setActiveView('rotaxParts');
       setAppError(`Catálogo Rotax atualizado: ${parts.length} PN(s) importado(s).`);
+      return true;
     } catch (error) {
       setAppError(error.message || 'Não foi possível importar a tabela de PN Rotax.');
+      if (options.rethrow) throw error;
+      return false;
     } finally {
       setIsUploadingRotaxParts(false);
     }
   }
 
-  async function handleStockUpload(file) {
+  async function handleStockUpload(file, options = {}) {
     if (!file) return;
     setIsUploadingStock(true);
     try {
@@ -3608,9 +3631,12 @@ export function App() {
         setStockCatalog(catalog);
         setAppError(`Estoque atualizado: ${upload.items.length} PN(s) importado(s).`);
       }
-      setActiveView('stockTransfers');
+      if (!options.keepView) setActiveView('stockTransfers');
+      return true;
     } catch (error) {
       setAppError(error.message || 'Não foi possível importar o relatório de estoque.');
+      if (options.rethrow) throw error;
+      return false;
     } finally {
       setIsUploadingStock(false);
     }
@@ -4262,7 +4288,7 @@ export function App() {
     return formatDate(`${dateValue}T12:00:00`);
   }
 
-  async function handleContractTemplateUpload(type, file) {
+  async function handleContractTemplateUpload(type, file, options = {}) {
     if (!file) return;
     setIsSavingContractTemplate(true);
 
@@ -4281,8 +4307,11 @@ export function App() {
       });
       setContractTemplates((current) => [savedTemplate, ...current.filter((template) => template.type !== savedTemplate.type)]);
       setAppError('Modelo de contrato atualizado.');
+      return true;
     } catch (error) {
       setAppError(error.message || 'Nao foi possivel salvar o modelo de contrato.');
+      if (options.rethrow) throw error;
+      return false;
     } finally {
       setIsSavingContractTemplate(false);
     }
@@ -5602,6 +5631,23 @@ export function App() {
           onSaveCandidate={saveStockTransferCandidate}
           onUpload={handleStockUpload}
         />
+      ) : activeView === 'uploads' ? (
+        <UploadsWorkspace
+          isBusy={
+            isUploadingQuotes ||
+            isUploadingCustomers ||
+            isUploadingBilling ||
+            isUploadingRotaxParts ||
+            isUploadingStock ||
+            isSavingContractTemplate
+          }
+          onUploadBilling={(file, seller) => handleBillingUpload(file, seller, { keepView: true, rethrow: true })}
+          onUploadContract={(type, file) => handleContractTemplateUpload(type, file, { rethrow: true })}
+          onUploadCustomers={(file) => uploadCustomersFile(file, { keepView: true, rethrow: true })}
+          onUploadQuotes={(file) => prepareQuotesUpload(file, { rethrow: true })}
+          onUploadRotaxParts={(file) => handleRotaxPartsUpload(file, { keepView: true, rethrow: true })}
+          onUploadStock={(file) => handleStockUpload(file, { keepView: true, rethrow: true })}
+        />
       ) : activeView === 'users' && isMasterUser ? (
         <UsersWorkspace
           activityLogs={activityLogs}
@@ -6808,6 +6854,281 @@ function GrandpaWorkspace({ errors, form, onSubmit, onUpdate }) {
   );
 }
 
+const initialCentralUploadFiles = {
+  quotes: null,
+  customers: null,
+  billingBruno: null,
+  billingElton: null,
+  billingStephanie: null,
+  rotaxParts: null,
+  stock: [],
+  contractMotor: null,
+  contractTraining: null,
+  contractReturn: null,
+};
+
+function UploadFileField({ accept = '.xlsx', file, label, multiple = false, onChange }) {
+  const selectedFiles = multiple ? file || [] : file ? [file] : [];
+
+  return (
+    <label className={selectedFiles.length ? 'central-upload-field selected' : 'central-upload-field'}>
+      <span className="central-upload-field-title">{label}</span>
+      <span className="central-upload-file-name">
+        {selectedFiles.length
+          ? selectedFiles.map((selectedFile) => selectedFile.name).join(', ')
+          : multiple
+            ? 'Selecione um ou mais arquivos'
+            : 'Selecione o arquivo'}
+      </span>
+      <span className="secondary-button compact central-upload-select">
+        <Upload size={15} />
+        Escolher
+      </span>
+      <input
+        accept={accept}
+        hidden
+        multiple={multiple}
+        type="file"
+        onChange={(event) => {
+          const nextFiles = [...(event.target.files || [])];
+          onChange(multiple ? nextFiles : nextFiles[0] || null);
+          event.target.value = '';
+        }}
+      />
+    </label>
+  );
+}
+
+function UploadsWorkspace({
+  isBusy,
+  onUploadBilling,
+  onUploadContract,
+  onUploadCustomers,
+  onUploadQuotes,
+  onUploadRotaxParts,
+  onUploadStock,
+}) {
+  const [files, setFiles] = useState(initialCentralUploadFiles);
+  const [statuses, setStatuses] = useState({});
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  function updateFiles(field, value) {
+    setFiles((current) => ({ ...current, [field]: value }));
+    setStatuses({});
+  }
+
+  const selectedCount =
+    Object.entries(files).reduce((total, [field, value]) => {
+      if (field === 'stock') return total + value.length;
+      return total + (value ? 1 : 0);
+    }, 0);
+
+  async function processUploads() {
+    const tasks = [
+      files.customers && {
+        id: 'customers',
+        label: 'Clientes',
+        run: () => onUploadCustomers(files.customers),
+      },
+      files.billingBruno && {
+        id: 'billingBruno',
+        label: 'Cobrança Bruno',
+        run: () => onUploadBilling(files.billingBruno, 'Bruno'),
+      },
+      files.billingElton && {
+        id: 'billingElton',
+        label: 'Cobrança Elton',
+        run: () => onUploadBilling(files.billingElton, 'Elton'),
+      },
+      files.billingStephanie && {
+        id: 'billingStephanie',
+        label: 'Cobrança Stephanie',
+        run: () => onUploadBilling(files.billingStephanie, 'Stephanie'),
+      },
+      files.rotaxParts && {
+        id: 'rotaxParts',
+        label: 'Consulta PN Rotax',
+        run: () => onUploadRotaxParts(files.rotaxParts),
+      },
+      ...files.stock.map((file, index) => ({
+        id: `stock-${index}`,
+        label: `Transferência/Estoque: ${file.name}`,
+        run: () => onUploadStock(file),
+      })),
+      files.contractMotor && {
+        id: 'contractMotor',
+        label: 'Modelo contrato motor',
+        run: () => onUploadContract('motor', files.contractMotor),
+      },
+      files.contractTraining && {
+        id: 'contractTraining',
+        label: 'Modelo contrato treinamento',
+        run: () => onUploadContract('training', files.contractTraining),
+      },
+      files.contractReturn && {
+        id: 'contractReturn',
+        label: 'Modelo devolução',
+        run: () => onUploadContract('return', files.contractReturn),
+      },
+      files.quotes && {
+        id: 'quotes',
+        label: 'Cotações',
+        run: () => onUploadQuotes(files.quotes),
+      },
+    ].filter(Boolean);
+
+    if (!tasks.length || isProcessing || isBusy) return;
+
+    setIsProcessing(true);
+    setStatuses({});
+
+    for (const task of tasks) {
+      setStatuses((current) => ({ ...current, [task.id]: { label: task.label, state: 'running' } }));
+      try {
+        await task.run();
+        setStatuses((current) => ({ ...current, [task.id]: { label: task.label, state: 'success' } }));
+      } catch (error) {
+        setStatuses((current) => ({
+          ...current,
+          [task.id]: {
+            label: task.label,
+            message: error.message || 'Não foi possível processar o arquivo.',
+            state: 'error',
+          },
+        }));
+      }
+    }
+
+    setIsProcessing(false);
+  }
+
+  const statusItems = Object.entries(statuses);
+
+  return (
+    <section className="panel central-upload-workspace">
+      <div className="central-upload-heading">
+        <div>
+          <p className="eyebrow">Central de arquivos</p>
+          <h2>Upload</h2>
+        </div>
+        <div className="central-upload-actions">
+          <span>{selectedCount} arquivo(s) selecionado(s)</span>
+          <button
+            className="primary-button compact"
+            type="button"
+            disabled={!selectedCount || isProcessing || isBusy}
+            onClick={processUploads}
+          >
+            {isProcessing ? <RefreshCw className="spin" size={16} /> : <Upload size={16} />}
+            {isProcessing ? 'Processando...' : 'Enviar todos'}
+          </button>
+        </div>
+      </div>
+
+      <div className="central-upload-section">
+        <div className="central-upload-section-title">
+          <FileText size={18} />
+          <div>
+            <h3>Comercial</h3>
+            <p>Cotações, clientes e cobranças.</p>
+          </div>
+        </div>
+        <div className="central-upload-grid">
+          <UploadFileField label="Cotações" file={files.quotes} onChange={(file) => updateFiles('quotes', file)} />
+          <UploadFileField label="Clientes" file={files.customers} onChange={(file) => updateFiles('customers', file)} />
+          <UploadFileField label="Cobrança Bruno" file={files.billingBruno} onChange={(file) => updateFiles('billingBruno', file)} />
+          <UploadFileField label="Cobrança Elton" file={files.billingElton} onChange={(file) => updateFiles('billingElton', file)} />
+          <UploadFileField
+            label="Cobrança Stephanie"
+            file={files.billingStephanie}
+            onChange={(file) => updateFiles('billingStephanie', file)}
+          />
+        </div>
+      </div>
+
+      <div className="central-upload-section">
+        <div className="central-upload-section-title">
+          <PackageSearch size={18} />
+          <div>
+            <h3>Produtos e estoque</h3>
+            <p>O estoque aceita relatório, descrições e endereçamento no mesmo envio.</p>
+          </div>
+        </div>
+        <div className="central-upload-grid">
+          <UploadFileField
+            label="Consulta PN Rotax"
+            file={files.rotaxParts}
+            onChange={(file) => updateFiles('rotaxParts', file)}
+          />
+          <UploadFileField
+            label="Transferência/Estoque"
+            file={files.stock}
+            multiple
+            onChange={(selectedFiles) => updateFiles('stock', selectedFiles)}
+          />
+        </div>
+      </div>
+
+      <div className="central-upload-section">
+        <div className="central-upload-section-title">
+          <FileText size={18} />
+          <div>
+            <h3>Modelos de contratos</h3>
+            <p>O novo arquivo substitui o modelo atual do mesmo tipo.</p>
+          </div>
+        </div>
+        <div className="central-upload-grid">
+          <UploadFileField
+            accept=".doc,.docx,.pdf"
+            label="Contrato motor"
+            file={files.contractMotor}
+            onChange={(file) => updateFiles('contractMotor', file)}
+          />
+          <UploadFileField
+            accept=".doc,.docx,.pdf"
+            label="Contrato treinamento"
+            file={files.contractTraining}
+            onChange={(file) => updateFiles('contractTraining', file)}
+          />
+          <UploadFileField
+            accept=".doc,.docx,.pdf"
+            label="Devolução"
+            file={files.contractReturn}
+            onChange={(file) => updateFiles('contractReturn', file)}
+          />
+        </div>
+      </div>
+
+      {statusItems.length > 0 && (
+        <div className="central-upload-results" aria-live="polite">
+          <h3>Andamento do lote</h3>
+          {statusItems.map(([id, status]) => (
+            <div className={`central-upload-result ${status.state}`} key={id}>
+              {status.state === 'success' ? (
+                <CheckCircle2 size={17} />
+              ) : status.state === 'error' ? (
+                <AlertTriangle size={17} />
+              ) : (
+                <RefreshCw className="spin" size={17} />
+              )}
+              <span>
+                <b>{status.label}</b>
+                {status.state === 'running'
+                  ? 'Processando...'
+                  : status.state === 'success'
+                    ? id === 'quotes'
+                      ? 'Prévia pronta para confirmação.'
+                      : 'Concluído.'
+                    : status.message}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function SideNavigation({
   activeView,
   dataStatus,
@@ -6972,6 +7293,10 @@ function SideNavigation({
         <button className={activeView === 'quotes' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => navigateQuotes('abertas')}>
           <FileText size={17} />
           Cotações
+        </button>
+        <button className={activeView === 'uploads' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('uploads')}>
+          <Upload size={17} />
+          Upload
         </button>
         <button className={activeView === 'tracking' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('tracking')}>
           <Truck size={17} />
@@ -10623,8 +10948,11 @@ const userViewLabels = {
   quotes: 'Cotações',
   returns: 'Devoluções',
   rotax: 'Treinamento Rotax',
+  rotaxParts: 'Consulta PN Rotax',
   rotaxRevenue: 'Faturamento Rotax',
+  stockTransfers: 'Transferência/Estoque',
   tracking: 'Rastreios',
+  uploads: 'Upload',
   users: 'Usuários',
   warranties: 'Garantias',
 };
