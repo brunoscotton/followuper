@@ -2764,7 +2764,7 @@ td {
 }
 
 .stock-table {
-  min-width: 920px;
+  min-width: 1120px;
 }
 
 .stock-table th,
@@ -2779,6 +2779,13 @@ td {
 
 .stock-description-cell {
   min-width: 280px;
+  white-space: normal;
+}
+
+.stock-address-cell {
+  color: #334155;
+  font-weight: 800;
+  min-width: 190px;
   white-space: normal;
 }
 

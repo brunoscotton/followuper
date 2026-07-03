@@ -203,6 +203,14 @@ create table if not exists public.stock_product_descriptions (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.stock_product_addresses (
+  product_key text primary key,
+  product text not null,
+  address text not null,
+  batch_id uuid not null,
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.stock_catalog (
   id text primary key,
   batch_id uuid not null,
@@ -509,6 +517,7 @@ alter table public.rotax_parts replica identity full;
 alter table public.rotax_parts_catalog replica identity full;
 alter table public.stock_items replica identity full;
 alter table public.stock_product_descriptions replica identity full;
+alter table public.stock_product_addresses replica identity full;
 alter table public.stock_catalog replica identity full;
 alter table public.stock_transfer_lists replica identity full;
 alter table public.stock_transfer_candidates replica identity full;
@@ -536,6 +545,7 @@ alter table public.rotax_parts enable row level security;
 alter table public.rotax_parts_catalog enable row level security;
 alter table public.stock_items enable row level security;
 alter table public.stock_product_descriptions enable row level security;
+alter table public.stock_product_addresses enable row level security;
 alter table public.stock_catalog enable row level security;
 alter table public.stock_transfer_lists enable row level security;
 alter table public.stock_transfer_candidates enable row level security;
@@ -603,6 +613,10 @@ drop policy if exists "Authenticated users can delete stock items" on public.sto
 drop policy if exists "Authenticated users can read stock descriptions" on public.stock_product_descriptions;
 drop policy if exists "Authenticated users can insert stock descriptions" on public.stock_product_descriptions;
 drop policy if exists "Authenticated users can update stock descriptions" on public.stock_product_descriptions;
+drop policy if exists "Authenticated users can read stock addresses" on public.stock_product_addresses;
+drop policy if exists "Authenticated users can insert stock addresses" on public.stock_product_addresses;
+drop policy if exists "Authenticated users can update stock addresses" on public.stock_product_addresses;
+drop policy if exists "Authenticated users can delete stock addresses" on public.stock_product_addresses;
 drop policy if exists "Authenticated users can read stock catalog" on public.stock_catalog;
 drop policy if exists "Authenticated users can insert stock catalog" on public.stock_catalog;
 drop policy if exists "Authenticated users can update stock catalog" on public.stock_catalog;
@@ -991,6 +1005,31 @@ create policy "Authenticated users can update stock descriptions"
   to authenticated
   using (true)
   with check (true);
+
+create policy "Authenticated users can read stock addresses"
+  on public.stock_product_addresses
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert stock addresses"
+  on public.stock_product_addresses
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update stock addresses"
+  on public.stock_product_addresses
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete stock addresses"
+  on public.stock_product_addresses
+  for delete
+  to authenticated
+  using (true);
 
 create policy "Authenticated users can read stock catalog"
   on public.stock_catalog

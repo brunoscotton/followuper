@@ -169,6 +169,7 @@ import {
   loadStockTransferData,
   normalizeStockProduct,
   replaceStockItems,
+  replaceStockProductAddresses,
   subscribeToStockTransferChanges,
   updateStockTransferList,
   upsertStockTransferCandidate,
@@ -1247,12 +1248,50 @@ async function parseStockTransferUploadFile(file) {
     return { type: 'stock', items };
   }
 
+  const addressHeaderIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('produto') && headers.includes('endereco');
+  });
+  if (addressHeaderIndex >= 0) {
+    const headers = rows[addressHeaderIndex].map(normalizeUploadHeader);
+    const columns = {
+      product: headers.indexOf('produto'),
+      address: headers.indexOf('endereco'),
+    };
+    const addressesByProduct = new Map();
+
+    rows.slice(addressHeaderIndex + 1).forEach((row) => {
+      const product = normalizeUploadValue(row[columns.product]);
+      const productKey = normalizeStockProduct(product);
+      const address = normalizeUploadValue(row[columns.address]);
+      if (!productKey || !address) return;
+
+      const current = addressesByProduct.get(productKey) || {
+        productKey,
+        product,
+        addresses: new Set(),
+      };
+      current.addresses.add(address);
+      addressesByProduct.set(productKey, current);
+    });
+
+    const addresses = [...addressesByProduct.values()]
+      .map((item) => ({
+        productKey: item.productKey,
+        product: item.product,
+        address: [...item.addresses].join(' / '),
+      }))
+      .sort((a, b) => a.product.localeCompare(b.product, 'pt-BR'));
+    if (addresses.length === 0) throw new Error('Nenhum endereço válido foi encontrado na planilha.');
+    return { type: 'addresses', addresses };
+  }
+
   const descriptionHeaderIndex = rows.findIndex((row) => {
     const headers = row.map(normalizeUploadHeader);
     return headers.includes('partnumber') && headers.includes('descricao') && headers.includes('grupo');
   });
   if (descriptionHeaderIndex < 0) {
-    throw new Error('Nao encontrei os cabecalhos de estoque ou de descricao generica nesta planilha.');
+    throw new Error('Não encontrei os cabeçalhos de estoque, endereçamento ou descrição genérica nesta planilha.');
   }
 
   const headers = rows[descriptionHeaderIndex].map(normalizeUploadHeader);
@@ -3554,6 +3593,12 @@ export function App() {
         });
         setStockItems(await loadStockItems());
         setAppError(`Descrições atualizadas: ${upload.descriptions.length} PN(s) importado(s).`);
+      } else if (upload.type === 'addresses') {
+        await replaceStockProductAddresses(upload.addresses, {
+          updatedBy: user?.email || '',
+        });
+        setStockItems(await loadStockItems());
+        setAppError(`Endereçamento atualizado: ${upload.addresses.length} PN(s) importado(s).`);
       } else {
         const catalog = await replaceStockItems(upload.items, {
           fileName: file.name,
@@ -3585,6 +3630,7 @@ export function App() {
         productKey: item.productKey,
         product: item.product,
         description: item.description || '',
+        address: item.address || '',
         availableQuantity: Number(item.availableQuantity ?? item.stockQuantity ?? item.quantity ?? 0),
         quantity: Number(item.transferQuantity || 0),
       })),
@@ -3618,6 +3664,7 @@ export function App() {
         productKey: item.productKey,
         product: item.product,
         description: item.description || '',
+        address: item.address || '',
         availableQuantity: Number(item.availableQuantity ?? item.stockQuantity ?? item.quantity ?? 0),
         quantity: Number(item.transferQuantity || 0),
       }));
@@ -3719,6 +3766,7 @@ export function App() {
       return {
         ...candidate,
         description: stockItem?.description || '',
+        address: stockItem?.address || '',
         stockQuantity: Number(stockItem?.quantity || 0),
         transferQuantity: Number(candidate.quantity || 0),
       };
@@ -9894,6 +9942,8 @@ const stockGroupTabs = [
   { value: 'transfer', label: 'Transferência' },
 ];
 
+const missingStockAddressLabel = '- Sem Endereço -';
+
 function getStockQuantityClass(quantity) {
   const numericQuantity = Number(quantity || 0);
   if (numericQuantity <= 1) return 'stock-quantity critical';
@@ -9966,7 +10016,8 @@ function StockTransfersWorkspace({
       return (
         !normalizedSearch ||
         item.productKey.includes(normalizedSearch) ||
-        String(item.description || '').toLocaleLowerCase('pt-BR').includes(normalizedTextSearch)
+        String(item.description || '').toLocaleLowerCase('pt-BR').includes(normalizedTextSearch) ||
+        String(item.address || '').toLocaleLowerCase('pt-BR').includes(normalizedTextSearch)
       );
     });
     return [...filtered].sort((a, b) => {
@@ -9980,17 +10031,22 @@ function StockTransfersWorkspace({
     if (!activeList) return [];
     const normalizedSearch = normalizeStockProduct(searchTerm);
     const normalizedTextSearch = searchTerm.trim().toLocaleLowerCase('pt-BR');
-    const descriptionsByKey = new Map(items.map((item) => [item.productKey, item.description || '']));
+    const stockItemsByKey = new Map(items.map((item) => [item.productKey, item]));
     return activeList.items
-      .map((item) => ({
-        ...item,
-        description: item.description || descriptionsByKey.get(item.productKey) || '',
-      }))
+      .map((item) => {
+        const stockItem = stockItemsByKey.get(item.productKey);
+        return {
+          ...item,
+          description: item.description || stockItem?.description || '',
+          address: stockItem?.address || '',
+        };
+      })
       .filter(
         (item) =>
           !normalizedSearch ||
           normalizeStockProduct(item.product).includes(normalizedSearch) ||
-          item.description.toLocaleLowerCase('pt-BR').includes(normalizedTextSearch),
+          item.description.toLocaleLowerCase('pt-BR').includes(normalizedTextSearch) ||
+          item.address.toLocaleLowerCase('pt-BR').includes(normalizedTextSearch),
       )
       .sort((a, b) => {
         const difference = Number(a.availableQuantity || 0) - Number(b.availableQuantity || 0);
@@ -10001,14 +10057,25 @@ function StockTransfersWorkspace({
 
   const visibleCandidates = useMemo(() => {
     const normalizedSearch = normalizeStockProduct(searchTerm);
+    const normalizedTextSearch = searchTerm.trim().toLocaleLowerCase('pt-BR');
+    const stockItemsByKey = new Map(items.map((item) => [item.productKey, item]));
     return candidates
-      .filter((candidate) => !normalizedSearch || candidate.productKey.includes(normalizedSearch))
+      .map((candidate) => ({
+        ...candidate,
+        address: stockItemsByKey.get(candidate.productKey)?.address || '',
+      }))
+      .filter(
+        (candidate) =>
+          !normalizedSearch ||
+          candidate.productKey.includes(normalizedSearch) ||
+          candidate.address.toLocaleLowerCase('pt-BR').includes(normalizedTextSearch),
+      )
       .sort((a, b) => {
         const difference = Number(a.quantity || 0) - Number(b.quantity || 0);
         if (difference !== 0) return quantitySort === 'asc' ? difference : difference * -1;
         return a.product.localeCompare(b.product, 'pt-BR');
       });
-  }, [candidates, quantitySort, searchTerm]);
+  }, [candidates, items, quantitySort, searchTerm]);
 
   async function saveSelectedItemsToTransfer(event) {
     event.preventDefault();
@@ -10167,7 +10234,7 @@ function StockTransfersWorkspace({
           <input
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Buscar PN ou descrição"
+            placeholder="Buscar PN, descrição ou endereço"
           />
         </label>
 
@@ -10239,6 +10306,7 @@ function StockTransfersWorkspace({
             <thead>
               <tr>
                 <th>PN</th>
+                <th>Endereço</th>
                 <th>Grupo</th>
                 <th>
                   <button
@@ -10257,6 +10325,7 @@ function StockTransfersWorkspace({
               {visibleCandidates.map((candidate) => (
                 <tr key={candidate.productKey}>
                   <td><strong>{candidate.product}</strong></td>
+                  <td className="stock-address-cell">{candidate.address || missingStockAddressLabel}</td>
                   <td>{candidate.groupCode}</td>
                   <td>{candidate.quantity}</td>
                   <td className="candidate-actions">
@@ -10290,9 +10359,10 @@ function StockTransfersWorkspace({
           <thead>
             <tr>
                {activeTab === 'transfer' && <th className="stock-checkbox-column">Selecionar</th>}
-               <th>Produto</th>
-               <th>Descrição</th>
-               {!activeList && <th>Grupo</th>}
+                <th>Produto</th>
+                <th>Descrição</th>
+                <th>Endereço</th>
+                {!activeList && <th>Grupo</th>}
               <th>
                 <button
                   className="sortable-header-button"
@@ -10312,6 +10382,7 @@ function StockTransfersWorkspace({
                    <tr key={item.productKey}>
                      <td><strong>{item.product}</strong></td>
                      <td className="stock-description-cell">{item.description || '-'}</td>
+                     <td className="stock-address-cell">{item.address || missingStockAddressLabel}</td>
                      <td><span className={getStockQuantityClass(item.availableQuantity)}>{item.availableQuantity}</span></td>
                     <td>
                       <input
@@ -10340,6 +10411,7 @@ function StockTransfersWorkspace({
                      )}
                      <td><strong>{item.product}</strong></td>
                      <td className="stock-description-cell">{item.description || '-'}</td>
+                     <td className="stock-address-cell">{item.address || missingStockAddressLabel}</td>
                      <td>{item.groupCode || '-'}</td>
                     <td><span className={getStockQuantityClass(item.quantity)}>{item.quantity}</span></td>
                   </tr>

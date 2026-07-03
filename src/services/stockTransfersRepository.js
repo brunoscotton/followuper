@@ -4,6 +4,7 @@ const ITEMS_STORAGE_KEY = 'followuper.stockItems.v1';
 const CATALOG_STORAGE_KEY = 'followuper.stockCatalog.v1';
 const LISTS_STORAGE_KEY = 'followuper.stockTransferLists.v1';
 const CANDIDATES_STORAGE_KEY = 'followuper.stockTransferCandidates.v1';
+const ADDRESSES_STORAGE_KEY = 'followuper.stockProductAddresses.v1';
 
 function loadLocal(key, fallback) {
   try {
@@ -31,6 +32,7 @@ function toStockItem(row) {
     productKey: row.product_key,
     product: row.product,
     description: row.description || '',
+    address: '',
     quantity: Number(row.quantity || 0),
     groupCode: row.group_code || '',
     isManual: row.is_manual === true,
@@ -47,6 +49,19 @@ function mergeStockDescriptions(items, descriptions) {
   }));
 }
 
+function mergeStockAddresses(items, addresses) {
+  const addressesByKey = new Map(
+    addresses.map((address) => [
+      address.product_key || address.productKey,
+      address.address || '',
+    ]),
+  );
+  return items.map((item) => ({
+    ...item,
+    address: addressesByKey.get(item.productKey) || '',
+  }));
+}
+
 async function loadAllStockDescriptions() {
   const descriptions = [];
   const pageSize = 1000;
@@ -60,6 +75,43 @@ async function loadAllStockDescriptions() {
     descriptions.push(...data);
     if (data.length < pageSize) return { data: descriptions, error: null };
   }
+}
+
+async function loadAllStockAddresses() {
+  const addresses = [];
+  const pageSize = 1000;
+
+  for (let start = 0; ; start += pageSize) {
+    const { data, error } = await supabase
+      .from('stock_product_addresses')
+      .select('product_key,address')
+      .range(start, start + pageSize - 1);
+    if (error) return { data: [], error };
+    addresses.push(...data);
+    if (data.length < pageSize) return { data: addresses, error: null };
+  }
+}
+
+async function touchStockCatalog(updatedAt, updatedBy) {
+  const [{ data: currentCatalog, error: catalogLookupError }, { count, error: countError }] = await Promise.all([
+    supabase.from('stock_catalog').select('*').eq('id', 'current').maybeSingle(),
+    supabase.from('stock_items').select('*', { count: 'exact', head: true }),
+  ]);
+  if (catalogLookupError) throw catalogLookupError;
+  if (countError) throw countError;
+
+  const { error: catalogError } = await supabase.from('stock_catalog').upsert(
+    {
+      id: 'current',
+      batch_id: currentCatalog?.batch_id || crypto.randomUUID(),
+      file_name: currentCatalog?.file_name || '',
+      item_count: Number(count || 0),
+      updated_by: updatedBy || currentCatalog?.updated_by || '',
+      updated_at: updatedAt,
+    },
+    { onConflict: 'id' },
+  );
+  if (catalogError) throw catalogError;
 }
 
 async function loadAllStockItems() {
@@ -115,18 +167,23 @@ function toCandidate(row) {
 
 export async function loadStockTransferData() {
   if (!supabase) {
+    const items = mergeStockAddresses(
+      loadLocal(ITEMS_STORAGE_KEY, []),
+      loadLocal(ADDRESSES_STORAGE_KEY, []),
+    );
     return {
       catalog: loadLocal(CATALOG_STORAGE_KEY, null),
-      items: loadLocal(ITEMS_STORAGE_KEY, []),
+      items,
       lists: loadLocal(LISTS_STORAGE_KEY, []),
       candidates: loadLocal(CANDIDATES_STORAGE_KEY, []),
       mode: 'local',
     };
   }
 
-  const [itemsResult, descriptionsResult, catalogResult, listsResult, candidatesResult] = await Promise.all([
+  const [itemsResult, descriptionsResult, addressesResult, catalogResult, listsResult, candidatesResult] = await Promise.all([
     loadAllStockItems(),
     loadAllStockDescriptions(),
+    loadAllStockAddresses(),
     supabase.from('stock_catalog').select('*').eq('id', 'current').maybeSingle(),
     supabase.from('stock_transfer_lists').select('*').order('created_at', { ascending: false }),
     supabase.from('stock_transfer_candidates').select('*').order('created_at', { ascending: true }),
@@ -135,15 +192,20 @@ export async function loadStockTransferData() {
   const firstError = [
     itemsResult.error,
     descriptionsResult.error,
+    addressesResult.error,
     catalogResult.error,
     listsResult.error,
     candidatesResult.error,
   ].find(Boolean);
   if (firstError) {
     if (isMissingTableError(firstError)) {
+      const items = mergeStockAddresses(
+        loadLocal(ITEMS_STORAGE_KEY, []),
+        loadLocal(ADDRESSES_STORAGE_KEY, []),
+      );
       return {
         catalog: loadLocal(CATALOG_STORAGE_KEY, null),
-        items: loadLocal(ITEMS_STORAGE_KEY, []),
+        items,
         lists: loadLocal(LISTS_STORAGE_KEY, []),
         candidates: loadLocal(CANDIDATES_STORAGE_KEY, []),
         mode: 'local',
@@ -152,7 +214,10 @@ export async function loadStockTransferData() {
     throw firstError;
   }
 
-  const items = mergeStockDescriptions(itemsResult.data.map(toStockItem), descriptionsResult.data);
+  const items = mergeStockAddresses(
+    mergeStockDescriptions(itemsResult.data.map(toStockItem), descriptionsResult.data),
+    addressesResult.data,
+  );
   const catalog = toCatalog(catalogResult.data);
   const lists = listsResult.data.map(toTransferList);
   const candidates = candidatesResult.data.map(toCandidate);
@@ -164,14 +229,24 @@ export async function loadStockTransferData() {
 }
 
 export async function loadStockItems() {
-  if (!supabase) return loadLocal(ITEMS_STORAGE_KEY, []);
-  const [itemsResult, descriptionsResult] = await Promise.all([
+  if (!supabase) {
+    return mergeStockAddresses(
+      loadLocal(ITEMS_STORAGE_KEY, []),
+      loadLocal(ADDRESSES_STORAGE_KEY, []),
+    );
+  }
+  const [itemsResult, descriptionsResult, addressesResult] = await Promise.all([
     loadAllStockItems(),
     loadAllStockDescriptions(),
+    loadAllStockAddresses(),
   ]);
   if (itemsResult.error) throw itemsResult.error;
   if (descriptionsResult.error) throw descriptionsResult.error;
-  const items = mergeStockDescriptions(itemsResult.data.map(toStockItem), descriptionsResult.data);
+  if (addressesResult.error) throw addressesResult.error;
+  const items = mergeStockAddresses(
+    mergeStockDescriptions(itemsResult.data.map(toStockItem), descriptionsResult.data),
+    addressesResult.data,
+  );
   saveLocal(ITEMS_STORAGE_KEY, items);
   return items;
 }
@@ -192,7 +267,10 @@ export async function replaceStockItems(items, metadata) {
     const manualItems = loadLocal(ITEMS_STORAGE_KEY, []).filter(
       (item) => item.isManual && !items.some((nextItem) => nextItem.productKey === item.productKey),
     );
-    const allItems = [...items, ...manualItems].sort((a, b) => a.product.localeCompare(b.product, 'pt-BR'));
+    const allItems = mergeStockAddresses(
+      [...items, ...manualItems],
+      loadLocal(ADDRESSES_STORAGE_KEY, []),
+    ).sort((a, b) => a.product.localeCompare(b.product, 'pt-BR'));
     const savedCatalog = { ...catalog, itemCount: allItems.length };
     saveLocal(ITEMS_STORAGE_KEY, allItems);
     saveLocal(CATALOG_STORAGE_KEY, savedCatalog);
@@ -443,26 +521,43 @@ export async function upsertStockProductDescriptions(descriptions, metadata = {}
     if (error) throw error;
   }
 
-  const [{ data: currentCatalog, error: catalogLookupError }, { count, error: countError }] = await Promise.all([
-    supabase.from('stock_catalog').select('*').eq('id', 'current').maybeSingle(),
-    supabase.from('stock_items').select('*', { count: 'exact', head: true }),
-  ]);
-  if (catalogLookupError) throw catalogLookupError;
-  if (countError) throw countError;
-
-  const { error: catalogError } = await supabase.from('stock_catalog').upsert(
-    {
-      id: 'current',
-      batch_id: currentCatalog?.batch_id || crypto.randomUUID(),
-      file_name: currentCatalog?.file_name || '',
-      item_count: Number(count || 0),
-      updated_by: metadata.updatedBy || currentCatalog?.updated_by || '',
-      updated_at: updatedAt,
-    },
-    { onConflict: 'id' },
-  );
-  if (catalogError) throw catalogError;
+  await touchStockCatalog(updatedAt, metadata.updatedBy);
   return descriptions;
+}
+
+export async function replaceStockProductAddresses(addresses, metadata = {}) {
+  if (!supabase) {
+    saveLocal(ADDRESSES_STORAGE_KEY, addresses);
+    const items = mergeStockAddresses(loadLocal(ITEMS_STORAGE_KEY, []), addresses);
+    saveLocal(ITEMS_STORAGE_KEY, items);
+    return addresses;
+  }
+
+  const batchId = crypto.randomUUID();
+  const updatedAt = new Date().toISOString();
+  for (let index = 0; index < addresses.length; index += 500) {
+    const rows = addresses.slice(index, index + 500).map((item) => ({
+      product_key: item.productKey,
+      product: item.product,
+      address: item.address,
+      batch_id: batchId,
+      updated_at: updatedAt,
+    }));
+    const { error } = await supabase
+      .from('stock_product_addresses')
+      .upsert(rows, { onConflict: 'product_key' });
+    if (error) throw error;
+  }
+
+  const { error: cleanupError } = await supabase
+    .from('stock_product_addresses')
+    .delete()
+    .neq('batch_id', batchId);
+  if (cleanupError) throw cleanupError;
+
+  await touchStockCatalog(updatedAt, metadata.updatedBy);
+  saveLocal(ADDRESSES_STORAGE_KEY, addresses);
+  return addresses;
 }
 
 export function subscribeToStockTransferChanges(onChange) {
