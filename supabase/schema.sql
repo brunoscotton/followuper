@@ -161,8 +161,197 @@ create table if not exists public.billing_uploads (
   user_email text,
   user_name text,
   entry_count integer not null default 0,
-  uploaded_at timestamptz not null default now()
+  uploaded_at timestamptz not null default now(),
+  previous_entries jsonb,
+  previous_upload jsonb,
+  has_snapshot boolean not null default false
 );
+
+alter table public.billing_uploads add column if not exists previous_entries jsonb;
+alter table public.billing_uploads add column if not exists previous_upload jsonb;
+alter table public.billing_uploads add column if not exists has_snapshot boolean not null default false;
+
+create or replace function public.replace_billing_entries_with_snapshot(
+  p_seller text,
+  p_rows jsonb,
+  p_upload jsonb
+)
+returns setof public.billing_entries
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_previous_entries jsonb;
+  v_previous_upload jsonb;
+begin
+  select coalesce(jsonb_agg(to_jsonb(entry_row) order by entry_row.order_index), '[]'::jsonb)
+    into v_previous_entries
+  from public.billing_entries entry_row
+  where entry_row.seller = p_seller;
+
+  select to_jsonb(upload_row) - 'previous_entries' - 'previous_upload' - 'has_snapshot'
+    into v_previous_upload
+  from public.billing_uploads upload_row
+  where upload_row.seller = p_seller;
+
+  delete from public.billing_entries where seller = p_seller;
+
+  insert into public.billing_entries (
+    id,
+    seller,
+    row_key,
+    row_data,
+    notes,
+    order_index,
+    created_at,
+    updated_at
+  )
+  select
+    row_data.id,
+    row_data.seller,
+    row_data.row_key,
+    row_data.row_data,
+    row_data.notes,
+    row_data.order_index,
+    row_data.created_at,
+    row_data.updated_at
+  from jsonb_to_recordset(coalesce(p_rows, '[]'::jsonb)) as row_data(
+    id text,
+    seller text,
+    row_key text,
+    row_data jsonb,
+    notes text,
+    order_index integer,
+    created_at timestamptz,
+    updated_at timestamptz
+  );
+
+  insert into public.billing_uploads (
+    seller,
+    file_name,
+    user_id,
+    user_email,
+    user_name,
+    entry_count,
+    uploaded_at,
+    previous_entries,
+    previous_upload,
+    has_snapshot
+  )
+  values (
+    p_seller,
+    coalesce(p_upload->>'file_name', ''),
+    nullif(p_upload->>'user_id', '')::uuid,
+    coalesce(p_upload->>'user_email', ''),
+    coalesce(p_upload->>'user_name', ''),
+    coalesce((p_upload->>'entry_count')::integer, 0),
+    coalesce((p_upload->>'uploaded_at')::timestamptz, now()),
+    v_previous_entries,
+    v_previous_upload,
+    true
+  )
+  on conflict (seller) do update set
+    file_name = excluded.file_name,
+    user_id = excluded.user_id,
+    user_email = excluded.user_email,
+    user_name = excluded.user_name,
+    entry_count = excluded.entry_count,
+    uploaded_at = excluded.uploaded_at,
+    previous_entries = excluded.previous_entries,
+    previous_upload = excluded.previous_upload,
+    has_snapshot = true;
+
+  return query
+  select *
+  from public.billing_entries
+  where seller = p_seller
+  order by order_index;
+end;
+$$;
+
+create or replace function public.restore_last_billing_upload(p_seller text)
+returns setof public.billing_entries
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_previous_entries jsonb;
+  v_previous_upload jsonb;
+  v_has_snapshot boolean;
+begin
+  select previous_entries, previous_upload, has_snapshot
+    into v_previous_entries, v_previous_upload, v_has_snapshot
+  from public.billing_uploads
+  where seller = p_seller
+  for update;
+
+  if not found or not coalesce(v_has_snapshot, false) then
+    raise exception 'Não há upload anterior disponível para restauração.';
+  end if;
+
+  delete from public.billing_entries where seller = p_seller;
+
+  insert into public.billing_entries (
+    id,
+    seller,
+    row_key,
+    row_data,
+    notes,
+    order_index,
+    created_at,
+    updated_at
+  )
+  select
+    row_data.id,
+    row_data.seller,
+    row_data.row_key,
+    row_data.row_data,
+    row_data.notes,
+    row_data.order_index,
+    row_data.created_at,
+    row_data.updated_at
+  from jsonb_to_recordset(coalesce(v_previous_entries, '[]'::jsonb)) as row_data(
+    id text,
+    seller text,
+    row_key text,
+    row_data jsonb,
+    notes text,
+    order_index integer,
+    created_at timestamptz,
+    updated_at timestamptz
+  );
+
+  if v_previous_upload is null then
+    delete from public.billing_uploads where seller = p_seller;
+  else
+    update public.billing_uploads
+    set
+      file_name = coalesce(v_previous_upload->>'file_name', ''),
+      user_id = nullif(v_previous_upload->>'user_id', '')::uuid,
+      user_email = coalesce(v_previous_upload->>'user_email', ''),
+      user_name = coalesce(v_previous_upload->>'user_name', ''),
+      entry_count = coalesce((v_previous_upload->>'entry_count')::integer, 0),
+      uploaded_at = coalesce((v_previous_upload->>'uploaded_at')::timestamptz, now()),
+      previous_entries = null,
+      previous_upload = null,
+      has_snapshot = false
+    where seller = p_seller;
+  end if;
+
+  return query
+  select *
+  from public.billing_entries
+  where seller = p_seller
+  order by order_index;
+end;
+$$;
+
+revoke all on function public.replace_billing_entries_with_snapshot(text, jsonb, jsonb) from public;
+grant execute on function public.replace_billing_entries_with_snapshot(text, jsonb, jsonb) to authenticated;
+revoke all on function public.restore_last_billing_upload(text) from public;
+grant execute on function public.restore_last_billing_upload(text) to authenticated;
 
 create table if not exists public.rotax_parts (
   pn_key text primary key,

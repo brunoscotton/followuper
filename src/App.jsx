@@ -126,8 +126,8 @@ import {
   cacheBillingEntries,
   deleteBillingEntry,
   loadBillingEntries,
-  recordBillingUpload,
-  replaceBillingEntriesForSeller,
+  replaceBillingEntriesForSellerWithSnapshot,
+  restoreLastBillingUpload,
   sortBillingEntries,
   subscribeToBillingChanges,
   updateBillingEntry,
@@ -1566,6 +1566,7 @@ export function App() {
   const [isUploadingQuotes, setIsUploadingQuotes] = useState(false);
   const [isUploadingCustomers, setIsUploadingCustomers] = useState(false);
   const [isUploadingBilling, setIsUploadingBilling] = useState(false);
+  const [isRestoringBilling, setIsRestoringBilling] = useState(false);
   const [isUploadingRotaxParts, setIsUploadingRotaxParts] = useState(false);
   const [isUploadingStock, setIsUploadingStock] = useState(false);
   const [uploadPreview, setUploadPreview] = useState(null);
@@ -3556,15 +3557,15 @@ export function App() {
 
     try {
       const importedRows = await parseBillingUploadFile(file);
-      const savedEntries = await replaceBillingEntriesForSeller(seller, importedRows);
-      const savedUpload = await recordBillingUpload({
+      const result = await replaceBillingEntriesForSellerWithSnapshot(seller, importedRows, {
         seller,
         fileName: file.name,
         userId: user?.id || '',
         userEmail: user?.email || '',
         userName: user?.user_metadata?.full_name || user?.user_metadata?.name || user?.email || '',
-        entryCount: savedEntries.length,
       });
+      const savedEntries = result.entries;
+      const savedUpload = result.upload;
       setBillingEntries((current) => sortBillingEntries([...current.filter((entry) => entry.seller !== seller), ...savedEntries]));
       setBillingUploads((current) => [savedUpload, ...current.filter((upload) => upload.seller !== seller)]);
       if (!options.keepView) {
@@ -3868,6 +3869,44 @@ export function App() {
     } catch (error) {
       setBillingEntries(previousEntries);
       setAppError(error.message || 'Nao foi possivel excluir a cobranca.');
+    }
+  }
+
+  async function restoreBillingUpload(seller) {
+    if (!seller || isRestoringBilling) return;
+    const confirmed = window.confirm(
+      `Excluir o último upload de ${seller} e restaurar a cobrança exatamente como estava antes?`,
+    );
+    if (!confirmed) return;
+
+    const previousEntries = billingEntries;
+    const previousUploads = billingUploads;
+    setIsRestoringBilling(true);
+
+    try {
+      const result = await restoreLastBillingUpload(seller);
+      setBillingEntries((current) =>
+        sortBillingEntries([...current.filter((entry) => entry.seller !== seller), ...result.entries]),
+      );
+      setBillingUploads((current) => [
+        ...(result.upload ? [result.upload] : []),
+        ...current.filter((upload) => upload.seller !== seller),
+      ]);
+      setBillingNoteDrafts((current) => {
+        const sellerEntryIds = new Set(previousEntries.filter((entry) => entry.seller === seller).map((entry) => entry.id));
+        const nextDrafts = Object.fromEntries(
+          Object.entries(current).filter(([entryId]) => !sellerEntryIds.has(entryId)),
+        );
+        saveBillingNoteDrafts(nextDrafts);
+        return nextDrafts;
+      });
+      setAppError(`Último upload de ${seller} excluído. A cobrança anterior foi restaurada.`);
+    } catch (error) {
+      setBillingEntries(previousEntries);
+      setBillingUploads(previousUploads);
+      setAppError(error.message || 'Não foi possível restaurar a cobrança anterior.');
+    } finally {
+      setIsRestoringBilling(false);
     }
   }
 
@@ -5559,9 +5598,11 @@ export function App() {
         entries={billingEntries}
         uploads={billingUploads}
           isUploading={isUploadingBilling}
+          isRestoring={isRestoringBilling}
           noteDrafts={billingNoteDrafts}
           onChangeNote={updateBillingNoteDraft}
           onRemoveEntry={removeBillingEntry}
+          onRestoreUpload={restoreBillingUpload}
           onSaveNote={saveBillingNote}
           onSelectSeller={setActiveBillingSeller}
           onUpload={handleBillingUpload}
@@ -9864,9 +9905,11 @@ function BillingWorkspace({
   entries,
   uploads,
   isUploading,
+  isRestoring,
   noteDrafts,
   onChangeNote,
   onRemoveEntry,
+  onRestoreUpload,
   onSaveNote,
   onSelectSeller,
   onUpload,
@@ -10002,6 +10045,20 @@ function BillingWorkspace({
               }}
             />
           </label>
+          <button
+            className="danger-button compact"
+            type="button"
+            disabled={isUploading || isRestoring || !activeUpload?.canRestore}
+            title={
+              activeUpload?.canRestore
+                ? 'Restaura a cobrança anterior deste vendedor'
+                : 'Não há upload anterior disponível'
+            }
+            onClick={() => onRestoreUpload(activeSeller)}
+          >
+            <RefreshCw size={16} />
+            {isRestoring ? 'Restaurando...' : 'Excluir último upload'}
+          </button>
           {activeUpload && (
             <span className="billing-last-upload">
               Último upload: {formatActivityDate(activeUpload.uploadedAt)} por {activeUpload.userName || activeUpload.userEmail}

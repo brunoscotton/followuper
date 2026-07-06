@@ -2,6 +2,7 @@ import { supabase } from './supabaseClient';
 
 const STORAGE_KEY = 'followuper.billingEntries.v1';
 const UPLOADS_STORAGE_KEY = 'followuper.billingUploads.v1';
+const SNAPSHOTS_STORAGE_KEY = 'followuper.billingUploadSnapshots.v1';
 
 function loadLocalBillingEntries() {
   try {
@@ -25,6 +26,18 @@ function loadLocalBillingUploads() {
 
 function saveLocalBillingUploads(uploads) {
   localStorage.setItem(UPLOADS_STORAGE_KEY, JSON.stringify(uploads));
+}
+
+function loadLocalBillingSnapshots() {
+  try {
+    return JSON.parse(localStorage.getItem(SNAPSHOTS_STORAGE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveLocalBillingSnapshots(snapshots) {
+  localStorage.setItem(SNAPSHOTS_STORAGE_KEY, JSON.stringify(snapshots));
 }
 
 function isMissingTableError(error) {
@@ -66,6 +79,7 @@ function toBillingUpload(row) {
     userName: row.user_name || row.user_email || '',
     entryCount: Number(row.entry_count || 0),
     uploadedAt: row.uploaded_at,
+    canRestore: Boolean(row.has_snapshot),
   };
 }
 
@@ -209,6 +223,116 @@ export async function replaceBillingEntriesForSeller(seller, rows) {
   if (error) throw error;
 
   return sortBillingEntries(data.map(toBillingEntry));
+}
+
+export async function replaceBillingEntriesForSellerWithSnapshot(seller, rows, upload) {
+  const nextUpload = {
+    ...upload,
+    seller,
+    uploadedAt: upload.uploadedAt || new Date().toISOString(),
+  };
+
+  if (!supabase) {
+    const existingEntries = loadLocalBillingEntries();
+    const existingUploads = loadLocalBillingUploads();
+    const previousSellerEntries = existingEntries.filter((entry) => entry.seller === seller);
+    const previousUpload = existingUploads.find((item) => item.seller === seller) || null;
+    const snapshots = loadLocalBillingSnapshots();
+    snapshots[seller] = { entries: previousSellerEntries, upload: previousUpload };
+    saveLocalBillingSnapshots(snapshots);
+
+    const nextSellerRows = mergeRowsWithNotes(seller, rows, previousSellerEntries);
+    saveLocalBillingEntries([...existingEntries.filter((entry) => entry.seller !== seller), ...nextSellerRows]);
+    const savedUpload = { ...nextUpload, entryCount: nextSellerRows.length, canRestore: true };
+    saveLocalBillingUploads([savedUpload, ...existingUploads.filter((item) => item.seller !== seller)]);
+    return { entries: nextSellerRows, upload: savedUpload };
+  }
+
+  const { data: existingData, error: existingError } = await supabase
+    .from('billing_entries')
+    .select('*')
+    .eq('seller', seller);
+  if (existingError) throw existingError;
+
+  const nextRows = mergeRowsWithNotes(seller, rows, (existingData || []).map(toBillingEntry));
+  const uploadPayload = {
+    file_name: nextUpload.fileName || '',
+    user_id: nextUpload.userId || null,
+    user_email: nextUpload.userEmail || '',
+    user_name: nextUpload.userName || nextUpload.userEmail || '',
+    entry_count: nextRows.length,
+    uploaded_at: nextUpload.uploadedAt,
+  };
+  const { data, error } = await supabase.rpc('replace_billing_entries_with_snapshot', {
+    p_seller: seller,
+    p_rows: nextRows.map(toRow),
+    p_upload: uploadPayload,
+  });
+
+  if (error) {
+    const message = String(error.message || '').toLowerCase();
+    if (error.code === 'PGRST202' || message.includes('replace_billing_entries_with_snapshot')) {
+      throw new Error('Atualize o schema do Supabase antes de fazer um novo upload de cobranças.');
+    }
+    throw error;
+  }
+
+  const { data: uploadData, error: uploadError } = await supabase
+    .from('billing_uploads')
+    .select('*')
+    .eq('seller', seller)
+    .single();
+  if (uploadError) throw uploadError;
+
+  return {
+    entries: sortBillingEntries((data || []).map(toBillingEntry)),
+    upload: toBillingUpload(uploadData),
+  };
+}
+
+export async function restoreLastBillingUpload(seller) {
+  if (!seller) throw new Error('Selecione o vendedor da cobrança.');
+
+  if (!supabase) {
+    const snapshots = loadLocalBillingSnapshots();
+    const snapshot = snapshots[seller];
+    if (!snapshot) throw new Error('Não há upload anterior disponível para restauração.');
+
+    const currentEntries = loadLocalBillingEntries();
+    const restoredEntries = snapshot.entries || [];
+    saveLocalBillingEntries([...currentEntries.filter((entry) => entry.seller !== seller), ...restoredEntries]);
+
+    const currentUploads = loadLocalBillingUploads();
+    const restoredUpload = snapshot.upload ? { ...snapshot.upload, canRestore: false } : null;
+    saveLocalBillingUploads([
+      ...(restoredUpload ? [restoredUpload] : []),
+      ...currentUploads.filter((item) => item.seller !== seller),
+    ]);
+    delete snapshots[seller];
+    saveLocalBillingSnapshots(snapshots);
+    return { entries: restoredEntries, upload: restoredUpload };
+  }
+
+  const { data, error } = await supabase.rpc('restore_last_billing_upload', { p_seller: seller });
+  if (error) {
+    const message = String(error.message || '').toLowerCase();
+    if (error.code === 'PGRST202' || message.includes('restore_last_billing_upload')) {
+      throw new Error('Atualize o schema do Supabase para habilitar a restauração de cobranças.');
+    }
+    throw error;
+  }
+
+  const { data: uploadData, error: uploadError } = await supabase
+    .from('billing_uploads')
+    .select('*')
+    .eq('seller', seller)
+    .maybeSingle();
+  if (uploadError) throw uploadError;
+
+  return {
+    entries: sortBillingEntries((data || []).map(toBillingEntry)),
+    upload: uploadData ? toBillingUpload(uploadData) : null,
+  };
 }
 
 export async function updateBillingEntry(id, changes) {
