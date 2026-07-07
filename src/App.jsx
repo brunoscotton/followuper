@@ -1171,6 +1171,11 @@ function parseStockQuantity(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function isValidStockAddressValue(value) {
+  const normalized = normalizeUploadText(value);
+  return Boolean(normalized) && normalized !== 'ESTOQUE';
+}
+
 async function parseStockUploadFile(file) {
   const rows = await readSheet(file);
   const headerIndex = rows.findIndex((row) => {
@@ -1248,9 +1253,43 @@ async function parseStockTransferUploadFile(file) {
     return { type: 'stock', items };
   }
 
+  const descriptionHeaderIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('partnumber') && headers.includes('descricao') && headers.includes('grupo');
+  });
+  if (descriptionHeaderIndex >= 0) {
+    const headers = rows[descriptionHeaderIndex].map(normalizeUploadHeader);
+    const columns = {
+      product: headers.indexOf('partnumber'),
+      description: headers.indexOf('descricao'),
+      groupCode: headers.indexOf('grupo'),
+    };
+    const descriptionsByProduct = new Map();
+
+    rows.slice(descriptionHeaderIndex + 1).forEach((row) => {
+      const product = normalizeUploadValue(row[columns.product]);
+      const productKey = normalizeStockProduct(product);
+      const description = normalizeUploadValue(row[columns.description]);
+      if (!productKey || !description) return;
+
+      descriptionsByProduct.set(productKey, {
+        productKey,
+        product,
+        description,
+        groupCode: normalizeUploadValue(row[columns.groupCode]).replace(/\.0$/, ''),
+      });
+    });
+
+    const descriptions = [...descriptionsByProduct.values()].sort((a, b) =>
+      a.product.localeCompare(b.product, 'pt-BR'),
+    );
+    if (descriptions.length === 0) throw new Error('Nenhuma descricao valida foi encontrada na planilha.');
+    return { type: 'descriptions', descriptions };
+  }
+
   const addressHeaderIndex = rows.findIndex((row) => {
     const headers = row.map(normalizeUploadHeader);
-    return headers.includes('produto') && headers.includes('endereco');
+    return headers.includes('produto') && headers.includes('endereco') && !headers.includes('saldoatual');
   });
   if (addressHeaderIndex >= 0) {
     const headers = rows[addressHeaderIndex].map(normalizeUploadHeader);
@@ -1264,7 +1303,7 @@ async function parseStockTransferUploadFile(file) {
       const product = normalizeUploadValue(row[columns.product]);
       const productKey = normalizeStockProduct(product);
       const address = normalizeUploadValue(row[columns.address]);
-      if (!productKey || !address) return;
+      if (!productKey || !isValidStockAddressValue(address)) return;
 
       const current = addressesByProduct.get(productKey) || {
         productKey,
@@ -1286,15 +1325,15 @@ async function parseStockTransferUploadFile(file) {
     return { type: 'addresses', addresses };
   }
 
-  const descriptionHeaderIndex = rows.findIndex((row) => {
+  const fallbackDescriptionHeaderIndex = rows.findIndex((row) => {
     const headers = row.map(normalizeUploadHeader);
     return headers.includes('partnumber') && headers.includes('descricao') && headers.includes('grupo');
   });
-  if (descriptionHeaderIndex < 0) {
+  if (fallbackDescriptionHeaderIndex < 0) {
     throw new Error('Não encontrei os cabeçalhos de estoque, endereçamento ou descrição genérica nesta planilha.');
   }
 
-  const headers = rows[descriptionHeaderIndex].map(normalizeUploadHeader);
+  const headers = rows[fallbackDescriptionHeaderIndex].map(normalizeUploadHeader);
   const columns = {
     product: headers.indexOf('partnumber'),
     description: headers.indexOf('descricao'),
@@ -1302,7 +1341,7 @@ async function parseStockTransferUploadFile(file) {
   };
   const descriptionsByProduct = new Map();
 
-  rows.slice(descriptionHeaderIndex + 1).forEach((row) => {
+  rows.slice(fallbackDescriptionHeaderIndex + 1).forEach((row) => {
     const product = normalizeUploadValue(row[columns.product]);
     const productKey = normalizeStockProduct(product);
     const description = normalizeUploadValue(row[columns.description]);

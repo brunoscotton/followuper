@@ -27,6 +27,20 @@ export function normalizeStockProduct(value) {
   return String(value || '').trim().toUpperCase();
 }
 
+function normalizeStockAddress(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+function isValidStockAddress(value) {
+  const normalized = normalizeStockAddress(value);
+  return Boolean(normalized) && normalized !== 'ESTOQUE';
+}
+
 function toStockItem(row) {
   return {
     productKey: row.product_key,
@@ -51,10 +65,12 @@ function mergeStockDescriptions(items, descriptions) {
 
 function mergeStockAddresses(items, addresses) {
   const addressesByKey = new Map(
-    addresses.map((address) => [
-      address.product_key || address.productKey,
-      address.address || '',
-    ]),
+    addresses
+      .filter((address) => isValidStockAddress(address.address))
+      .map((address) => [
+        address.product_key || address.productKey,
+        address.address || '',
+      ]),
   );
   return items.map((item) => ({
     ...item,
@@ -526,17 +542,19 @@ export async function upsertStockProductDescriptions(descriptions, metadata = {}
 }
 
 export async function replaceStockProductAddresses(addresses, metadata = {}) {
+  const validAddresses = addresses.filter((item) => isValidStockAddress(item.address));
+
   if (!supabase) {
-    saveLocal(ADDRESSES_STORAGE_KEY, addresses);
-    const items = mergeStockAddresses(loadLocal(ITEMS_STORAGE_KEY, []), addresses);
+    saveLocal(ADDRESSES_STORAGE_KEY, validAddresses);
+    const items = mergeStockAddresses(loadLocal(ITEMS_STORAGE_KEY, []), validAddresses);
     saveLocal(ITEMS_STORAGE_KEY, items);
-    return addresses;
+    return validAddresses;
   }
 
   const batchId = crypto.randomUUID();
   const updatedAt = new Date().toISOString();
-  for (let index = 0; index < addresses.length; index += 500) {
-    const rows = addresses.slice(index, index + 500).map((item) => ({
+  for (let index = 0; index < validAddresses.length; index += 500) {
+    const rows = validAddresses.slice(index, index + 500).map((item) => ({
       product_key: item.productKey,
       product: item.product,
       address: item.address,
@@ -556,8 +574,8 @@ export async function replaceStockProductAddresses(addresses, metadata = {}) {
   if (cleanupError) throw cleanupError;
 
   await touchStockCatalog(updatedAt, metadata.updatedBy);
-  saveLocal(ADDRESSES_STORAGE_KEY, addresses);
-  return addresses;
+  saveLocal(ADDRESSES_STORAGE_KEY, validAddresses);
+  return validAddresses;
 }
 
 export function subscribeToStockTransferChanges(onChange) {
