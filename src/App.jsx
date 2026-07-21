@@ -7374,6 +7374,10 @@ function SideNavigation({
           <FileText size={17} />
           Cotações
         </button>
+        <button className={activeView === 'info' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('info')}>
+          <BookOpenText size={17} />
+          Painel infos.
+        </button>
         <button className={activeView === 'uploads' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('uploads')}>
           <Upload size={17} />
           Upload
@@ -7415,10 +7419,6 @@ function SideNavigation({
         <button className={activeView === 'stockTransfers' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('stockTransfers')}>
           <RefreshCw size={17} />
           Transferência/Estoque
-        </button>
-        <button className={activeView === 'info' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('info')}>
-          <BookOpenText size={17} />
-          Painel infos.
         </button>
         <button className={activeView === 'rotax' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('rotax')}>
           <GraduationCap size={17} />
