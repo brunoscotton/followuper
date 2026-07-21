@@ -77,12 +77,9 @@ export function startUserPresence(user, initialState, onSync) {
   if (!supabase || !user?.id) return { update: () => {}, unsubscribe: () => {} };
 
   let currentState = initialState;
-  const channel = supabase.channel('followuper:online-users', {
-    config: {
-      private: true,
-      presence: { key: `${user.id}:${crypto.randomUUID()}` },
-    },
-  });
+  let channel = null;
+  let isUnsubscribed = false;
+  let isSubscribed = false;
 
   const buildPayload = () => ({
     userId: user.id,
@@ -93,20 +90,51 @@ export function startUserPresence(user, initialState, onSync) {
     onlineAt: new Date().toISOString(),
   });
 
-  channel
-    .on('presence', { event: 'sync' }, () => {
-      onSync(Object.values(channel.presenceState()).flat().filter((presence) => presence?.userId));
-    })
-    .subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') await channel.track(buildPayload());
+  const trackPresence = async () => {
+    if (!channel || !isSubscribed) return;
+    await channel.track(buildPayload());
+  };
+
+  const connect = async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (isUnsubscribed || !session?.access_token) return;
+
+    await supabase.realtime.setAuth(session.access_token);
+    if (isUnsubscribed) return;
+
+    channel = supabase.channel('followuper:online-users', {
+      config: {
+        private: true,
+        presence: { key: `${user.id}:${crypto.randomUUID()}` },
+      },
     });
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        onSync(Object.values(channel.presenceState()).flat().filter((presence) => presence?.userId));
+      })
+      .subscribe(async (status) => {
+        if (status !== 'SUBSCRIBED') return;
+        isSubscribed = true;
+        await trackPresence();
+      });
+  };
+
+  connect().catch(() => {
+    onSync([]);
+  });
 
   return {
     async update(nextState) {
       currentState = { ...currentState, ...nextState };
-      await channel.track(buildPayload());
+      await trackPresence();
     },
     unsubscribe() {
+      isUnsubscribed = true;
+      if (!channel) return;
       channel.untrack();
       supabase.removeChannel(channel);
     },
