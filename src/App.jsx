@@ -10407,6 +10407,10 @@ function StockTransfersWorkspace({
   const [candidateForm, setCandidateForm] = useState({ product: '', quantity: '', groupCode: '9001' });
   const [candidateErrors, setCandidateErrors] = useState({});
   const [isSavingCandidate, setIsSavingCandidate] = useState(false);
+  const tableWrapRef = useRef(null);
+  const tableRef = useRef(null);
+  const topScrollRef = useRef(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
   const activeListId = activeTab.startsWith('list:') ? activeTab.slice(5) : '';
   const activeList = lists.find((list) => list.id === activeListId);
 
@@ -10427,6 +10431,37 @@ function StockTransfersWorkspace({
     const availableKeys = new Set(items.map((item) => item.productKey));
     setSelectedKeys((current) => current.filter((key) => availableKeys.has(key)));
   }, [items]);
+
+  useEffect(() => {
+    function updateScrollWidth() {
+      const nextWidth = tableRef.current?.scrollWidth || tableWrapRef.current?.scrollWidth || 0;
+      setTableScrollWidth(nextWidth);
+    }
+
+    updateScrollWidth();
+    window.addEventListener('resize', updateScrollWidth);
+
+    if (typeof ResizeObserver === 'undefined') {
+      return () => window.removeEventListener('resize', updateScrollWidth);
+    }
+
+    const resizeObserver = new ResizeObserver(updateScrollWidth);
+    if (tableRef.current) resizeObserver.observe(tableRef.current);
+    if (tableWrapRef.current) resizeObserver.observe(tableWrapRef.current);
+
+    return () => {
+      window.removeEventListener('resize', updateScrollWidth);
+      resizeObserver.disconnect();
+    };
+  }, [activeListId, activeTab, candidates.length, items.length, lists.length, quantitySort, searchTerm]);
+
+  function syncTableScrollFromTop(event) {
+    if (tableWrapRef.current) tableWrapRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
+
+  function syncTopScrollFromTable(event) {
+    if (topScrollRef.current) topScrollRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
 
   const visibleItems = useMemo(() => {
     const normalizedSearch = normalizeStockProduct(searchTerm);
@@ -10721,9 +10756,13 @@ function StockTransfersWorkspace({
         )}
       </div>
 
+      <div className="table-top-scroll" ref={topScrollRef} onScroll={syncTableScrollFromTop} aria-label="Mover tabela lateralmente">
+        <div style={{ width: `${tableScrollWidth || 1120}px` }} />
+      </div>
+
       {activeTab === 'register' ? (
-        <div className="table-wrap">
-          <table className="quote-table stock-table stock-candidate-table">
+        <div className="table-wrap" ref={tableWrapRef} onScroll={syncTopScrollFromTable}>
+          <table className="quote-table stock-table stock-candidate-table" ref={tableRef}>
             <thead>
               <tr>
                 <th>PN</th>
@@ -10775,8 +10814,8 @@ function StockTransfersWorkspace({
           </table>
         </div>
       ) : (
-      <div className="table-wrap">
-        <table className="quote-table stock-table">
+      <div className="table-wrap" ref={tableWrapRef} onScroll={syncTopScrollFromTable}>
+        <table className="quote-table stock-table" ref={tableRef}>
           <thead>
             <tr>
                {activeTab === 'transfer' && <th className="stock-checkbox-column">Selecionar</th>}
