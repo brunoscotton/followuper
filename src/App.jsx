@@ -150,6 +150,15 @@ import {
   subscribeToWarrantyChanges,
   updateWarrantyEntry,
 } from './services/warrantiesRepository';
+import {
+  cacheReminders,
+  createReminder,
+  deleteReminder,
+  loadReminders,
+  sortReminders,
+  subscribeToReminderChanges,
+  updateReminder,
+} from './services/remindersRepository';
 import { generateContractPdf } from './services/contractsPdfService';
 import { createUploadAudit, loadUploadAudits } from './services/uploadAuditsRepository';
 import {
@@ -298,6 +307,46 @@ const warrantyTabs = [
   { value: 'andamento', label: 'Em andamento' },
   { value: 'finalizada', label: 'Finalizada' },
 ];
+
+const reminderTabs = [
+  { value: 'new', label: 'Novos lembretes' },
+  { value: 'archived', label: 'Lembretes arquivados' },
+];
+
+const reminderRecipients = [
+  { value: 'self', label: 'Eu' },
+  { value: 'bruno', label: 'Bruno' },
+  { value: 'elton', label: 'Elton' },
+  { value: 'stephanie', label: 'Stephanie' },
+  { value: 'all', label: 'Todos' },
+];
+
+const reminderScheduleOptions = [
+  { value: 'first_login', label: 'Primeiro login do dia' },
+  { value: 'interval', label: 'A cada X de tempo' },
+  { value: 'immediate', label: 'Imediato' },
+];
+
+const reminderSnoozeOptions = [
+  { label: '1 minuto', minutes: 1 },
+  { label: '5 minutos', minutes: 5 },
+  { label: '10 minutos', minutes: 10 },
+  { label: '30 min', minutes: 30 },
+  { label: '1 hora', minutes: 60 },
+  { label: '2 horas', minutes: 120 },
+  { label: '3 horas', minutes: 180 },
+  { label: '4 horas', minutes: 240 },
+  { label: '5 horas', minutes: 300 },
+  { label: '6 horas', minutes: 360 },
+];
+
+const initialReminderForm = {
+  intervalAmount: '1',
+  intervalUnit: 'hours',
+  message: '',
+  recipient: 'self',
+  scheduleType: 'first_login',
+};
 
 const rotaxInfoCategories = [
   { value: 'internal', label: 'Informações Internas' },
@@ -1393,6 +1442,79 @@ function formatDateTime(dateValue) {
   }).format(new Date(dateValue));
 }
 
+function normalizeReminderText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function getUserDisplayName(user) {
+  const metadataName = user?.user_metadata?.full_name || user?.user_metadata?.name;
+  if (metadataName) return metadataName;
+  const emailName = String(user?.email || '').split('@')[0].replace(/[._-]+/g, ' ').trim();
+  return emailName ? emailName.replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Usuário';
+}
+
+function getTomorrowStartIso(dateValue = new Date()) {
+  const date = dateValue instanceof Date ? new Date(dateValue) : new Date(dateValue);
+  date.setDate(date.getDate() + 1);
+  date.setHours(0, 0, 0, 0);
+  return date.toISOString();
+}
+
+function addReminderInterval(dateValue, amount, unit) {
+  const date = dateValue instanceof Date ? new Date(dateValue) : new Date(dateValue);
+  const numericAmount = Math.max(1, Number(amount || 1));
+  if (unit === 'hours') date.setHours(date.getHours() + numericAmount);
+  else date.setMinutes(date.getMinutes() + numericAmount);
+  return date.toISOString();
+}
+
+function getReminderFirstDueAt(scheduleType, intervalAmount, intervalUnit, dateValue = new Date()) {
+  if (scheduleType === 'immediate') return new Date(dateValue).toISOString();
+  if (scheduleType === 'interval') return addReminderInterval(dateValue, intervalAmount, intervalUnit);
+  return getTomorrowStartIso(dateValue);
+}
+
+function reminderMatchesUser(reminder, user) {
+  if (!user) return true;
+  if (reminder.targetType === 'all') return true;
+  if (reminder.targetUserId && reminder.targetUserId === user.id) return true;
+
+  const userNeedle = normalizeReminderText(`${user.email || ''} ${getUserDisplayName(user)}`);
+  const targetNeedle = normalizeReminderText(`${reminder.targetEmail || ''} ${reminder.targetName || ''}`);
+  return Boolean(targetNeedle && userNeedle.includes(targetNeedle));
+}
+
+function reminderVisibleToUser(reminder, user) {
+  if (!user) return true;
+  return reminderMatchesUser(reminder, user) || reminder.createdById === user.id || reminder.createdByEmail === user.email;
+}
+
+function getReminderDueAt(reminder) {
+  const dueTimes = [reminder.nextDueAt, reminder.snoozedUntil]
+    .map((value) => (value ? new Date(value).getTime() : 0))
+    .filter(Boolean);
+  return dueTimes.length ? Math.max(...dueTimes) : 0;
+}
+
+function reminderIsDue(reminder, user, nowValue = new Date()) {
+  if (reminder.archivedAt || !reminderMatchesUser(reminder, user)) return false;
+  const dueAt = getReminderDueAt(reminder);
+  return Boolean(dueAt && dueAt <= nowValue.getTime());
+}
+
+function getReminderScheduleLabel(reminder) {
+  if (reminder.scheduleType === 'immediate') return 'Imediato';
+  if (reminder.scheduleType === 'interval') {
+    const unit = reminder.intervalUnit === 'hours' ? 'hora(s)' : 'minuto(s)';
+    return `A cada ${reminder.intervalAmount || 1} ${unit}`;
+  }
+  return 'Primeiro login do dia';
+}
+
 function formatDateWithWeekday(dateValue) {
   if (!dateValue) return '—';
 
@@ -1578,6 +1700,7 @@ export function App() {
   const [billingUploads, setBillingUploads] = useState([]);
   const [returnEntries, setReturnEntries] = useState([]);
   const [warrantyEntries, setWarrantyEntries] = useState([]);
+  const [reminders, setReminders] = useState([]);
   const [contractTemplates, setContractTemplates] = useState([]);
   const [activeContractType, setActiveContractType] = useState('motor');
   const [contractForms, setContractForms] = useState(initialContractForms);
@@ -1597,6 +1720,7 @@ export function App() {
   const [activeBillingSeller, setActiveBillingSeller] = useState(billingSellers[0]);
   const [activeReturnTab, setActiveReturnTab] = useState('andamento');
   const [activeWarrantyTab, setActiveWarrantyTab] = useState('andamento');
+  const [activeReminderTab, setActiveReminderTab] = useState('new');
   const [expandedRotaxStudentIds, setExpandedRotaxStudentIds] = useState([]);
   const [layoutMode, setLayoutMode] = useState(getStoredLayoutMode);
   const [mainMenuOpen, setMainMenuOpen] = useState(false);
@@ -1622,6 +1746,10 @@ export function App() {
   const [warrantyModal, setWarrantyModal] = useState(null);
   const [warrantyForm, setWarrantyForm] = useState(initialWarrantyForm);
   const [warrantyErrors, setWarrantyErrors] = useState({});
+  const [reminderForm, setReminderForm] = useState(initialReminderForm);
+  const [reminderErrors, setReminderErrors] = useState({});
+  const [editingReminderId, setEditingReminderId] = useState('');
+  const [activeReminderPopup, setActiveReminderPopup] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
   const [selectedSellers, setSelectedSellers] = useState([]);
@@ -1798,6 +1926,7 @@ export function App() {
       setBillingUploads([]);
       setReturnEntries([]);
       setWarrantyEntries([]);
+      setReminders([]);
       setContractTemplates([]);
       setUploadAudits([]);
       setIsLoading(false);
@@ -1818,6 +1947,7 @@ export function App() {
       loadBillingEntries(),
       loadReturnEntries(),
       loadWarrantyEntries(),
+      loadReminders(),
     ])
       .then(
         ([
@@ -1831,6 +1961,7 @@ export function App() {
           billingResult,
           returnResult,
           warrantyResult,
+          remindersResult,
         ]) => {
         if (!active) return;
         setQuotes(quoteResult.quotes);
@@ -1847,6 +1978,7 @@ export function App() {
         setBillingUploads(billingResult.uploads || []);
         setReturnEntries(returnResult.entries);
         setWarrantyEntries(warrantyResult.entries);
+        setReminders(remindersResult.reminders);
         setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
         setDataStatus(quoteResult.mode === 'supabase' ? 'Supabase · tempo real' : 'Local');
         setAppError('');
@@ -1917,6 +2049,9 @@ export function App() {
           const unsubscribeWarranties = subscribeToWarrantyChanges(({ eventType, entry, oldId }) => {
             setWarrantyEntries((current) => syncCollection(current, eventType, entry, oldId, sortWarrantyEntries, cacheWarrantyEntries));
           });
+          const unsubscribeReminders = subscribeToReminderChanges(({ eventType, reminder, oldId }) => {
+            setReminders((current) => syncCollection(current, eventType, reminder, oldId, sortReminders, cacheReminders));
+          });
 
           unsubscribeRealtime = () => {
             unsubscribeQuotes();
@@ -1928,6 +2063,7 @@ export function App() {
             unsubscribeBilling();
             unsubscribeReturns();
             unsubscribeWarranties();
+            unsubscribeReminders();
           };
         }
       },
@@ -2406,6 +2542,37 @@ export function App() {
         .some((value) => normalize(value).includes(query));
     });
   }, [customerSearchTerm, customers]);
+
+  const visibleReminders = useMemo(
+    () => reminders.filter((reminder) => reminderVisibleToUser(reminder, user)),
+    [reminders, user],
+  );
+
+  const pendingReminderCount = useMemo(
+    () => visibleReminders.filter((reminder) => !reminder.archivedAt).length,
+    [visibleReminders],
+  );
+
+  const dueReminder = useMemo(
+    () =>
+      visibleReminders
+        .filter((reminder) => reminderIsDue(reminder, user, now))
+        .sort((a, b) => getReminderDueAt(a) - getReminderDueAt(b))[0] || null,
+    [now, user, visibleReminders],
+  );
+
+  useEffect(() => {
+    if (!dueReminder) {
+      setActiveReminderPopup(null);
+      return;
+    }
+
+    setActiveReminderPopup((current) => {
+      if (current?.id && current.id === dueReminder.id) return dueReminder;
+      if (current?.id && reminderIsDue(current, user, now)) return current;
+      return dueReminder;
+    });
+  }, [dueReminder, now, user]);
 
   const visibleQuotes = useMemo(() => {
     const query = normalize(searchTerm);
@@ -4208,6 +4375,166 @@ export function App() {
     }
   }
 
+  function getReminderRecipientFromEntry(reminder) {
+    if (reminder.targetType === 'all') return 'all';
+    if (reminder.targetType === 'user' && reminder.targetUserId === user?.id) return 'self';
+    const normalizedTarget = normalizeReminderText(reminder.targetName || reminder.targetEmail);
+    return reminderRecipients.find((recipient) => recipient.value !== 'self' && recipient.value !== 'all' && recipient.value === normalizedTarget)
+      ?.value || 'self';
+  }
+
+  function buildReminderTarget(recipient) {
+    if (recipient === 'all') {
+      return { targetEmail: '', targetName: 'Todos', targetType: 'all', targetUserId: '' };
+    }
+
+    if (recipient === 'self') {
+      return {
+        targetEmail: user?.email || '',
+        targetName: getUserDisplayName(user),
+        targetType: 'user',
+        targetUserId: user?.id || '',
+      };
+    }
+
+    const option = reminderRecipients.find((item) => item.value === recipient);
+    return {
+      targetEmail: '',
+      targetName: option?.label || recipient,
+      targetType: 'named',
+      targetUserId: '',
+    };
+  }
+
+  function openReminderEditor(reminder) {
+    setEditingReminderId(reminder.id);
+    setReminderForm({
+      intervalAmount: String(reminder.intervalAmount || 1),
+      intervalUnit: reminder.intervalUnit || 'minutes',
+      message: reminder.message || '',
+      recipient: getReminderRecipientFromEntry(reminder),
+      scheduleType: reminder.scheduleType || 'first_login',
+    });
+    setReminderErrors({});
+    setActiveReminderTab(reminder.archivedAt ? 'archived' : 'new');
+    setActiveView('reminders');
+  }
+
+  function resetReminderForm() {
+    setReminderForm(initialReminderForm);
+    setReminderErrors({});
+    setEditingReminderId('');
+  }
+
+  function updateReminderForm(field, value) {
+    setReminderForm((current) => ({ ...current, [field]: value }));
+    setReminderErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  function validateReminderForm() {
+    const nextErrors = {};
+    if (!reminderForm.message.trim()) nextErrors.message = 'Digite o lembrete.';
+    if (reminderForm.scheduleType === 'interval' && Number(reminderForm.intervalAmount || 0) <= 0) {
+      nextErrors.intervalAmount = 'Informe um intervalo maior que zero.';
+    }
+    setReminderErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
+
+  async function saveReminderForm(event) {
+    event.preventDefault();
+    if (!validateReminderForm()) return;
+
+    const previousReminders = reminders;
+    const nowIso = new Date().toISOString();
+    const target = buildReminderTarget(reminderForm.recipient);
+    const editingReminder = reminders.find((reminder) => reminder.id === editingReminderId);
+    const nextReminder = {
+      ...(editingReminder || {}),
+      ...target,
+      id: editingReminderId || crypto.randomUUID(),
+      message: reminderForm.message.trim(),
+      createdById: editingReminder?.createdById || user?.id || '',
+      createdByEmail: editingReminder?.createdByEmail || user?.email || '',
+      scheduleType: reminderForm.scheduleType,
+      intervalAmount: Number(reminderForm.intervalAmount || 1),
+      intervalUnit: reminderForm.intervalUnit,
+      nextDueAt: getReminderFirstDueAt(reminderForm.scheduleType, reminderForm.intervalAmount, reminderForm.intervalUnit),
+      snoozedUntil: '',
+      createdAt: editingReminder?.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+
+    setReminders((current) => sortReminders([nextReminder, ...current.filter((reminder) => reminder.id !== nextReminder.id)]));
+
+    try {
+      const savedReminder = editingReminderId
+        ? await updateReminder(editingReminderId, {
+            ...target,
+            message: nextReminder.message,
+            scheduleType: nextReminder.scheduleType,
+            intervalAmount: nextReminder.intervalAmount,
+            intervalUnit: nextReminder.intervalUnit,
+            nextDueAt: nextReminder.nextDueAt,
+            snoozedUntil: '',
+          })
+        : await createReminder(nextReminder);
+
+      setReminders((current) => sortReminders([savedReminder, ...current.filter((reminder) => reminder.id !== savedReminder.id)]));
+      setActiveReminderTab(savedReminder.archivedAt ? 'archived' : 'new');
+      resetReminderForm();
+      setAppError('');
+    } catch (error) {
+      setReminders(previousReminders);
+      setAppError(error.message || 'Nao foi possivel salvar o lembrete.');
+    }
+  }
+
+  async function patchReminder(reminder, changes, fallbackMessage = 'Nao foi possivel atualizar o lembrete.') {
+    const previousReminders = reminders;
+    const optimisticReminder = { ...reminder, ...changes, updatedAt: new Date().toISOString() };
+    setReminders((current) => sortReminders([optimisticReminder, ...current.filter((item) => item.id !== reminder.id)]));
+
+    try {
+      const savedReminder = await updateReminder(reminder.id, changes);
+      setReminders((current) => sortReminders([savedReminder, ...current.filter((item) => item.id !== savedReminder.id)]));
+      if (activeReminderPopup?.id === reminder.id) setActiveReminderPopup(null);
+      setAppError('');
+    } catch (error) {
+      setReminders(previousReminders);
+      setAppError(error.message || fallbackMessage);
+    }
+  }
+
+  function archiveReminder(reminder) {
+    patchReminder(reminder, { archivedAt: new Date().toISOString(), snoozedUntil: '' }, 'Nao foi possivel arquivar o lembrete.');
+  }
+
+  function snoozeReminder(reminder, minutes) {
+    const snoozedUntil = addReminderInterval(new Date(), minutes, 'minutes');
+    patchReminder(reminder, { snoozedUntil }, 'Nao foi possivel reagendar o lembrete.');
+  }
+
+  function standByReminderUntilTomorrow(reminder) {
+    patchReminder(reminder, { snoozedUntil: getTomorrowStartIso() }, 'Nao foi possivel colocar o lembrete em standby.');
+  }
+
+  async function removeReminder(reminder) {
+    if (!reminder?.id) return;
+    const previousReminders = reminders;
+    setReminders((current) => current.filter((item) => item.id !== reminder.id));
+
+    try {
+      await deleteReminder(reminder.id);
+      if (activeReminderPopup?.id === reminder.id) setActiveReminderPopup(null);
+      if (editingReminderId === reminder.id) resetReminderForm();
+      setAppError('');
+    } catch (error) {
+      setReminders(previousReminders);
+      setAppError(error.message || 'Nao foi possivel excluir o lembrete.');
+    }
+  }
+
   function openCustomerEditModal(customer) {
     setCustomerEditModal(customer);
     setCustomerEditForm({
@@ -5335,6 +5662,10 @@ export function App() {
                           <BookOpenText size={16} />
                           Painel de informações
                         </button>
+                        <button type="button" onClick={() => navigateFromMenu('reminders')}>
+                          <Bell size={16} />
+                          Lembretes
+                        </button>
                         <button type="button" onClick={() => navigateFromMenu('rotax')}>
                           <GraduationCap size={16} />
                           Treinamento Rotax
@@ -5403,6 +5734,14 @@ export function App() {
                 >
                   <BookOpenText size={16} />
                   Painel de informações
+                </button>
+                <button
+                  className={activeView === 'reminders' ? 'view-button active' : 'view-button'}
+                  type="button"
+                  onClick={() => setActiveView('reminders')}
+                >
+                  <Bell size={16} />
+                  Lembretes
                 </button>
                 <button
                   className={activeView === 'rotax' ? 'view-button active' : 'view-button'}
@@ -5527,6 +5866,7 @@ export function App() {
             isMasterUser={isMasterUser}
             metrics={metrics}
             onNavigate={navigateFromSideMenu}
+            pendingReminderCount={pendingReminderCount}
             onSubmitQuote={handleSubmit}
             onUpdateForm={updateForm}
             quoteFormOpen={sideQuoteFormOpen}
@@ -5686,6 +6026,26 @@ export function App() {
           totalCounts={{
             andamento: warrantyEntries.filter((entry) => !isWarrantyFinalized(entry)).length,
             finalizada: warrantyEntries.filter(isWarrantyFinalized).length,
+          }}
+        />
+      ) : activeView === 'reminders' ? (
+        <RemindersWorkspace
+          activeTab={activeReminderTab}
+          editingId={editingReminderId}
+          errors={reminderErrors}
+          form={reminderForm}
+          now={now}
+          onArchive={archiveReminder}
+          onCancelEdit={resetReminderForm}
+          onEdit={openReminderEditor}
+          onRemove={removeReminder}
+          onSubmit={saveReminderForm}
+          onUpdate={updateReminderForm}
+          reminders={visibleReminders}
+          setActiveTab={setActiveReminderTab}
+          totalCounts={{
+            archived: visibleReminders.filter((reminder) => reminder.archivedAt).length,
+            new: visibleReminders.filter((reminder) => !reminder.archivedAt).length,
           }}
         />
       ) : activeView === 'rotaxParts' ? (
@@ -5886,6 +6246,15 @@ export function App() {
           onToggleStatus={toggleWarrantyStatus}
           onUpdate={updateWarrantyForm}
           onUploadAttachment={handleWarrantyAttachmentUpload}
+        />
+      )}
+
+      {activeReminderPopup && (
+        <ReminderPopup
+          reminder={activeReminderPopup}
+          onArchive={archiveReminder}
+          onStandBy={standByReminderUntilTomorrow}
+          onSnooze={snoozeReminder}
         />
       )}
 
@@ -7217,6 +7586,7 @@ function SideNavigation({
   isMasterUser,
   metrics,
   onNavigate,
+  pendingReminderCount,
   onSubmitQuote,
   onUpdateForm,
   quoteFormOpen,
@@ -7377,6 +7747,11 @@ function SideNavigation({
         <button className={activeView === 'info' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('info')}>
           <BookOpenText size={17} />
           Painel infos.
+        </button>
+        <button className={activeView === 'reminders' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('reminders')}>
+          <Bell size={17} />
+          Lembretes
+          {pendingReminderCount > 0 && <strong>{pendingReminderCount}</strong>}
         </button>
         <button className={activeView === 'uploads' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('uploads')}>
           <Upload size={17} />
@@ -11040,6 +11415,7 @@ const activityEntityLabels = {
   dashboard_settings: 'Configuração do dashboard',
   info_blocks: 'Painel de informações',
   quotes: 'Cotações',
+  reminders: 'Lembretes',
   return_entries: 'Devoluções',
   rotax_revenue_entries: 'Faturamento Rotax',
   rotax_parts_catalog: 'Catálogo PN Rotax',
@@ -11066,6 +11442,7 @@ const activityFieldLabels = {
   expected_delivery_date: 'previsão de entrega',
   follow_up_started_at: 'follow-up',
   invoice_number: 'nota fiscal',
+  message: 'lembrete',
   notes: 'observações',
   payment_terms: 'pagamento',
   phone: 'telefone',
@@ -11081,6 +11458,7 @@ const userViewLabels = {
   customers: 'Clientes',
   info: 'Painel de informações',
   quotes: 'Cotações',
+  reminders: 'Lembretes',
   returns: 'Devoluções',
   rotax: 'Treinamento Rotax',
   rotaxParts: 'Consulta PN Rotax',
@@ -11278,6 +11656,239 @@ function UsersWorkspace({ activityLogs, now, onlineUsers, profiles }) {
         {filteredLogs.length === 0 && <div className="empty-state">Nenhuma alteração encontrada.</div>}
       </div>
     </section>
+  );
+}
+
+function getReminderTargetLabel(reminder) {
+  if (reminder.targetType === 'all') return 'Todos';
+  if (reminder.targetType === 'user') return reminder.targetName || reminder.targetEmail || 'Eu';
+  return reminder.targetName || 'Usuário';
+}
+
+function getReminderNextLabel(reminder, now) {
+  if (reminder.archivedAt) return `Arquivado em ${formatDateTime(reminder.archivedAt)}`;
+  const dueAt = getReminderDueAt(reminder);
+  if (!dueAt) return 'Sem horário definido';
+  if (dueAt <= now.getTime()) return 'Agora';
+  return formatDateTime(dueAt);
+}
+
+function RemindersWorkspace({
+  activeTab,
+  editingId,
+  errors = {},
+  form,
+  now,
+  onArchive,
+  onCancelEdit,
+  onEdit,
+  onRemove,
+  onSubmit,
+  onUpdate,
+  reminders,
+  setActiveTab,
+  totalCounts,
+}) {
+  const visibleTabReminders = reminders.filter((reminder) => (activeTab === 'archived' ? reminder.archivedAt : !reminder.archivedAt));
+
+  return (
+    <section className="reminders-panel">
+      <div className="panel-toolbar">
+        <div className="section-title">
+          <Bell size={20} />
+          <h2>Lembretes</h2>
+        </div>
+      </div>
+
+      <form className="reminder-form" onSubmit={onSubmit} noValidate>
+        <div className="form-pair wide">
+          <label>
+            Para quem será o lembrete?
+            <select value={form.recipient} onChange={(event) => onUpdate('recipient', event.target.value)}>
+              {reminderRecipients.map((recipient) => (
+                <option key={recipient.value} value={recipient.value}>
+                  {recipient.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Quando mostrar?
+            <select value={form.scheduleType} onChange={(event) => onUpdate('scheduleType', event.target.value)}>
+              {reminderScheduleOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {form.scheduleType === 'interval' && (
+          <div className="form-pair reminder-interval-row">
+            <label>
+              Intervalo
+              <input
+                min="1"
+                type="number"
+                value={form.intervalAmount}
+                onChange={(event) => onUpdate('intervalAmount', event.target.value)}
+              />
+              {errors.intervalAmount && <small>{errors.intervalAmount}</small>}
+            </label>
+            <label>
+              Unidade
+              <select value={form.intervalUnit} onChange={(event) => onUpdate('intervalUnit', event.target.value)}>
+                <option value="minutes">Minutos</option>
+                <option value="hours">Horas</option>
+              </select>
+            </label>
+          </div>
+        )}
+
+        <label>
+          Lembrete
+          <textarea
+            value={form.message}
+            onChange={(event) => onUpdate('message', event.target.value)}
+            placeholder="Digite o lembrete"
+            rows="4"
+          />
+          {errors.message && <small>{errors.message}</small>}
+        </label>
+
+        <div className="reminder-form-actions">
+          {editingId && (
+            <button className="secondary-button" type="button" onClick={onCancelEdit}>
+              Cancelar edição
+            </button>
+          )}
+          <button className="primary-button" type="submit">
+            <Save size={16} />
+            {editingId ? 'Atualizar lembrete' : 'Salvar lembrete'}
+          </button>
+        </div>
+      </form>
+
+      <div className="tabs reminders-tabs" role="tablist" aria-label="Lembretes">
+        {reminderTabs.map((tab) => (
+          <button
+            className={activeTab === tab.value ? 'tab active' : 'tab'}
+            key={tab.value}
+            type="button"
+            onClick={() => setActiveTab(tab.value)}
+          >
+            {tab.label}
+            <strong>{totalCounts[tab.value]}</strong>
+          </button>
+        ))}
+      </div>
+
+      <div className="table-wrap">
+        <table className="quote-table reminders-table">
+          <thead>
+            <tr>
+              <th>Para</th>
+              <th>Lembrete</th>
+              <th>Regra</th>
+              <th>{activeTab === 'archived' ? 'Arquivado' : 'Próximo aviso'}</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleTabReminders.map((reminder) => (
+              <tr className="quote-row" key={reminder.id}>
+                <td className="strong-text">{getReminderTargetLabel(reminder)}</td>
+                <td className="reminder-message-cell">{reminder.message}</td>
+                <td>{getReminderScheduleLabel(reminder)}</td>
+                <td>{getReminderNextLabel(reminder, now)}</td>
+                <td>
+                  <div className="row-actions">
+                    {!reminder.archivedAt && (
+                      <button
+                        className="icon-button neutral"
+                        type="button"
+                        title="Arquivar lembrete"
+                        aria-label="Arquivar lembrete"
+                        onClick={() => onArchive(reminder)}
+                      >
+                        <CheckCircle2 size={17} />
+                      </button>
+                    )}
+                    <button
+                      className="icon-button neutral"
+                      type="button"
+                      title="Editar lembrete"
+                      aria-label="Editar lembrete"
+                      onClick={() => onEdit(reminder)}
+                    >
+                      <Pencil size={17} />
+                    </button>
+                    <button
+                      className="icon-button"
+                      type="button"
+                      title="Excluir lembrete"
+                      aria-label="Excluir lembrete"
+                      onClick={() => onRemove(reminder)}
+                    >
+                      <Trash2 size={17} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {visibleTabReminders.length === 0 && (
+        <div className="empty-state">
+          <Bell size={28} />
+          <p>Nenhum lembrete nesta aba.</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReminderPopup({ onArchive, onStandBy, onSnooze, reminder }) {
+  return (
+    <div className="modal-backdrop reminder-backdrop" role="presentation">
+      <section className="close-modal reminder-popup" role="dialog" aria-modal="true" aria-labelledby="reminder-popup-title">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Lembrete</p>
+            <h2 id="reminder-popup-title">{getReminderTargetLabel(reminder)}</h2>
+          </div>
+          <Bell size={22} />
+        </div>
+
+        <p className="reminder-popup-message">{reminder.message}</p>
+
+        <div className="reminder-popup-actions">
+          <button className="primary-button" type="button" onClick={() => onArchive(reminder)}>
+            <CheckCircle2 size={16} />
+            Arquivar
+          </button>
+          <button className="secondary-button" type="button" onClick={() => onStandBy(reminder)}>
+            <Clock3 size={16} />
+            Não me encha o saco
+          </button>
+        </div>
+
+        <div className="reminder-snooze-options">
+          <strong>Relembrar</strong>
+          <div>
+            {reminderSnoozeOptions.map((option) => (
+              <button className="secondary-button compact" key={option.minutes} type="button" onClick={() => onSnooze(reminder, option.minutes)}>
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 

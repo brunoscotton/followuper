@@ -517,6 +517,25 @@ create table if not exists public.activity_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.reminders (
+  id uuid primary key,
+  message text not null,
+  target_type text not null default 'user' check (target_type in ('user', 'named', 'all')),
+  target_user_id uuid references auth.users(id) on delete set null,
+  target_email text,
+  target_name text,
+  created_by_id uuid references auth.users(id) on delete set null,
+  created_by_email text,
+  schedule_type text not null default 'immediate' check (schedule_type in ('immediate', 'first_login', 'interval')),
+  interval_amount integer not null default 1 check (interval_amount >= 1),
+  interval_unit text not null default 'minutes' check (interval_unit in ('minutes', 'hours')),
+  next_due_at timestamptz,
+  snoozed_until timestamptz,
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create or replace function public.log_user_activity()
 returns trigger
 language plpgsql
@@ -612,7 +631,8 @@ begin
     'return_entries',
     'warranty_entries',
     'contract_templates',
-    'rotax_revenue_entries'
+    'rotax_revenue_entries',
+    'reminders'
   ]
   loop
     execute format('drop trigger if exists audit_user_changes on public.%I', audited_table);
@@ -718,6 +738,7 @@ alter table public.contract_templates replica identity full;
 alter table public.rotax_revenue_entries replica identity full;
 alter table public.user_profiles replica identity full;
 alter table public.activity_logs replica identity full;
+alter table public.reminders replica identity full;
 
 alter table public.quotes enable row level security;
 alter table public.tracking_entries enable row level security;
@@ -746,6 +767,7 @@ alter table public.contract_templates enable row level security;
 alter table public.rotax_revenue_entries enable row level security;
 alter table public.user_profiles enable row level security;
 alter table public.activity_logs enable row level security;
+alter table public.reminders enable row level security;
 
 drop policy if exists "Authenticated users can read quotes" on public.quotes;
 drop policy if exists "Authenticated users can insert quotes" on public.quotes;
@@ -847,6 +869,10 @@ drop policy if exists "Users can read own profile and master can read all" on pu
 drop policy if exists "Users can create own profile" on public.user_profiles;
 drop policy if exists "Users can update own profile" on public.user_profiles;
 drop policy if exists "Master user can read activity logs" on public.activity_logs;
+drop policy if exists "Authenticated users can read reminders" on public.reminders;
+drop policy if exists "Authenticated users can insert reminders" on public.reminders;
+drop policy if exists "Authenticated users can update reminders" on public.reminders;
+drop policy if exists "Authenticated users can delete reminders" on public.reminders;
 drop policy if exists "Authenticated users can track FollowUper presence" on realtime.messages;
 drop policy if exists "Master user can read FollowUper presence" on realtime.messages;
 drop policy if exists "Authenticated users can read FollowUper presence" on realtime.messages;
@@ -1461,6 +1487,31 @@ create policy "Master user can read activity logs"
   to authenticated
   using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'bruno.scotton@cdsav.com.br');
 
+create policy "Authenticated users can read reminders"
+  on public.reminders
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert reminders"
+  on public.reminders
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update reminders"
+  on public.reminders
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete reminders"
+  on public.reminders
+  for delete
+  to authenticated
+  using (true);
+
 create policy "Authenticated users can track FollowUper presence"
   on realtime.messages
   for insert
@@ -1699,5 +1750,15 @@ begin
       and tablename = 'activity_logs'
   ) then
     alter publication supabase_realtime add table public.activity_logs;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'reminders'
+  ) then
+    alter publication supabase_realtime add table public.reminders;
   end if;
 end $$;

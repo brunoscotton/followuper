@@ -267,6 +267,18 @@ h2 {
   transition: transform 0.16s ease;
 }
 
+.side-nav-button strong {
+  background: #0f766e;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 0.74rem;
+  line-height: 1;
+  margin-left: auto;
+  min-width: 22px;
+  padding: 5px 7px;
+  text-align: center;
+}
+
 .side-quote-create.open .side-nav-button.primary svg:last-child {
   transform: rotate(90deg);
 }
@@ -3145,6 +3157,81 @@ td {
   display: grid;
   gap: 10px;
   grid-template-columns: minmax(0, 1fr) 140px 40px;
+}
+
+.reminders-panel {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(31, 48, 65, 0.08);
+  display: grid;
+  gap: 14px;
+  margin: 0 auto;
+  max-width: 1440px;
+  padding: 18px;
+}
+
+.reminder-form {
+  background: #f8fafc;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.reminder-interval-row {
+  max-width: 420px;
+}
+
+.reminder-form-actions,
+.reminder-popup-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.reminders-tabs {
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+}
+
+.reminder-message-cell {
+  max-width: 520px;
+  white-space: normal;
+}
+
+.reminder-popup {
+  max-width: 620px;
+}
+
+.reminder-popup-message {
+  background: #f8fafc;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  color: #17212b;
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1.5;
+  margin: 0;
+  padding: 14px;
+  white-space: pre-wrap;
+}
+
+.reminder-snooze-options {
+  display: grid;
+  gap: 10px;
+}
+
+.reminder-snooze-options > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reminder-snooze-options strong {
+  color: #344557;
 }
 
 .warranties-table th:nth-child(1) {
