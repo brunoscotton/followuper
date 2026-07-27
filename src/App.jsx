@@ -607,6 +607,10 @@ function normalizeUploadOrderNumber(value) {
   return normalized;
 }
 
+function formatDateInputValue(date) {
+  return date.toISOString().slice(0, 10);
+}
+
 function parseUploadCurrency(value) {
   if (typeof value === 'number') return value;
   const normalized = normalizeUploadValue(value)
@@ -867,9 +871,18 @@ async function parseQuotesUploadFile(file) {
     totalValue: headers.indexOf('vlrtotal'),
     seller: headers.indexOf('vendedor1'),
     orderNumber: headers.indexOf('pedidovenda'),
+    quoteDate: findCustomerUploadColumn(headers, ['DT Emissao', 'DT Emissão', 'Data Cotacao', 'Data Cotação'], -1),
   };
 
-  if (Object.values(columnIndex).some((index) => index < 0)) {
+  const requiredColumnIndexes = [
+    columnIndex.quoteNumber,
+    columnIndex.clientName,
+    columnIndex.totalValue,
+    columnIndex.seller,
+    columnIndex.orderNumber,
+  ];
+
+  if (requiredColumnIndexes.some((index) => index < 0)) {
     throw new Error('A planilha precisa ter Numero It, Nome, Vlr.Total, Vendedor 1 e Pedido Venda.');
   }
 
@@ -884,17 +897,20 @@ async function parseQuotesUploadFile(file) {
       continue;
     }
 
+    const rowQuoteDate = formatUploadDateValue(row[columnIndex.quoteDate]);
     const current = grouped.get(quoteNumber) || {
       quoteNumber,
       clientName: normalizeUploadValue(row[columnIndex.clientName]),
       orderNumber: '',
       seller: getSellerFromUploadCode(row[columnIndex.seller]),
       totalValue: 0,
+      quoteDate: rowQuoteDate,
     };
 
     current.clientName = current.clientName || normalizeUploadValue(row[columnIndex.clientName]);
     current.seller = current.seller || getSellerFromUploadCode(row[columnIndex.seller]);
     current.orderNumber = current.orderNumber || normalizeUploadOrderNumber(row[columnIndex.orderNumber]);
+    current.quoteDate = current.quoteDate || rowQuoteDate;
     current.totalValue = Math.round((current.totalValue + parseUploadCurrency(row[columnIndex.totalValue])) * 100) / 100;
     grouped.set(quoteNumber, current);
   }
@@ -911,12 +927,24 @@ function normalizeCustomerKey(value) {
 
 function formatUploadDateValue(value) {
   if (!value) return '';
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (value instanceof Date) return formatDateInputValue(value);
+  if (typeof value === 'number') {
+    const date = new Date(Date.UTC(1899, 11, 30) + value * 86_400_000);
+    return formatDateInputValue(date);
+  }
+
+  const normalized = normalizeUploadValue(value);
+  const brDate = normalized.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (brDate) {
+    const [, day, month, rawYear] = brDate;
+    const year = rawYear.length === 2 ? `20${rawYear}` : rawYear;
+    return `${year.padStart(4, '0')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
 
   const date = new Date(value);
-  if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10);
+  if (!Number.isNaN(date.getTime())) return formatDateInputValue(date);
 
-  return normalizeUploadValue(value);
+  return normalized;
 }
 
 function mergeCustomerPurchases(existingPurchases, newPurchases) {
@@ -3439,6 +3467,7 @@ export function App() {
           isInterest: existingQuote.isInterest || row.totalValue >= 5000,
         };
         if (shouldUpdateClientName) changes.clientName = row.clientName;
+        if (row.quoteDate && existingQuote.quoteDate !== row.quoteDate) changes.quoteDate = row.quoteDate;
 
         if (isClosedUpload) {
           const existingTrackingEntry = trackingEntries.find((entry) => entry.quoteId === existingQuote.id);
@@ -3501,7 +3530,7 @@ export function App() {
           clientName: row.clientName,
           quoteValue: formattedTotalValue,
           paymentTerms: '',
-          quoteDate: getTodayInputValue(),
+          quoteDate: row.quoteDate || getTodayInputValue(),
           seller: row.seller,
           notes: '',
           isInterest: row.totalValue >= 5000,
@@ -3589,6 +3618,13 @@ export function App() {
           historyEvents.push(buildQuoteHistoryEvent('updated', 'Valor atualizado pelo upload', { value: formattedTotalValue }, changedAt));
         }
 
+        if (row.quoteDate && existingQuote.quoteDate !== row.quoteDate) {
+          changes.quoteDate = row.quoteDate;
+          historyEvents.push(
+            buildQuoteHistoryEvent('updated', 'Data da cotacao atualizada pelo upload', { quoteDate: row.quoteDate }, changedAt),
+          );
+        }
+
         if (isClosedUpload) {
           const existingTrackingEntry = trackingEntries.find((entry) => entry.quoteId === existingQuote.id);
           changes.status = 'fechada';
@@ -3655,7 +3691,7 @@ export function App() {
           clientName: row.clientName,
           quoteValue: formattedTotalValue,
           paymentTerms: '',
-          quoteDate: getTodayInputValue(),
+          quoteDate: row.quoteDate || getTodayInputValue(),
           seller: row.seller,
           notes: '',
           isInterest: row.totalValue >= 5000,
