@@ -5584,7 +5584,7 @@ export function App() {
     if (view !== 'quotes') setSideQuoteFormOpen(false);
   }
 
-  if (!authChecked || isLoading) {
+  if (!authChecked) {
     return (
       <main className="app-shell center-shell">
         <div className="loading-panel">
@@ -5853,6 +5853,13 @@ export function App() {
           <option key={seller} value={seller} />
         ))}
       </datalist>
+
+      {isLoading && (
+        <div className="sync-indicator" role="status">
+          <RefreshCw size={14} />
+          Sincronizando
+        </div>
+      )}
 
       {appError && <div className="app-alert">{appError}</div>}
 
