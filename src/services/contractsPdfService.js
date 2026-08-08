@@ -145,6 +145,30 @@ function replaceNextTextNode(xml, search, replacement) {
   return xml.replace(pattern, `$1${xmlEscape(replacement)}$2`);
 }
 
+function replaceTrainingClauseValue(xml, value, valueInWords) {
+  const amount = safeText(value).replace(/^R\$\s*/i, '');
+  const pattern = new RegExp(
+    [
+      '(valor de R\\$<\\/w:t><\\/w:r>[\\s\\S]{0,1800}?<w:t[^>]*>)',
+      ':?\\s*[\\d.]+,\\d{2}',
+      '(<\\/w:t><\\/w:r>[\\s\\S]{0,800}?<w:t[^>]*>\\s*\\(<\\/w:t><\\/w:r>[\\s\\S]{0,800}?<w:t[^>]*>)',
+      '[^<]*',
+      '(<\\/w:t><\\/w:r>[\\s\\S]{0,800}?<w:t[^>]*>\\)\\.<\\/w:t>)',
+    ].join(''),
+    'i',
+  );
+
+  return xml.replace(pattern, (_, prefix, betweenValueAndWords, suffix) => (
+    [
+      prefix.replace(/valor de R\$<\/w:t>/i, 'valor de R$ </w:t>'),
+      xmlEscape(amount),
+      betweenValueAndWords,
+      xmlEscape(valueInWords),
+      suffix,
+    ].join('')
+  ));
+}
+
 async function preparePdf(template) {
   const pdf = await PDFDocument.load(dataUrlToBytes(template.fileData));
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -269,6 +293,7 @@ async function generateTrainingWordContract(template, form) {
   let xml = await documentFile.async('string');
   const value = brl(form.totalValue);
   const valueInWords = numeroPorExtenso(form.totalValue);
+  xml = replaceTrainingClauseValue(xml, value, valueInWords);
 
   [
     ['NOME CLIENTE', form.name],
