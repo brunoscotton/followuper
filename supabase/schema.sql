@@ -526,9 +526,11 @@ create table if not exists public.reminders (
   target_name text,
   created_by_id uuid references auth.users(id) on delete set null,
   created_by_email text,
-  schedule_type text not null default 'immediate' check (schedule_type in ('immediate', 'first_login', 'interval')),
+  schedule_type text not null default 'immediate' check (schedule_type in ('immediate', 'first_login', 'interval', 'date')),
   interval_amount integer not null default 1 check (interval_amount >= 1),
   interval_unit text not null default 'minutes' check (interval_unit in ('minutes', 'hours')),
+  scheduled_dates jsonb not null default '[]'::jsonb,
+  scheduled_time text,
   next_due_at timestamptz,
   snoozed_until timestamptz,
   archived_at timestamptz,
@@ -697,6 +699,12 @@ alter table public.warranty_entries add column if not exists attachment_file_dat
 alter table public.warranty_entries add column if not exists attachment_mime_type text;
 alter table public.stock_items add column if not exists is_manual boolean not null default false;
 alter table public.stock_items add column if not exists description text;
+alter table public.reminders add column if not exists scheduled_dates jsonb not null default '[]'::jsonb;
+alter table public.reminders add column if not exists scheduled_time text;
+alter table public.reminders drop constraint if exists reminders_schedule_type_check;
+alter table public.reminders
+  add constraint reminders_schedule_type_check
+  check (schedule_type in ('immediate', 'first_login', 'interval', 'date'));
 
 alter table public.quotes drop constraint if exists quotes_follow_up_amount_check;
 alter table public.quotes add constraint quotes_follow_up_amount_check check (follow_up_amount > 0);

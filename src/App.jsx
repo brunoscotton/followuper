@@ -323,7 +323,8 @@ const reminderRecipients = [
 
 const reminderScheduleOptions = [
   { value: 'first_login', label: 'Primeiro login do dia' },
-  { value: 'interval', label: 'A cada X de tempo' },
+  { value: 'date', label: 'Dia' },
+  { value: 'interval', label: 'Tempo' },
   { value: 'immediate', label: 'Imediato' },
 ];
 
@@ -341,10 +342,13 @@ const reminderSnoozeOptions = [
 ];
 
 const initialReminderForm = {
+  dateDraft: '',
   intervalAmount: '1',
   intervalUnit: 'hours',
   message: '',
   recipient: 'self',
+  scheduledDates: [],
+  scheduledTime: '',
   scheduleType: 'first_login',
 };
 
@@ -1500,9 +1504,45 @@ function addReminderInterval(dateValue, amount, unit) {
   return date.toISOString();
 }
 
-function getReminderFirstDueAt(scheduleType, intervalAmount, intervalUnit, dateValue = new Date()) {
+function normalizeReminderScheduledDates(dates) {
+  return [...new Set((Array.isArray(dates) ? dates : []).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)))].sort();
+}
+
+function getReminderDateCandidate(dateValue, timeValue = '') {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) return null;
+
+  const [year, month, day] = dateValue.split('-').map(Number);
+  const [hours, minutes] = /^\d{2}:\d{2}$/.test(timeValue) ? timeValue.split(':').map(Number) : [0, 0];
+  const date = new Date(year, month - 1, day, hours, minutes, 0, 0);
+  const time = date.getTime();
+  if (!Number.isFinite(time)) return null;
+  return { date: dateValue, iso: date.toISOString(), time };
+}
+
+function getReminderDateCandidates(dates, timeValue = '') {
+  return normalizeReminderScheduledDates(dates)
+    .map((date) => getReminderDateCandidate(date, timeValue))
+    .filter(Boolean)
+    .sort((a, b) => a.time - b.time);
+}
+
+function getReminderDateDueAt(dates, timeValue = '', dateValue = new Date()) {
+  const candidates = getReminderDateCandidates(dates, timeValue);
+  if (candidates.length === 0) return '';
+
+  const nowTime = new Date(dateValue).getTime();
+  return (candidates.find((candidate) => candidate.time >= nowTime) || candidates[0]).iso;
+}
+
+function getFutureReminderDateOccurrences(reminder, dateValue = new Date()) {
+  const nowTime = new Date(dateValue).getTime();
+  return getReminderDateCandidates(reminder.scheduledDates, reminder.scheduledTime).filter((candidate) => candidate.time > nowTime);
+}
+
+function getReminderFirstDueAt(scheduleType, intervalAmount, intervalUnit, dateValue = new Date(), scheduledDates = [], scheduledTime = '') {
   if (scheduleType === 'immediate') return new Date(dateValue).toISOString();
   if (scheduleType === 'interval') return addReminderInterval(dateValue, intervalAmount, intervalUnit);
+  if (scheduleType === 'date') return getReminderDateDueAt(scheduledDates, scheduledTime, dateValue);
   return getTomorrowStartIso(dateValue);
 }
 
@@ -1536,9 +1576,18 @@ function reminderIsDue(reminder, user, nowValue = new Date()) {
 
 function getReminderScheduleLabel(reminder) {
   if (reminder.scheduleType === 'immediate') return 'Imediato';
+  if (reminder.scheduleType === 'date') {
+    const dates = normalizeReminderScheduledDates(reminder.scheduledDates);
+    const visibleDates = dates.slice(0, 3).map((date) => formatDateWithWeekday(date));
+    const extraCount = Math.max(0, dates.length - visibleDates.length);
+    const datesLabel = visibleDates.length ? visibleDates.join(', ') : 'Sem dia definido';
+    const suffix = extraCount ? ` +${extraCount}` : '';
+    const timeLabel = reminder.scheduledTime ? ` as ${reminder.scheduledTime}` : ' no primeiro login';
+    return `Dia: ${datesLabel}${suffix}${timeLabel}`;
+  }
   if (reminder.scheduleType === 'interval') {
     const unit = reminder.intervalUnit === 'hours' ? 'hora(s)' : 'minuto(s)';
-    return `A cada ${reminder.intervalAmount || 1} ${unit}`;
+    return `Tempo: ${reminder.intervalAmount || 1} ${unit}`;
   }
   return 'Primeiro login do dia';
 }
@@ -4445,10 +4494,13 @@ export function App() {
   function openReminderEditor(reminder) {
     setEditingReminderId(reminder.id);
     setReminderForm({
+      dateDraft: '',
       intervalAmount: String(reminder.intervalAmount || 1),
       intervalUnit: reminder.intervalUnit || 'minutes',
       message: reminder.message || '',
       recipient: getReminderRecipientFromEntry(reminder),
+      scheduledDates: normalizeReminderScheduledDates(reminder.scheduledDates),
+      scheduledTime: reminder.scheduledTime || '',
       scheduleType: reminder.scheduleType || 'first_login',
     });
     setReminderErrors({});
@@ -4473,6 +4525,9 @@ export function App() {
     if (reminderForm.scheduleType === 'interval' && Number(reminderForm.intervalAmount || 0) <= 0) {
       nextErrors.intervalAmount = 'Informe um intervalo maior que zero.';
     }
+    if (reminderForm.scheduleType === 'date' && normalizeReminderScheduledDates(reminderForm.scheduledDates).length === 0) {
+      nextErrors.scheduledDates = 'Selecione ao menos um dia.';
+    }
     setReminderErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   }
@@ -4485,6 +4540,9 @@ export function App() {
     const nowIso = new Date().toISOString();
     const target = buildReminderTarget(reminderForm.recipient);
     const editingReminder = reminders.find((reminder) => reminder.id === editingReminderId);
+    const scheduleType = reminderForm.scheduleType;
+    const scheduledDates = scheduleType === 'date' ? normalizeReminderScheduledDates(reminderForm.scheduledDates) : [];
+    const scheduledTime = scheduleType === 'date' ? reminderForm.scheduledTime : '';
     const nextReminder = {
       ...(editingReminder || {}),
       ...target,
@@ -4492,10 +4550,19 @@ export function App() {
       message: reminderForm.message.trim(),
       createdById: editingReminder?.createdById || user?.id || '',
       createdByEmail: editingReminder?.createdByEmail || user?.email || '',
-      scheduleType: reminderForm.scheduleType,
+      scheduleType,
       intervalAmount: Number(reminderForm.intervalAmount || 1),
       intervalUnit: reminderForm.intervalUnit,
-      nextDueAt: getReminderFirstDueAt(reminderForm.scheduleType, reminderForm.intervalAmount, reminderForm.intervalUnit),
+      scheduledDates,
+      scheduledTime,
+      nextDueAt: getReminderFirstDueAt(
+        scheduleType,
+        reminderForm.intervalAmount,
+        reminderForm.intervalUnit,
+        new Date(),
+        scheduledDates,
+        scheduledTime,
+      ),
       snoozedUntil: '',
       createdAt: editingReminder?.createdAt || nowIso,
       updatedAt: nowIso,
@@ -4511,6 +4578,8 @@ export function App() {
             scheduleType: nextReminder.scheduleType,
             intervalAmount: nextReminder.intervalAmount,
             intervalUnit: nextReminder.intervalUnit,
+            scheduledDates: nextReminder.scheduledDates,
+            scheduledTime: nextReminder.scheduledTime,
             nextDueAt: nextReminder.nextDueAt,
             snoozedUntil: '',
           })
@@ -4543,6 +4612,22 @@ export function App() {
   }
 
   function archiveReminder(reminder) {
+    if (reminder.scheduleType === 'date' && reminderIsDue(reminder, user, now)) {
+      const futureOccurrences = getFutureReminderDateOccurrences(reminder, now);
+      if (futureOccurrences.length > 0) {
+        patchReminder(
+          reminder,
+          {
+            nextDueAt: futureOccurrences[0].iso,
+            scheduledDates: futureOccurrences.map((occurrence) => occurrence.date),
+            snoozedUntil: '',
+          },
+          'Nao foi possivel atualizar o proximo dia do lembrete.',
+        );
+        return;
+      }
+    }
+
     patchReminder(reminder, { archivedAt: new Date().toISOString(), snoozedUntil: '' }, 'Nao foi possivel arquivar o lembrete.');
   }
 
@@ -11713,6 +11798,9 @@ function getReminderNextLabel(reminder, now) {
   const dueAt = getReminderDueAt(reminder);
   if (!dueAt) return 'Sem horário definido';
   if (dueAt <= now.getTime()) return 'Agora';
+  if (reminder.scheduleType === 'date' && !reminder.scheduledTime) {
+    return `${formatDateWithWeekday(formatDateInputValue(new Date(dueAt)))} · primeiro login`;
+  }
   return formatDateTime(dueAt);
 }
 
@@ -11733,6 +11821,20 @@ function RemindersWorkspace({
   totalCounts,
 }) {
   const visibleTabReminders = reminders.filter((reminder) => (activeTab === 'archived' ? reminder.archivedAt : !reminder.archivedAt));
+  const selectedScheduledDates = normalizeReminderScheduledDates(form.scheduledDates);
+
+  function addScheduledDate() {
+    if (!form.dateDraft) return;
+    onUpdate('scheduledDates', normalizeReminderScheduledDates([...selectedScheduledDates, form.dateDraft]));
+    onUpdate('dateDraft', '');
+  }
+
+  function removeScheduledDate(date) {
+    onUpdate(
+      'scheduledDates',
+      selectedScheduledDates.filter((selectedDate) => selectedDate !== date),
+    );
+  }
 
   return (
     <section className="reminders-panel">
@@ -11787,6 +11889,42 @@ function RemindersWorkspace({
                 <option value="hours">Horas</option>
               </select>
             </label>
+          </div>
+        )}
+
+        {form.scheduleType === 'date' && (
+          <div className="reminder-date-row">
+            <div className="form-pair">
+              <label>
+                Dia
+                <div className="reminder-date-picker">
+                  <input type="date" value={form.dateDraft || ''} onChange={(event) => onUpdate('dateDraft', event.target.value)} />
+                  <button className="secondary-button compact" type="button" onClick={addScheduledDate} disabled={!form.dateDraft}>
+                    <Plus size={15} />
+                    Adicionar dia
+                  </button>
+                </div>
+                {errors.scheduledDates && <small>{errors.scheduledDates}</small>}
+              </label>
+
+              <label>
+                Hora opcional
+                <input type="time" value={form.scheduledTime || ''} onChange={(event) => onUpdate('scheduledTime', event.target.value)} />
+              </label>
+            </div>
+
+            {selectedScheduledDates.length > 0 && (
+              <div className="reminder-date-list" aria-label="Dias selecionados">
+                {selectedScheduledDates.map((date) => (
+                  <span key={date}>
+                    {formatDateWithWeekday(date)}
+                    <button type="button" aria-label={`Remover ${formatDateWithWeekday(date)}`} onClick={() => removeScheduledDate(date)}>
+                      <X size={13} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

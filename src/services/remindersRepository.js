@@ -45,6 +45,8 @@ function toReminder(row) {
     scheduleType: row.schedule_type || 'immediate',
     intervalAmount: row.interval_amount || 1,
     intervalUnit: row.interval_unit || 'minutes',
+    scheduledDates: Array.isArray(row.scheduled_dates) ? row.scheduled_dates : [],
+    scheduledTime: row.scheduled_time || '',
     nextDueAt: row.next_due_at || '',
     snoozedUntil: row.snoozed_until || '',
     archivedAt: row.archived_at || '',
@@ -66,6 +68,8 @@ function toRow(reminder) {
   if ('scheduleType' in reminder) row.schedule_type = reminder.scheduleType || 'immediate';
   if ('intervalAmount' in reminder) row.interval_amount = Number(reminder.intervalAmount || 1);
   if ('intervalUnit' in reminder) row.interval_unit = reminder.intervalUnit || 'minutes';
+  if ('scheduledDates' in reminder) row.scheduled_dates = Array.isArray(reminder.scheduledDates) ? reminder.scheduledDates : [];
+  if ('scheduledTime' in reminder) row.scheduled_time = reminder.scheduledTime || null;
   if ('nextDueAt' in reminder) row.next_due_at = reminder.nextDueAt || null;
   if ('snoozedUntil' in reminder) row.snoozed_until = reminder.snoozedUntil || null;
   if ('archivedAt' in reminder) row.archived_at = reminder.archivedAt || null;
