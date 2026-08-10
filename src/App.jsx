@@ -201,6 +201,7 @@ import {
 
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 const billingSellers = ['Bruno', 'Elton', 'Stephanie'];
+const trackingAllowedSellerCodes = new Set(['000022', '000036', '000063']);
 const BILLING_NOTE_DRAFTS_STORAGE_KEY = 'followuper.billingNoteDrafts.v1';
 const LAYOUT_STORAGE_KEY = 'followuper.layoutMode.v1';
 const AUTO_ARCHIVE_INACTIVE_DAYS = 15;
@@ -1023,11 +1024,11 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
   const rows = await readSheet(file, 1);
   const headerIndex = rows.findIndex((row) => {
     const headers = row.map(normalizeUploadHeader);
-    return headers.includes('numero') && headers.includes('cliente') && headers.includes('loja') && headers.includes('transp');
+    return headers.includes('numero') && headers.includes('cliente') && headers.includes('loja') && headers.includes('transp') && headers.includes('vendedor1');
   });
 
   if (headerIndex === -1) {
-    throw new Error('Nao encontrei Numero, Cliente, Loja e Transp. na planilha de rastreio.');
+    throw new Error('Nao encontrei Numero, Cliente, Loja, Transp. e Vendedor 1 na planilha de rastreio.');
   }
 
   const headers = rows[headerIndex].map(normalizeUploadHeader);
@@ -1038,6 +1039,7 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
     freightValue: headers.indexOf('vlrfrete'),
     carrierCode: headers.indexOf('transp'),
     trackingCode: headers.indexOf('conhecfrete'),
+    seller: headers.indexOf('vendedor1'),
   };
 
   if (columnIndex.trackingCode < 0) {
@@ -1048,6 +1050,9 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
   const grouped = new Map();
 
   for (const row of rows.slice(headerIndex + 1)) {
+    const sellerCode = normalizeClientCodePart(row[columnIndex.seller], 6);
+    if (!trackingAllowedSellerCodes.has(sellerCode)) continue;
+
     const clientCode = buildUploadClientCode(row[columnIndex.clientCode], row[columnIndex.storeCode]);
     if (!clientCode) continue;
 
