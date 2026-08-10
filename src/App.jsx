@@ -985,17 +985,17 @@ async function parseShippingCarriersUploadFile(file) {
   const rows = await readSheet(file, 1);
   const headerIndex = rows.findIndex((row) => {
     const headers = row.map(normalizeUploadHeader);
-    return headers.includes('codigo') && headers.includes('nome') && headers.includes('ddd') && headers.includes('telefone');
+    return headers.includes('codigo') && (headers.includes('nomereduz') || headers.includes('nome')) && headers.includes('ddd') && headers.includes('telefone');
   });
 
   if (headerIndex === -1) {
-    throw new Error('Nao encontrei Codigo, Nome, DDD e Telefone na planilha de transportadoras.');
+    throw new Error('Nao encontrei Codigo, Nome Reduz., DDD e Telefone na planilha de transportadoras.');
   }
 
   const headers = rows[headerIndex].map(normalizeUploadHeader);
   const columnIndex = {
     code: headers.indexOf('codigo'),
-    name: headers.indexOf('nome'),
+    name: headers.indexOf('nomereduz') >= 0 ? headers.indexOf('nomereduz') : headers.indexOf('nome'),
     ddd: headers.indexOf('ddd'),
     phone: headers.indexOf('telefone'),
   };
@@ -6707,18 +6707,14 @@ export function App() {
           entries={visibleTrackingEntries}
           expandedEntryIds={expandedTrackingEntryIds}
           metrics={trackingMetrics}
-          correiosCandidateCount={correiosTrackingCandidates.length}
           isUploadingCarriers={isUploadingShippingCarriers}
           isUploadingTrackingSheet={isUploadingTrackingSheet}
-          isUpdatingCorreios={isUpdatingCorreios}
           onEdit={openTrackingModal}
           onRemove={removeTrackingEntry}
           onAddStandalone={openStandaloneTrackingModal}
           onUploadCarriers={() => shippingCarrierUploadInputRef.current?.click()}
           onUploadTrackingSheet={() => trackingSheetUploadInputRef.current?.click()}
-          onUpdateCorreiosStatuses={updateCorreiosStatuses}
           setActiveTrackingTab={setActiveTrackingTab}
-          setActiveView={setActiveView}
           searchTerm={trackingSearchTerm}
           setSearchTerm={setTrackingSearchTerm}
           shippingCarrierMeta={shippingCarrierMeta}
@@ -13316,13 +13312,11 @@ function formatCarrierContacts(carrierCode, carriersByCode) {
 
 function TrackingWorkspace({
   activeTrackingTab,
-  correiosCandidateCount,
   customers = [],
   entries,
   expandedEntryIds = [],
   isUploadingCarriers,
   isUploadingTrackingSheet,
-  isUpdatingCorreios,
   metrics,
   onAddStandalone,
   onEdit,
@@ -13330,10 +13324,8 @@ function TrackingWorkspace({
   onToggleDetails,
   onUploadCarriers,
   onUploadTrackingSheet,
-  onUpdateCorreiosStatuses,
   searchTerm,
   setActiveTrackingTab,
-  setActiveView,
   setSearchTerm,
   shippingCarrierMeta = {},
   shippingCarriers = [],
@@ -13396,31 +13388,17 @@ function TrackingWorkspace({
           <h2>Rastreios</h2>
         </div>
         <div className="panel-actions">
-          <button className="secondary-button compact" type="button" disabled={isUploadingTrackingSheet} onClick={onUploadTrackingSheet}>
+          <button className="secondary-button compact tracking-upload-button" type="button" disabled={isUploadingTrackingSheet} onClick={onUploadTrackingSheet}>
             <Upload size={16} />
             {isUploadingTrackingSheet ? 'Importando...' : 'Upload rastreio'}
           </button>
-          <button className="secondary-button compact" type="button" disabled={isUploadingCarriers} onClick={onUploadCarriers}>
+          <button className="secondary-button compact tracking-upload-button" type="button" disabled={isUploadingCarriers} onClick={onUploadCarriers}>
             <Upload size={16} />
             {isUploadingCarriers ? 'Importando...' : 'Transportadoras'}
           </button>
           <button className="secondary-button compact" type="button" onClick={onAddStandalone}>
             <Plus size={16} />
             Adicionar rastreio avulso
-          </button>
-          <button
-            className="secondary-button compact"
-            type="button"
-            disabled={correiosCandidateCount === 0 || isUpdatingCorreios}
-            title={
-              correiosCandidateCount === 0
-                ? 'Nenhum rastreio dos Correios encontrado'
-                : `${correiosCandidateCount} rastreio(s) dos Correios encontrado(s)`
-            }
-            onClick={onUpdateCorreiosStatuses}
-          >
-            <RefreshCw size={16} />
-            {isUpdatingCorreios ? 'Atualizando...' : 'Atualizar Status Correio'}
           </button>
           <label className="search-box">
             <Search size={18} />
@@ -13430,10 +13408,6 @@ function TrackingWorkspace({
               placeholder="Buscar por cliente, pedido ou rastreio"
             />
           </label>
-          <button className="secondary-button compact" type="button" onClick={() => setActiveView('quotes')}>
-            <FileText size={16} />
-            Cotações
-          </button>
         </div>
       </div>
 

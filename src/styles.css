@@ -2413,6 +2413,17 @@ td {
   padding: 8px 10px;
 }
 
+.tracking-upload-button {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 7px 9px;
+  white-space: nowrap;
+}
+
+.tracking-panel .panel-actions .search-box {
+  min-width: 260px;
+}
+
 .tracking-row {
   cursor: pointer;
 }
