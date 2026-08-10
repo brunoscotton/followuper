@@ -152,6 +152,27 @@ function mergeCustomerRecords(existing, next) {
   };
 }
 
+function normalizeIdentityValue(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+function getCustomerIdentityKey(customer) {
+  const clientCode = normalizeIdentityValue(customer.clientCode);
+  const storeCode = normalizeIdentityValue(customer.storeCode);
+  if (clientCode && storeCode) return `code-store:${clientCode}:${storeCode}`;
+
+  const document = String(customer.cnpj || customer.cpf || customer.document || '').replace(/\D/g, '');
+  if (document) return `document:${document}`;
+
+  const clientName = normalizeIdentityValue(customer.clientName);
+  return clientName ? `name:${clientName}` : '';
+}
+
 function dedupeCustomersById(customers) {
   const byId = new Map();
 
@@ -161,6 +182,86 @@ function dedupeCustomersById(customers) {
   });
 
   return sortCustomers([...byId.values()]);
+}
+
+function dedupeCustomersByIdentity(customers) {
+  const byKey = new Map();
+
+  customers.forEach((customer) => {
+    if (!customer?.id) return;
+    const key = getCustomerIdentityKey(customer) || `id:${customer.id}`;
+    byKey.set(key, mergeCustomerRecords(byKey.get(key), customer));
+  });
+
+  return sortCustomers([...byKey.values()]);
+}
+
+function getCustomerCompletenessScore(customer) {
+  const values = [
+    customer.clientCode,
+    customer.storeCode,
+    customer.clientName,
+    customer.tradeName,
+    customer.document,
+    customer.cpf,
+    customer.cnpj,
+    customer.personType,
+    customer.phone,
+    customer.phoneNumber,
+    customer.mobile,
+    customer.fiscalAddress,
+    customer.city,
+    customer.neighborhood,
+    customer.state,
+    customer.zipCode,
+    customer.email,
+    customer.commercialEmail,
+    customer.invoiceEmail,
+    customer.billingEmail,
+    customer.lastPurchaseAt,
+    customer.purchaseCount,
+  ];
+
+  return values.filter(Boolean).length + (customer.purchases || []).length;
+}
+
+function getDuplicateCustomerGroups(customers) {
+  const byKey = new Map();
+
+  customers.forEach((customer) => {
+    const key = getCustomerIdentityKey(customer);
+    if (!key) return;
+    byKey.set(key, [...(byKey.get(key) || []), customer]);
+  });
+
+  return [...byKey.values()].filter((group) => group.length > 1);
+}
+
+function chooseDuplicateKeeper(group) {
+  return [...group].sort((a, b) => {
+    const scoreDifference = getCustomerCompletenessScore(b) - getCustomerCompletenessScore(a);
+    if (scoreDifference !== 0) return scoreDifference;
+    return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+  })[0];
+}
+
+function filterNewCustomers(nextCustomers, existingCustomers) {
+  const existingKeys = new Set(existingCustomers.map(getCustomerIdentityKey).filter(Boolean));
+  const nextKeys = new Set();
+  const newCustomers = [];
+  let skippedCount = 0;
+
+  dedupeCustomersByIdentity(nextCustomers).forEach((customer) => {
+    const key = getCustomerIdentityKey(customer);
+    if (key && (existingKeys.has(key) || nextKeys.has(key))) {
+      skippedCount += 1;
+      return;
+    }
+    if (key) nextKeys.add(key);
+    newCustomers.push(customer);
+  });
+
+  return { newCustomers, skippedCount };
 }
 
 async function fetchAllCustomerRows() {
@@ -198,6 +299,40 @@ export async function loadCustomers() {
   const customers = sortCustomers(data.map(toCustomer));
   saveLocalCustomers(customers);
   return { customers, mode: 'supabase' };
+}
+
+export async function removeDuplicateCustomers(existingCustomers = null) {
+  const sourceCustomers = existingCustomers || (supabase ? (await fetchAllCustomerRows()).data.map(toCustomer) : loadLocalCustomers());
+  const duplicateGroups = getDuplicateCustomerGroups(sourceCustomers);
+
+  if (duplicateGroups.length === 0) {
+    return { customers: sortCustomers(sourceCustomers), removedCount: 0 };
+  }
+
+  const duplicateIds = [];
+
+  duplicateGroups.forEach((group) => {
+    const keeper = chooseDuplicateKeeper(group);
+    duplicateIds.push(...group.filter((customer) => customer.id !== keeper.id).map((customer) => customer.id));
+  });
+
+  if (!supabase) {
+    const duplicateIdSet = new Set(duplicateIds);
+    const customers = sortCustomers(sourceCustomers.filter((customer) => !duplicateIdSet.has(customer.id)));
+    saveLocalCustomers(customers);
+    return { customers, removedCount: duplicateIds.length };
+  }
+
+  for (let index = 0; index < duplicateIds.length; index += CUSTOMER_UPSERT_BATCH_SIZE) {
+    const batch = duplicateIds.slice(index, index + CUSTOMER_UPSERT_BATCH_SIZE);
+    const { error } = await supabase.from('customers').delete().in('id', batch);
+    if (error) throw error;
+  }
+
+  const duplicateIdSet = new Set(duplicateIds);
+  const customers = sortCustomers(sourceCustomers.filter((customer) => !duplicateIdSet.has(customer.id)));
+  saveLocalCustomers(customers);
+  return { customers, removedCount: duplicateIds.length };
 }
 
 export async function createCustomer(customer) {
@@ -262,6 +397,36 @@ export async function upsertCustomers(nextCustomers) {
   }
 
   return sortCustomers(savedRows.map(toCustomer));
+}
+
+export async function insertNewCustomers(nextCustomers) {
+  if (!supabase) {
+    const existing = loadLocalCustomers();
+    const { newCustomers, skippedCount } = filterNewCustomers(nextCustomers, existing);
+    const customers = sortCustomers([...existing, ...newCustomers]);
+    saveLocalCustomers(customers);
+    return { customers: newCustomers, skippedCount };
+  }
+
+  const { data, error } = await fetchAllCustomerRows();
+  if (error) throw error;
+
+  const existingCustomers = data.map(toCustomer);
+  const { newCustomers, skippedCount } = filterNewCustomers(nextCustomers, existingCustomers);
+  const savedRows = [];
+
+  for (let index = 0; index < newCustomers.length; index += CUSTOMER_UPSERT_BATCH_SIZE) {
+    const batch = newCustomers.slice(index, index + CUSTOMER_UPSERT_BATCH_SIZE);
+    if (batch.length === 0) continue;
+    const { data: insertedRows, error: insertError } = await supabase
+      .from('customers')
+      .insert(batch.map(toRow))
+      .select('*');
+    if (insertError) throw insertError;
+    savedRows.push(...(insertedRows || []));
+  }
+
+  return { customers: sortCustomers(savedRows.map(toCustomer)), skippedCount };
 }
 
 export function subscribeToCustomerChanges(onChange) {

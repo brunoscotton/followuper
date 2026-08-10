@@ -110,11 +110,12 @@ import {
   cacheCustomers,
   createCustomer,
   deleteCustomer,
+  insertNewCustomers,
   loadCustomers,
+  removeDuplicateCustomers,
   sortCustomers,
   subscribeToCustomerChanges,
   updateCustomer,
-  upsertCustomers,
 } from './services/customersRepository';
 import {
   cacheContractTemplates,
@@ -2103,9 +2104,12 @@ export function App() {
   const [isRestoringBilling, setIsRestoringBilling] = useState(false);
   const [isUploadingRotaxParts, setIsUploadingRotaxParts] = useState(false);
   const [isUploadingStock, setIsUploadingStock] = useState(false);
+  const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
   const [uploadPreview, setUploadPreview] = useState(null);
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
   const deferredCustomerSearchTerm = useDeferredValue(customerSearchTerm);
+  const [customersLoaded, setCustomersLoaded] = useState(false);
+  const [customersMode, setCustomersMode] = useState('');
   const [expandedCustomerIds, setExpandedCustomerIds] = useState([]);
   const [expandedCustomerProductKeys, setExpandedCustomerProductKeys] = useState([]);
   const [customerEditModal, setCustomerEditModal] = useState(null);
@@ -2294,6 +2298,8 @@ export function App() {
       setRotaxContacts([]);
       setRotaxRevenueEntries([]);
       setCustomers([]);
+      setCustomersLoaded(false);
+      setCustomersMode('');
       setBillingEntries([]);
       setBillingUploads([]);
       setReturnEntries([]);
@@ -2314,7 +2320,6 @@ export function App() {
       loadInfoBlocks(),
       loadRotaxTrainingData(),
       loadUploadAudits(),
-      loadCustomers(),
       loadContractTemplates(),
       loadBillingEntries(),
       loadReturnEntries(),
@@ -2328,7 +2333,6 @@ export function App() {
           infoResult,
           rotaxResult,
           uploadAuditResult,
-          customerResult,
           contractTemplateResult,
           billingResult,
           returnResult,
@@ -2344,7 +2348,6 @@ export function App() {
         setRotaxStudents(rotaxResult.students);
         setRotaxContacts(rotaxResult.contacts);
         setUploadAudits(uploadAuditResult.audits);
-        setCustomers(customerResult.customers);
         setContractTemplates(contractTemplateResult.templates);
         setBillingEntries(billingResult.entries);
         setBillingUploads(billingResult.uploads || []);
@@ -2387,9 +2390,6 @@ export function App() {
               );
             }
           });
-          const unsubscribeCustomers = subscribeToCustomerChanges(({ eventType, customer, oldId }) => {
-            setCustomers((current) => syncCollection(current, eventType, customer, oldId, sortCustomers, cacheCustomers));
-          });
           const unsubscribeContractTemplates = subscribeToContractTemplateChanges(({ eventType, template, oldId }) => {
             setContractTemplates((current) => {
               let nextTemplates = current;
@@ -2430,7 +2430,6 @@ export function App() {
             unsubscribeTracking();
             unsubscribeInfoBlocks();
             unsubscribeRotax();
-            unsubscribeCustomers();
             unsubscribeContractTemplates();
             unsubscribeBilling();
             unsubscribeReturns();
@@ -2453,6 +2452,64 @@ export function App() {
       unsubscribeRealtime();
     };
   }, [authChecked, user]);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!authChecked || activeView !== 'customers' || customersLoaded) return () => {};
+
+    if (isSupabaseConfigured && !user) {
+      setCustomers([]);
+      setCustomersLoaded(false);
+      setCustomersMode('');
+      return () => {
+        active = false;
+      };
+    }
+
+    setIsLoadingCustomers(true);
+    loadCustomers()
+      .then(async (result) => {
+        if (!active) return;
+        let nextCustomers = result.customers;
+        let removedDuplicates = 0;
+
+        try {
+          const cleanupResult = await removeDuplicateCustomers(nextCustomers);
+          if (!active) return;
+          nextCustomers = cleanupResult.customers;
+          removedDuplicates = cleanupResult.removedCount;
+        } catch (cleanupError) {
+          if (active) setAppError(cleanupError.message || 'Nao foi possivel limpar clientes duplicados.');
+        }
+
+        setCustomers(nextCustomers);
+        setCustomersLoaded(true);
+        setCustomersMode(result.mode);
+        if (removedDuplicates > 0) {
+          setAppError(`Clientes carregados. ${removedDuplicates} cadastro(s) duplicado(s) removido(s).`);
+        }
+      })
+      .catch((error) => {
+        if (!active) return;
+        setAppError(error.message || 'Nao foi possivel carregar os clientes.');
+      })
+      .finally(() => {
+        if (active) setIsLoadingCustomers(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [activeView, authChecked, customersLoaded, user]);
+
+  useEffect(() => {
+    if (activeView !== 'customers' || customersMode !== 'supabase' || !customersLoaded) return () => {};
+
+    return subscribeToCustomerChanges(({ eventType, customer, oldId }) => {
+      setCustomers((current) => syncCollection(current, eventType, customer, oldId, sortCustomers, cacheCustomers));
+    });
+  }, [activeView, customersLoaded, customersMode]);
 
   useEffect(() => {
     let active = true;
@@ -4110,15 +4167,17 @@ export function App() {
     setIsUploadingCustomers(true);
 
     try {
-      const importedCustomers = await parseCustomersUploadFile(file, customers);
-      const savedCustomers = await upsertCustomers(importedCustomers);
-      setCustomers((current) => {
-        const byId = new Map(current.map((customer) => [customer.id, customer]));
-        savedCustomers.forEach((customer) => byId.set(customer.id, customer));
-        return sortCustomers([...byId.values()]);
-      });
+      const importedCustomers = await parseCustomersUploadFile(file, []);
+      const { customers: savedCustomers, skippedCount } = await insertNewCustomers(importedCustomers);
+      if (customersLoaded) {
+        setCustomers((current) => {
+          const byId = new Map(current.map((customer) => [customer.id, customer]));
+          savedCustomers.forEach((customer) => byId.set(customer.id, customer));
+          return sortCustomers([...byId.values()]);
+        });
+      }
       if (!options.keepView) setActiveView('customers');
-      setAppError(`Clientes atualizados: ${savedCustomers.length} cadastro(s) processado(s).`);
+      setAppError(`Clientes importados: ${savedCustomers.length} novo(s), ${skippedCount} existente(s) ignorado(s).`);
       return true;
     } catch (error) {
       setAppError(error.message || 'Nao foi possivel importar a base de clientes.');
@@ -6411,6 +6470,7 @@ export function App() {
           customers={visibleCustomers}
           expandedCustomerIds={expandedCustomerIds}
           expandedProductKeys={expandedCustomerProductKeys}
+          isLoading={isLoadingCustomers}
           isUploading={isUploadingCustomers}
           onEditCustomer={openCustomerEditModal}
           onToggleCustomer={(id) =>
@@ -10460,6 +10520,7 @@ function CustomersWorkspace({
   customers,
   expandedCustomerIds,
   expandedProductKeys,
+  isLoading,
   isUploading,
   onEditCustomer,
   onToggleCustomer,
@@ -10655,7 +10716,14 @@ function CustomersWorkspace({
         </table>
       </div>
 
-      {customers.length === 0 && (
+      {isLoading && (
+        <div className="empty-state">
+          <RefreshCw size={28} />
+          <p>Carregando clientes...</p>
+        </div>
+      )}
+
+      {!isLoading && customers.length === 0 && (
         <div className="empty-state">
           <Users size={28} />
           <p>Nenhum cliente encontrado.</p>
