@@ -1070,6 +1070,68 @@ function getCustomerDocumentValue(customer) {
   return customer.document || customer.cnpj || customer.cpf || '';
 }
 
+function getCustomerSearchValues(customer) {
+  const purchaseSearchValues = (customer.purchases || []).flatMap((purchase) => [
+    purchase.productPartNumber,
+    purchase.productDescription,
+  ]);
+
+  return [
+    customer.clientName,
+    customer.clientCode,
+    customer.storeCode,
+    customer.tradeName,
+    customer.seller,
+    customer.document,
+    customer.cpf,
+    customer.cnpj,
+    customer.personType,
+    customer.fiscalAddress,
+    customer.city,
+    customer.state,
+    customer.neighborhood,
+    customer.zipCode,
+    customer.complement,
+    customer.ddd,
+    customer.phone,
+    customer.phoneNumber,
+    customer.mobile,
+    customer.stateRegistration,
+    customer.lastPurchaseAt,
+    customer.purchaseCount,
+    customer.email,
+    customer.commercialEmail,
+    customer.invoiceEmail,
+    customer.billingEmail,
+    getCustomerDocumentValue(customer),
+    getCustomerPhoneDisplay(customer),
+    getCustomerEmailDisplay(customer),
+    ...purchaseSearchValues,
+  ].filter(Boolean);
+}
+
+function customerMatchesSearch(customer, searchTerm) {
+  const query = normalize(searchTerm);
+  if (!query) return true;
+
+  const values = getCustomerSearchValues(customer);
+  const normalizedText = normalize(values.join(' '));
+  const normalizedCompactText = normalizedText.replace(/[^a-z0-9]+/g, '');
+  const digitText = values.map((value) => String(value).replace(/\D/g, '')).filter(Boolean).join(' ');
+  const tokens = query.split(/\s+/).filter(Boolean);
+
+  return tokens.every((token) => {
+    const compactToken = token.replace(/[^a-z0-9]+/g, '');
+    const digitToken = token.replace(/\D/g, '');
+
+    return (
+      normalizedText.includes(token) ||
+      (compactToken && normalizedCompactText.includes(compactToken)) ||
+      (digitToken && digitText.includes(digitToken))
+    );
+  });
+}
+
 function buildCustomerRegistrationsFromUploadRows(rows, existingCustomers = []) {
   const headerIndex = rows.findIndex((row) => {
     const headers = row.map(normalizeUploadHeader);
@@ -1816,7 +1878,11 @@ function formatDateWithWeekday(dateValue) {
 }
 
 function normalize(text) {
-  return text.toString().trim().toLowerCase();
+  return String(text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
 }
 
 function normalizeFinalClientName(value) {
@@ -2817,31 +2883,7 @@ export function App() {
   );
 
   const visibleCustomers = useMemo(() => {
-    const query = normalize(customerSearchTerm);
-    if (!query) return customers;
-
-    return customers.filter((customer) => {
-      const purchaseSearchValues = (customer.purchases || []).flatMap((purchase) => [
-        purchase.productPartNumber,
-        purchase.productDescription,
-      ]);
-
-      return [
-        customer.clientName,
-        customer.clientCode,
-        customer.storeCode,
-        customer.tradeName,
-        customer.seller,
-        getCustomerDocumentValue(customer),
-        getCustomerPhoneDisplay(customer),
-        getCustomerEmailDisplay(customer),
-        customer.city,
-        customer.neighborhood,
-        ...purchaseSearchValues,
-      ]
-        .filter(Boolean)
-        .some((value) => normalize(value).includes(query));
-    });
+    return customers.filter((customer) => customerMatchesSearch(customer, customerSearchTerm));
   }, [customerSearchTerm, customers]);
 
   const visibleReminders = useMemo(
@@ -10454,7 +10496,7 @@ function CustomersWorkspace({
           </button>
           <label className="search-box">
             <Search size={18} />
-            <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Buscar por nome do cliente" />
+            <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Buscar cliente, código, CNPJ, telefone ou e-mail" />
           </label>
         </div>
       </div>
