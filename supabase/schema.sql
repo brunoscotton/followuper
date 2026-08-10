@@ -1,6 +1,7 @@
 create table if not exists public.quotes (
   id uuid primary key,
   quote_number text not null,
+  client_code text,
   client_name text not null,
   phone text,
   quote_value text,
@@ -26,11 +27,14 @@ create table if not exists public.tracking_entries (
   id uuid primary key,
   quote_id uuid references public.quotes(id) on delete cascade,
   quote_number text not null,
+  client_code text,
   client_name text not null,
   phone text,
   order_number text,
   invoice_number text,
   carrier text,
+  carrier_code text,
+  freight_value text,
   tracking_code text,
   correios_update_failed boolean not null default false,
   delivery_situation text not null default 'etiqueta' check (
@@ -56,6 +60,21 @@ create table if not exists public.tracking_entries (
   finalized_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table if not exists public.shipping_carriers (
+  code text primary key,
+  name text not null,
+  ddd text,
+  phone text,
+  uploaded_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.shipping_carrier_uploads (
+  id text primary key,
+  file_name text,
+  uploaded_at timestamptz not null default now()
 );
 
 create table if not exists public.info_blocks (
@@ -680,6 +699,10 @@ alter table public.quotes add column if not exists loss_reason jsonb;
 alter table public.quotes add column if not exists history jsonb not null default '[]'::jsonb;
 alter table public.tracking_entries add column if not exists invoice_number text;
 alter table public.tracking_entries add column if not exists phone text;
+alter table public.quotes add column if not exists client_code text;
+alter table public.tracking_entries add column if not exists client_code text;
+alter table public.tracking_entries add column if not exists carrier_code text;
+alter table public.tracking_entries add column if not exists freight_value text;
 alter table public.tracking_entries add column if not exists correios_update_failed boolean not null default false;
 alter table public.tracking_entries drop constraint if exists tracking_entries_delivery_situation_check;
 alter table public.tracking_entries
@@ -764,6 +787,8 @@ alter table public.upload_audits replica identity full;
 alter table public.customers replica identity full;
 alter table public.billing_entries replica identity full;
 alter table public.billing_uploads replica identity full;
+alter table public.shipping_carriers replica identity full;
+alter table public.shipping_carrier_uploads replica identity full;
 alter table public.rotax_parts replica identity full;
 alter table public.rotax_parts_catalog replica identity full;
 alter table public.stock_items replica identity full;
@@ -793,6 +818,8 @@ alter table public.upload_audits enable row level security;
 alter table public.customers enable row level security;
 alter table public.billing_entries enable row level security;
 alter table public.billing_uploads enable row level security;
+alter table public.shipping_carriers enable row level security;
+alter table public.shipping_carrier_uploads enable row level security;
 alter table public.rotax_parts enable row level security;
 alter table public.rotax_parts_catalog enable row level security;
 alter table public.stock_items enable row level security;
@@ -852,6 +879,13 @@ drop policy if exists "Authenticated users can delete billing entries" on public
 drop policy if exists "Authenticated users can read billing uploads" on public.billing_uploads;
 drop policy if exists "Authenticated users can insert billing uploads" on public.billing_uploads;
 drop policy if exists "Authenticated users can update billing uploads" on public.billing_uploads;
+drop policy if exists "Authenticated users can read shipping carriers" on public.shipping_carriers;
+drop policy if exists "Authenticated users can insert shipping carriers" on public.shipping_carriers;
+drop policy if exists "Authenticated users can update shipping carriers" on public.shipping_carriers;
+drop policy if exists "Authenticated users can delete shipping carriers" on public.shipping_carriers;
+drop policy if exists "Authenticated users can read shipping carrier uploads" on public.shipping_carrier_uploads;
+drop policy if exists "Authenticated users can insert shipping carrier uploads" on public.shipping_carrier_uploads;
+drop policy if exists "Authenticated users can update shipping carrier uploads" on public.shipping_carrier_uploads;
 drop policy if exists "Authenticated users can read Rotax parts" on public.rotax_parts;
 drop policy if exists "Authenticated users can insert Rotax parts" on public.rotax_parts;
 drop policy if exists "Authenticated users can update Rotax parts" on public.rotax_parts;
@@ -1170,6 +1204,50 @@ create policy "Authenticated users can insert billing uploads"
 
 create policy "Authenticated users can update billing uploads"
   on public.billing_uploads
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can read shipping carriers"
+  on public.shipping_carriers
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert shipping carriers"
+  on public.shipping_carriers
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update shipping carriers"
+  on public.shipping_carriers
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete shipping carriers"
+  on public.shipping_carriers
+  for delete
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can read shipping carrier uploads"
+  on public.shipping_carrier_uploads
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert shipping carrier uploads"
+  on public.shipping_carrier_uploads
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update shipping carrier uploads"
+  on public.shipping_carrier_uploads
   for update
   to authenticated
   using (true)
@@ -1682,6 +1760,26 @@ begin
       and tablename = 'billing_uploads'
   ) then
     alter publication supabase_realtime add table public.billing_uploads;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'shipping_carriers'
+  ) then
+    alter publication supabase_realtime add table public.shipping_carriers;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'shipping_carrier_uploads'
+  ) then
+    alter publication supabase_realtime add table public.shipping_carrier_uploads;
   end if;
 
   if not exists (

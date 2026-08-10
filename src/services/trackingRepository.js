@@ -23,11 +23,14 @@ function toTrackingEntry(row) {
     id: row.id,
     quoteId: row.quote_id,
     quoteNumber: row.quote_number,
+    clientCode: row.client_code || '',
     clientName: row.client_name,
     phone: row.phone || '',
     orderNumber: row.order_number || '',
     invoiceNumber: row.invoice_number || '',
     carrier: row.carrier || '',
+    carrierCode: row.carrier_code || '',
+    freightValue: row.freight_value || '',
     trackingCode: row.tracking_code || '',
     correiosUpdateFailed: Boolean(row.correios_update_failed),
     deliverySituation: row.delivery_situation || 'etiqueta',
@@ -46,11 +49,14 @@ function toRow(entry) {
   if ('id' in entry) row.id = entry.id;
   if ('quoteId' in entry) row.quote_id = entry.quoteId;
   if ('quoteNumber' in entry) row.quote_number = entry.quoteNumber;
+  if ('clientCode' in entry) row.client_code = entry.clientCode || null;
   if ('clientName' in entry) row.client_name = entry.clientName;
   if ('phone' in entry) row.phone = entry.phone || null;
   if ('orderNumber' in entry) row.order_number = entry.orderNumber || null;
   if ('invoiceNumber' in entry) row.invoice_number = entry.invoiceNumber || null;
   if ('carrier' in entry) row.carrier = entry.carrier || null;
+  if ('carrierCode' in entry) row.carrier_code = entry.carrierCode || null;
+  if ('freightValue' in entry) row.freight_value = entry.freightValue || null;
   if ('trackingCode' in entry) row.tracking_code = entry.trackingCode || null;
   if ('correiosUpdateFailed' in entry) row.correios_update_failed = entry.correiosUpdateFailed || false;
   if ('deliverySituation' in entry) row.delivery_situation = entry.deliverySituation;

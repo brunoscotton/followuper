@@ -109,6 +109,10 @@ import {
   updateRotaxRevenueEntry,
 } from './services/rotaxRevenueRepository';
 import {
+  loadShippingCarriers,
+  replaceShippingCarriers,
+} from './services/shippingCarriersRepository';
+import {
   cacheCustomers,
   createCustomer,
   deleteCustomer,
@@ -629,6 +633,37 @@ function normalizeUploadOrderNumber(value) {
   return normalized;
 }
 
+function normalizeUploadIdentifier(value) {
+  return normalizeUploadValue(value).replace(/\.0$/, '');
+}
+
+function normalizeClientCodePart(value, length) {
+  const normalized = normalizeUploadIdentifier(value);
+  if (!normalized) return '';
+  const digits = normalized.replace(/\D/g, '');
+  return digits && digits.length <= length ? digits.padStart(length, '0') : normalized;
+}
+
+function normalizeUploadClientCode(value) {
+  const normalized = normalizeUploadIdentifier(value);
+  if (!normalized) return '';
+  const parts = normalized.split('-').map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 2) return `${normalizeClientCodePart(parts[0], 6)}-${normalizeClientCodePart(parts[1], 2)}`;
+  const digits = normalized.replace(/\D/g, '');
+  return digits && digits.length <= 6 ? digits.padStart(6, '0') : normalized;
+}
+
+function buildUploadClientCode(clientValue, storeValue = '') {
+  const clientCode = normalizeClientCodePart(clientValue, 6);
+  const storeCode = normalizeClientCodePart(storeValue, 2);
+  if (clientCode && storeCode) return `${clientCode}-${storeCode}`;
+  return clientCode;
+}
+
+function normalizeClientCodeKey(value) {
+  return normalizeUploadClientCode(value).replace(/[^A-Z0-9]/gi, '');
+}
+
 function formatDateInputValue(date) {
   return date.toISOString().slice(0, 10);
 }
@@ -889,6 +924,7 @@ async function parseQuotesUploadFile(file) {
   const headers = rows[headerIndex].map(normalizeUploadHeader);
   const columnIndex = {
     quoteNumber: headers.indexOf('numeroit'),
+    clientCode: headers.indexOf('cliente'),
     clientName: headers.indexOf('nome'),
     totalValue: headers.indexOf('vlrtotal'),
     seller: headers.indexOf('vendedor1'),
@@ -922,6 +958,7 @@ async function parseQuotesUploadFile(file) {
     const rowQuoteDate = formatUploadDateValue(row[columnIndex.quoteDate]);
     const current = grouped.get(quoteNumber) || {
       quoteNumber,
+      clientCode: normalizeUploadClientCode(row[columnIndex.clientCode]),
       clientName: normalizeUploadValue(row[columnIndex.clientName]),
       orderNumber: '',
       seller: getSellerFromUploadCode(row[columnIndex.seller]),
@@ -930,6 +967,7 @@ async function parseQuotesUploadFile(file) {
     };
 
     current.clientName = current.clientName || normalizeUploadValue(row[columnIndex.clientName]);
+    current.clientCode = current.clientCode || normalizeUploadClientCode(row[columnIndex.clientCode]);
     current.seller = current.seller || getSellerFromUploadCode(row[columnIndex.seller]);
     current.orderNumber = current.orderNumber || normalizeUploadOrderNumber(row[columnIndex.orderNumber]);
     current.quoteDate = current.quoteDate || rowQuoteDate;
@@ -941,6 +979,114 @@ async function parseQuotesUploadFile(file) {
     ignoredCruzeiroCount,
     rows: [...grouped.values()].filter((item) => item.clientName && item.seller),
   };
+}
+
+async function parseShippingCarriersUploadFile(file) {
+  const rows = await readSheet(file, 1);
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('codigo') && headers.includes('nome') && headers.includes('ddd') && headers.includes('telefone');
+  });
+
+  if (headerIndex === -1) {
+    throw new Error('Nao encontrei Codigo, Nome, DDD e Telefone na planilha de transportadoras.');
+  }
+
+  const headers = rows[headerIndex].map(normalizeUploadHeader);
+  const columnIndex = {
+    code: headers.indexOf('codigo'),
+    name: headers.indexOf('nome'),
+    ddd: headers.indexOf('ddd'),
+    phone: headers.indexOf('telefone'),
+  };
+  const carriersByCode = new Map();
+
+  for (const row of rows.slice(headerIndex + 1)) {
+    const code = normalizeClientCodePart(row[columnIndex.code], 6);
+    const name = normalizeUploadValue(row[columnIndex.name]);
+    if (!code || !name) continue;
+
+    carriersByCode.set(code, {
+      code,
+      ddd: normalizeUploadIdentifier(row[columnIndex.ddd]),
+      name,
+      phone: normalizeUploadIdentifier(row[columnIndex.phone]),
+    });
+  }
+
+  const carriers = [...carriersByCode.values()];
+  if (carriers.length === 0) throw new Error('Nenhuma transportadora valida foi encontrada.');
+  return carriers;
+}
+
+async function parseTrackingUploadFile(file, shippingCarriers = []) {
+  const rows = await readSheet(file, 1);
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('numero') && headers.includes('cliente') && headers.includes('loja') && headers.includes('transp');
+  });
+
+  if (headerIndex === -1) {
+    throw new Error('Nao encontrei Numero, Cliente, Loja e Transp. na planilha de rastreio.');
+  }
+
+  const headers = rows[headerIndex].map(normalizeUploadHeader);
+  const columnIndex = {
+    invoiceNumber: headers.indexOf('numero'),
+    clientCode: headers.indexOf('cliente'),
+    storeCode: headers.indexOf('loja'),
+    freightValue: headers.indexOf('vlrfrete'),
+    carrierCode: headers.indexOf('transp'),
+    trackingCode: headers.indexOf('conhecfrete'),
+  };
+
+  if (columnIndex.trackingCode < 0) {
+    throw new Error('A planilha de rastreio precisa ter a coluna Conhec Frete.');
+  }
+
+  const carriersByCode = new Map(shippingCarriers.map((carrier) => [normalizeClientCodePart(carrier.code, 6), carrier]));
+  const grouped = new Map();
+
+  for (const row of rows.slice(headerIndex + 1)) {
+    const clientCode = buildUploadClientCode(row[columnIndex.clientCode], row[columnIndex.storeCode]);
+    if (!clientCode) continue;
+
+    const key = normalizeClientCodeKey(clientCode);
+    const carrierCode = normalizeClientCodePart(row[columnIndex.carrierCode], 6);
+    const carrier = carriersByCode.get(carrierCode);
+    const current = grouped.get(key) || {
+      carrierCodes: [],
+      carriers: [],
+      clientCode,
+      freightValue: 0,
+      invoiceNumbers: [],
+      trackingCodes: [],
+    };
+    const invoiceNumber = normalizeUploadIdentifier(row[columnIndex.invoiceNumber]);
+    const trackingCode = normalizeUploadIdentifier(row[columnIndex.trackingCode]);
+
+    if (invoiceNumber && !current.invoiceNumbers.includes(invoiceNumber)) current.invoiceNumbers.push(invoiceNumber);
+    if (trackingCode && !current.trackingCodes.includes(trackingCode)) current.trackingCodes.push(trackingCode);
+    if (carrierCode && !current.carrierCodes.includes(carrierCode)) current.carrierCodes.push(carrierCode);
+    if (carrier?.name && !current.carriers.includes(carrier.name)) current.carriers.push(carrier.name);
+    current.freightValue = Math.round((current.freightValue + parseUploadCurrency(row[columnIndex.freightValue])) * 100) / 100;
+
+    grouped.set(key, current);
+  }
+
+  const updates = [...grouped.values()].filter(
+    (item) => item.invoiceNumbers.length || item.trackingCodes.length || item.carrierCodes.length || item.freightValue,
+  );
+  if (updates.length === 0) throw new Error('Nenhuma informacao valida de rastreio foi encontrada.');
+
+  return updates.map((item) => ({
+    carrier: item.carriers.join(' / '),
+    carrierCode: item.carrierCodes.join(' / '),
+    clientCode: item.clientCode,
+    freightValue: item.freightValue ? formatUploadCurrency(item.freightValue) : '',
+    invoiceNumber: item.invoiceNumbers.join(' / '),
+    trackingCode: item.trackingCodes.join(' / '),
+  }));
 }
 
 function normalizeCustomerKey(value) {
@@ -2064,6 +2210,8 @@ export function App() {
   const [stockItems, setStockItems] = useState([]);
   const [stockTransferLists, setStockTransferLists] = useState([]);
   const [stockTransferCandidates, setStockTransferCandidates] = useState([]);
+  const [shippingCarriers, setShippingCarriers] = useState([]);
+  const [shippingCarrierMeta, setShippingCarrierMeta] = useState({});
   const [dashboardPeriod, setDashboardPeriod] = useState('current');
   const [dashboardSnapshotPeriods, setDashboardSnapshotPeriods] = useState([]);
   const [dashboardSnapshotQuotes, setDashboardSnapshotQuotes] = useState([]);
@@ -2107,6 +2255,8 @@ export function App() {
   const [isRestoringBilling, setIsRestoringBilling] = useState(false);
   const [isUploadingRotaxParts, setIsUploadingRotaxParts] = useState(false);
   const [isUploadingStock, setIsUploadingStock] = useState(false);
+  const [isUploadingShippingCarriers, setIsUploadingShippingCarriers] = useState(false);
+  const [isUploadingTrackingSheet, setIsUploadingTrackingSheet] = useState(false);
   const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
   const [uploadPreview, setUploadPreview] = useState(null);
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
@@ -2170,6 +2320,8 @@ export function App() {
   const [saleCelebration, setSaleCelebration] = useState(null);
   const uploadInputRef = useRef(null);
   const customerUploadInputRef = useRef(null);
+  const shippingCarrierUploadInputRef = useRef(null);
+  const trackingSheetUploadInputRef = useRef(null);
   const previousClosedQuoteIdsRef = useRef(null);
   const autoArchiveRunningRef = useRef(false);
   const uploadArchiveRecoveryRunningRef = useRef(false);
@@ -2300,6 +2452,8 @@ export function App() {
       setRotaxStudents([]);
       setRotaxContacts([]);
       setRotaxRevenueEntries([]);
+      setShippingCarriers([]);
+      setShippingCarrierMeta({});
       setCustomers([]);
       setCustomersLoaded(false);
       setCustomersMode('');
@@ -2322,6 +2476,7 @@ export function App() {
       loadTrackingEntries(),
       loadInfoBlocks(),
       loadRotaxTrainingData(),
+      loadShippingCarriers(),
       loadUploadAudits(),
       loadContractTemplates(),
       loadBillingEntries(),
@@ -2335,6 +2490,7 @@ export function App() {
           trackingResult,
           infoResult,
           rotaxResult,
+          shippingCarrierResult,
           uploadAuditResult,
           contractTemplateResult,
           billingResult,
@@ -2350,6 +2506,8 @@ export function App() {
         setRotaxSessions(rotaxResult.sessions);
         setRotaxStudents(rotaxResult.students);
         setRotaxContacts(rotaxResult.contacts);
+        setShippingCarriers(shippingCarrierResult.carriers);
+        setShippingCarrierMeta(shippingCarrierResult.meta || {});
         setUploadAudits(uploadAuditResult.audits);
         setContractTemplates(contractTemplateResult.templates);
         setBillingEntries(billingResult.entries);
@@ -3013,7 +3171,7 @@ export function App() {
       .filter((quote) => selectedSellers.length === 0 || selectedSellers.includes(quote.seller))
       .filter((quote) => {
         if (!query) return true;
-        return normalize(quote.clientName).includes(query) || normalize(quote.quoteNumber).includes(query);
+        return normalize(quote.clientName).includes(query) || normalize(quote.quoteNumber).includes(query) || normalize(quote.clientCode).includes(query);
       })
       .sort((a, b) => {
         if (quoteSort.key) {
@@ -3048,11 +3206,14 @@ export function App() {
 
           return [
             entry.quoteNumber,
+            entry.clientCode,
             entry.clientName,
             entry.phone || customer?.phone,
             entry.orderNumber,
             entry.invoiceNumber,
             entry.carrier,
+            entry.carrierCode,
+            entry.freightValue,
             entry.trackingCode,
             entry.deliverySituation,
             entry.expectedDeliveryDate,
@@ -3777,6 +3938,7 @@ export function App() {
     const nextQuote = {
       id: crypto.randomUUID(),
       quoteNumber,
+      clientCode: '',
       clientName: form.clientName.trim(),
       phone: form.phone.trim(),
       quoteValue: form.quoteValue.trim(),
@@ -3863,6 +4025,7 @@ export function App() {
           quoteValue: formattedTotalValue,
           isInterest: existingQuote.isInterest || row.totalValue >= 5000,
         };
+        if (row.clientCode && existingQuote.clientCode !== row.clientCode) changes.clientCode = row.clientCode;
         if (shouldUpdateClientName) changes.clientName = row.clientName;
         if (row.quoteDate && existingQuote.quoteDate !== row.quoteDate) changes.quoteDate = row.quoteDate;
 
@@ -3924,6 +4087,7 @@ export function App() {
         const nextQuote = {
           id: crypto.randomUUID(),
           quoteNumber: row.quoteNumber,
+          clientCode: row.clientCode || '',
           clientName: row.clientName,
           quoteValue: formattedTotalValue,
           paymentTerms: '',
@@ -4006,6 +4170,11 @@ export function App() {
         };
         const historyEvents = [];
 
+        if (row.clientCode && existingQuote.clientCode !== row.clientCode) {
+          changes.clientCode = row.clientCode;
+          historyEvents.push(buildQuoteHistoryEvent('updated', 'Codigo do cliente atualizado pelo upload', { clientCode: row.clientCode }, changedAt));
+        }
+
         if (shouldUpdateClientName) {
           changes.clientName = row.clientName;
           historyEvents.push(buildQuoteHistoryEvent('updated', 'Cliente atualizado pelo upload', {}, changedAt));
@@ -4085,6 +4254,7 @@ export function App() {
         const nextQuote = {
           id: crypto.randomUUID(),
           quoteNumber: row.quoteNumber,
+          clientCode: row.clientCode || '',
           clientName: row.clientName,
           quoteValue: formattedTotalValue,
           paymentTerms: '',
@@ -4163,6 +4333,69 @@ export function App() {
     if (!file) return;
 
     await uploadCustomersFile(file);
+  }
+
+  async function handleShippingCarriersUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setIsUploadingShippingCarriers(true);
+    try {
+      const parsedCarriers = await parseShippingCarriersUploadFile(file);
+      const result = await replaceShippingCarriers(parsedCarriers, file.name);
+      setShippingCarriers(result.carriers);
+      setShippingCarrierMeta(result.meta);
+      setAppError(`Transportadoras atualizadas: ${result.carriers.length} cadastro(s) na lista.`);
+    } catch (error) {
+      setAppError(error.message || 'Nao foi possivel importar a lista de transportadoras.');
+    } finally {
+      setIsUploadingShippingCarriers(false);
+    }
+  }
+
+  async function handleTrackingSheetUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setIsUploadingTrackingSheet(true);
+    try {
+      const trackingUpdates = await parseTrackingUploadFile(file, shippingCarriers);
+      const updatesByClientCode = new Map(trackingUpdates.map((item) => [normalizeClientCodeKey(item.clientCode), item]));
+      const eligibleEntries = trackingEntries.filter((entry) => entry.status !== 'Finalizado');
+      const matchedEntries = eligibleEntries.filter((entry) => updatesByClientCode.has(normalizeClientCodeKey(entry.clientCode)));
+      const matchedClientKeys = new Set(matchedEntries.map((entry) => normalizeClientCodeKey(entry.clientCode)));
+      let updatedCount = 0;
+
+      for (const entry of matchedEntries) {
+        const trackingUpdate = updatesByClientCode.get(normalizeClientCodeKey(entry.clientCode));
+        const changes = {
+          carrier: trackingUpdate.carrier || trackingUpdate.carrierCode || entry.carrier,
+          carrierCode: trackingUpdate.carrierCode,
+          freightValue: trackingUpdate.freightValue,
+          invoiceNumber: trackingUpdate.invoiceNumber,
+          trackingCode: trackingUpdate.trackingCode,
+          correiosUpdateFailed: false,
+        };
+        const hasChanges = Object.entries(changes).some(([key, value]) => (entry[key] || '') !== (value || ''));
+        if (!hasChanges) continue;
+
+        const savedEntry = await updateTrackingEntry(entry.id, changes);
+        updatedCount += 1;
+        setTrackingEntries((current) =>
+          sortTrackingEntries(current.map((currentEntry) => (currentEntry.id === savedEntry.id ? savedEntry : currentEntry))),
+        );
+      }
+
+      setAppError(
+        `Rastreio atualizado: ${updatedCount} registro(s) alterado(s), ${trackingUpdates.filter((item) => !matchedClientKeys.has(normalizeClientCodeKey(item.clientCode))).length} cliente(s) sem rastreio aberto correspondente.`,
+      );
+    } catch (error) {
+      setAppError(error.message || 'Nao foi possivel importar a planilha de rastreio.');
+    } finally {
+      setIsUploadingTrackingSheet(false);
+    }
   }
 
   async function uploadCustomersFile(file, options = {}) {
@@ -5608,6 +5841,7 @@ export function App() {
     if (existingEntry) {
       const savedEntry = await updateTrackingEntry(existingEntry.id, {
         quoteNumber: quote.quoteNumber,
+        clientCode: quote.clientCode || existingEntry.clientCode || '',
         clientName: quote.clientName,
         phone,
         orderNumber: details.orderNumber,
@@ -5623,6 +5857,7 @@ export function App() {
       id: crypto.randomUUID(),
       quoteId: quote.id,
       quoteNumber: quote.quoteNumber,
+      clientCode: quote.clientCode || '',
       clientName: quote.clientName,
       phone,
       orderNumber: details.orderNumber,
@@ -5667,6 +5902,7 @@ export function App() {
 
   async function ensureCustomerFromClosedQuote(quote, details) {
     if (!quote?.clientName?.trim()) return;
+    if (!customersLoaded) return;
 
     const existingCustomer = findCustomerByName(quote.clientName);
     const phone = quote.phone || details?.phone || '';
@@ -5687,7 +5923,7 @@ export function App() {
     const nowIso = new Date().toISOString();
     const customer = {
       id: crypto.randomUUID(),
-      clientCode: '',
+      clientCode: quote.clientCode || '',
       clientName: quote.clientName.trim(),
       seller,
       document: '',
@@ -6358,6 +6594,8 @@ export function App() {
       </section>
       <input ref={uploadInputRef} accept=".xlsx" hidden type="file" onChange={handleQuotesUpload} />
       <input ref={customerUploadInputRef} accept=".xlsx" hidden type="file" onChange={handleCustomersUpload} />
+      <input ref={shippingCarrierUploadInputRef} accept=".xlsx" hidden type="file" onChange={handleShippingCarriersUpload} />
+      <input ref={trackingSheetUploadInputRef} accept=".xlsx" hidden type="file" onChange={handleTrackingSheetUpload} />
       <datalist id="customer-name-options">
         {customers.map((customer) => (
           <option key={customer.id} value={customer.clientName} />
@@ -6470,15 +6708,21 @@ export function App() {
           expandedEntryIds={expandedTrackingEntryIds}
           metrics={trackingMetrics}
           correiosCandidateCount={correiosTrackingCandidates.length}
+          isUploadingCarriers={isUploadingShippingCarriers}
+          isUploadingTrackingSheet={isUploadingTrackingSheet}
           isUpdatingCorreios={isUpdatingCorreios}
           onEdit={openTrackingModal}
           onRemove={removeTrackingEntry}
           onAddStandalone={openStandaloneTrackingModal}
+          onUploadCarriers={() => shippingCarrierUploadInputRef.current?.click()}
+          onUploadTrackingSheet={() => trackingSheetUploadInputRef.current?.click()}
           onUpdateCorreiosStatuses={updateCorreiosStatuses}
           setActiveTrackingTab={setActiveTrackingTab}
           setActiveView={setActiveView}
           searchTerm={trackingSearchTerm}
           setSearchTerm={setTrackingSearchTerm}
+          shippingCarrierMeta={shippingCarrierMeta}
+          shippingCarriers={shippingCarriers}
           onToggleDetails={(id) =>
             setExpandedTrackingEntryIds((current) =>
               current.includes(id) ? current.filter((entryId) => entryId !== id) : [...current, id],
@@ -8714,6 +8958,7 @@ function QuotesWorkspace({
                     <span>{getSortDirectionLabel('quoteNumber')}</span>
                   </button>
                 </th>
+                <th>Cod. Cliente</th>
                 <th>Cliente</th>
                 <th>
                   <button className="sortable-header-button" type="button" onClick={() => onChangeQuoteSort('value')}>
@@ -8780,6 +9025,7 @@ function QuotesWorkspace({
                           {quote.quoteNumber}
                         </span>
                       </td>
+                      <td>{quote.clientCode || '-'}</td>
                       <td>{quote.clientName}</td>
                       <td>{quote.quoteValue || '—'}</td>
                       <td>{formatDate(`${quote.quoteDate}T12:00:00`)}</td>
@@ -13053,23 +13299,44 @@ function CustomerEditModal({ errors = {}, form, onCancel, onDelete, onSubmit, on
   );
 }
 
+function formatCarrierPhone(carrier) {
+  if (!carrier?.phone) return '';
+  return carrier.ddd ? `${carrier.ddd}-${carrier.phone}` : carrier.phone;
+}
+
+function formatCarrierContacts(carrierCode, carriersByCode) {
+  const contacts = normalizeUploadValue(carrierCode)
+    .split('/')
+    .map((code) => carriersByCode.get(normalizeClientCodePart(code, 6)))
+    .map(formatCarrierPhone)
+    .filter(Boolean);
+
+  return contacts.length ? contacts.join(' / ') : '';
+}
+
 function TrackingWorkspace({
   activeTrackingTab,
   correiosCandidateCount,
   customers = [],
   entries,
   expandedEntryIds = [],
+  isUploadingCarriers,
+  isUploadingTrackingSheet,
   isUpdatingCorreios,
   metrics,
   onAddStandalone,
   onEdit,
   onRemove,
   onToggleDetails,
+  onUploadCarriers,
+  onUploadTrackingSheet,
   onUpdateCorreiosStatuses,
   searchTerm,
   setActiveTrackingTab,
   setActiveView,
   setSearchTerm,
+  shippingCarrierMeta = {},
+  shippingCarriers = [],
 }) {
   const tableWrapRef = useRef(null);
   const tableRef = useRef(null);
@@ -13113,6 +13380,14 @@ function TrackingWorkspace({
     return customers.find((customer) => normalize(customer.clientName || '') === normalizedClientName)?.phone || '';
   }
 
+  const carriersByCode = useMemo(
+    () => new Map(shippingCarriers.map((carrier) => [normalizeClientCodePart(carrier.code, 6), carrier])),
+    [shippingCarriers],
+  );
+  const carrierUploadLabel = shippingCarrierMeta.uploadedAt
+    ? `Lista de transportadoras: ${formatDateTime(shippingCarrierMeta.uploadedAt)}`
+    : 'Lista de transportadoras ainda nao importada';
+
   return (
     <section className="tracking-panel">
       <div className="panel-toolbar">
@@ -13121,6 +13396,14 @@ function TrackingWorkspace({
           <h2>Rastreios</h2>
         </div>
         <div className="panel-actions">
+          <button className="secondary-button compact" type="button" disabled={isUploadingTrackingSheet} onClick={onUploadTrackingSheet}>
+            <Upload size={16} />
+            {isUploadingTrackingSheet ? 'Importando...' : 'Upload rastreio'}
+          </button>
+          <button className="secondary-button compact" type="button" disabled={isUploadingCarriers} onClick={onUploadCarriers}>
+            <Upload size={16} />
+            {isUploadingCarriers ? 'Importando...' : 'Transportadoras'}
+          </button>
           <button className="secondary-button compact" type="button" onClick={onAddStandalone}>
             <Plus size={16} />
             Adicionar rastreio avulso
@@ -13152,6 +13435,11 @@ function TrackingWorkspace({
             Cotações
           </button>
         </div>
+      </div>
+
+      <div className="tracking-carrier-meta">
+        <Truck size={16} />
+        <span>{carrierUploadLabel}</span>
       </div>
 
       <div className="tabs tracking-tabs" role="tablist" aria-label="Status dos rastreios">
@@ -13187,12 +13475,14 @@ function TrackingWorkspace({
           <thead>
             <tr>
               <th>Cotação</th>
+              <th>Cod. Cliente</th>
               <th>Cliente</th>
               <th>Telefone</th>
               <th>Nº pedido</th>
               <th>Nº Nota Fiscal</th>
               <th>Transportadora</th>
               <th>Cod. Rastreio</th>
+              <th>Vlr. Frete</th>
               <th>Situação entrega</th>
               <th>Previsão de entrega</th>
               <th>Status</th>
@@ -13205,20 +13495,32 @@ function TrackingWorkspace({
               const hasTrackingCode = entry.trackingCode.trim();
               const isExpanded = expandedEntryIds.includes(entry.id);
               const phone = entry.phone || getCustomerPhone(entry.clientName);
+              const carrierContacts = formatCarrierContacts(entry.carrierCode, carriersByCode);
               return (
                 <React.Fragment key={entry.id}>
                   <tr className={`tracking-row ${colorClass}`} onClick={() => onToggleDetails(entry.id)}>
                     <td className="strong-text">{entry.quoteNumber}</td>
+                    <td>{entry.clientCode || '—'}</td>
                     <td>{entry.clientName}</td>
                     <td>{phone || '—'}</td>
                     <td>{entry.orderNumber || '—'}</td>
                     <td>{entry.invoiceNumber || '—'}</td>
-                    <td>{entry.carrier || '—'}</td>
+                    <td>
+                      {entry.carrier ? (
+                        <details className="carrier-contact-dropdown" onClick={(event) => event.stopPropagation()}>
+                          <summary>{entry.carrier}</summary>
+                          <span>{carrierContacts || 'Telefone nao informado'}</span>
+                        </details>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
                     <td>
                       <span className={entry.trackingCode ? 'tracking-code' : 'tracking-code missing'}>
                         {entry.trackingCode || 'Sem rastreio'}
                       </span>
                     </td>
+                    <td>{entry.freightValue || '—'}</td>
                     <td>
                       {hasTrackingCode ? (
                         <span className="situation-cell">
@@ -13266,7 +13568,7 @@ function TrackingWorkspace({
                   </tr>
                   {isExpanded && (
                     <tr className="tracking-details-row">
-                      <td colSpan="11">
+                      <td colSpan="13">
                         <div className="tracking-details">
                           <div>
                             <b>Observações</b>
