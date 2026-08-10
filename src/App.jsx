@@ -482,6 +482,7 @@ const initialTrackingForm = {
   clientName: '',
   phone: '',
   carrier: '',
+  carrierCode: '',
   trackingCode: '',
   invoiceNumber: '',
   deliverySituation: 'etiqueta',
@@ -5967,6 +5968,7 @@ export function App() {
       clientName: entry.clientName || '',
       phone: entry.phone || customer?.phone || '',
       carrier: entry.carrier || '',
+      carrierCode: entry.carrierCode || '',
       trackingCode: entry.trackingCode || '',
       invoiceNumber: entry.invoiceNumber || '',
       deliverySituation: entry.deliverySituation || 'etiqueta',
@@ -6013,6 +6015,11 @@ export function App() {
         return { ...current, clientName: value, phone: customer?.phone || current.phone };
       }
 
+      if (field === 'carrier') {
+        const selectedCarrier = shippingCarriers.find((carrier) => normalizeUploadText(carrier.name) === normalizeUploadText(value));
+        return { ...current, carrier: value, carrierCode: selectedCarrier?.code || '' };
+      }
+
       return { ...current, [field]: value };
     });
     setTrackingFormErrors((current) => ({ ...current, [field]: '' }));
@@ -6044,6 +6051,7 @@ export function App() {
     const changes = {
       phone,
       carrier: trackingForm.carrier.trim(),
+      carrierCode: trackingForm.carrierCode || '',
       trackingCode: trackingForm.trackingCode.trim(),
       invoiceNumber: trackingForm.invoiceNumber.trim(),
       deliverySituation: trackingForm.deliverySituation,
@@ -6116,6 +6124,7 @@ export function App() {
       orderNumber: '',
       invoiceNumber: trackingForm.invoiceNumber.trim(),
       carrier: trackingForm.carrier.trim(),
+      carrierCode: trackingForm.carrierCode || '',
       trackingCode: trackingForm.trackingCode.trim(),
       deliverySituation: trackingForm.deliverySituation,
       expectedDeliveryDate: trackingForm.expectedDeliveryDate,
@@ -6609,6 +6618,11 @@ export function App() {
       <datalist id="seller-options">
         {sellers.map((seller) => (
           <option key={seller} value={seller} />
+        ))}
+      </datalist>
+      <datalist id="shipping-carrier-options">
+        {shippingCarriers.map((carrier) => (
+          <option key={carrier.code} value={carrier.name} />
         ))}
       </datalist>
 
@@ -14180,6 +14194,7 @@ function TrackingEditModal({ entry, errors = {}, form, isStandalone = false, onC
         <label>
           Transportadora
           <input
+            list="shipping-carrier-options"
             value={form.carrier}
             onChange={(event) => onUpdate('carrier', event.target.value)}
             placeholder="Ex: Correios"
