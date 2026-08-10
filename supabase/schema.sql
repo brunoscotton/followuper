@@ -130,14 +130,31 @@ create table if not exists public.customers (
   id uuid primary key,
   client_code text,
   client_name text not null,
+  store_code text,
   seller text,
   document text,
+  cpf text,
+  cnpj text,
+  person_type text,
+  trade_name text,
   phone text,
+  ddd text,
+  phone_number text,
+  mobile text,
   fiscal_address text,
+  city text,
+  neighborhood text,
+  complement text,
   delivery_address text,
   state text,
+  state_registration text,
   email text,
+  invoice_email text,
+  commercial_email text,
+  billing_email text,
   zip_code text,
+  last_purchase_at date,
+  purchase_count text,
   purchases jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -689,6 +706,23 @@ alter table public.tracking_entries
   add constraint tracking_entries_status_check
   check (status in ('Em andamento', 'Finalizado', 'Importação'));
 alter table public.customers add column if not exists seller text;
+alter table public.customers add column if not exists store_code text;
+alter table public.customers add column if not exists cpf text;
+alter table public.customers add column if not exists cnpj text;
+alter table public.customers add column if not exists person_type text;
+alter table public.customers add column if not exists trade_name text;
+alter table public.customers add column if not exists ddd text;
+alter table public.customers add column if not exists phone_number text;
+alter table public.customers add column if not exists mobile text;
+alter table public.customers add column if not exists city text;
+alter table public.customers add column if not exists neighborhood text;
+alter table public.customers add column if not exists complement text;
+alter table public.customers add column if not exists state_registration text;
+alter table public.customers add column if not exists invoice_email text;
+alter table public.customers add column if not exists commercial_email text;
+alter table public.customers add column if not exists billing_email text;
+alter table public.customers add column if not exists last_purchase_at date;
+alter table public.customers add column if not exists purchase_count text;
 alter table public.contract_templates add column if not exists mime_type text not null default 'application/pdf';
 alter table public.rotax_revenue_entries add column if not exists matriz_value numeric not null default 0;
 alter table public.rotax_revenue_entries add column if not exists campinas_value numeric not null default 0;

@@ -485,13 +485,28 @@ const initialTrackingForm = {
 const initialCustomerEditForm = {
   clientCode: '',
   clientName: '',
-  seller: '',
-  document: '',
-  phone: '',
-  fiscalAddress: '',
-  deliveryAddress: '',
-  state: '',
+  billingEmail: '',
+  city: '',
+  cnpj: '',
+  commercialEmail: '',
+  complement: '',
+  cpf: '',
+  ddd: '',
   email: '',
+  fiscalAddress: '',
+  invoiceEmail: '',
+  lastPurchaseAt: '',
+  mobile: '',
+  neighborhood: '',
+  personType: '',
+  phone: '',
+  phoneNumber: '',
+  purchaseCount: '',
+  seller: '',
+  state: '',
+  stateRegistration: '',
+  storeCode: '',
+  tradeName: '',
   zipCode: '',
 };
 
@@ -961,6 +976,178 @@ function mergeCustomerPurchases(existingPurchases, newPurchases) {
   return [...byId.values()].sort((a, b) => new Date(b.purchaseDate || 0) - new Date(a.purchaseDate || 0));
 }
 
+function normalizeCustomerUploadValue(value) {
+  const normalized = normalizeUploadValue(value);
+  if (['-', '.', ':', 'nan'].includes(normalized.toLowerCase())) return '';
+  return normalized;
+}
+
+function normalizeCustomerCode(value, length) {
+  const normalized = normalizeCustomerUploadValue(value).replace(/\.0$/, '');
+  if (!normalized) return '';
+  const digits = normalized.replace(/\D/g, '');
+  return digits && digits.length <= length ? digits.padStart(length, '0') : normalized;
+}
+
+function normalizeCustomerEmail(value) {
+  const normalized = normalizeCustomerUploadValue(value);
+  if (!normalized || normalized === '000000') return '';
+  return normalized;
+}
+
+function normalizeCustomerCount(value) {
+  const normalized = normalizeCustomerUploadValue(value);
+  const numeric = Number(normalized.replace(',', '.'));
+  return Number.isFinite(numeric) ? String(Math.trunc(numeric)) : normalized;
+}
+
+function getCustomerDocumentParts(documentValue, personType = '') {
+  const document = normalizeCustomerUploadValue(documentValue);
+  const digits = document.replace(/\D/g, '');
+  const normalizedType = normalizeUploadText(personType);
+
+  if (digits.length === 11 || normalizedType.includes('FISICA')) return { cpf: document, cnpj: '' };
+  if (digits.length === 14 || normalizedType.includes('JURIDICA')) return { cpf: '', cnpj: document };
+  return { cpf: '', cnpj: document };
+}
+
+function joinUniqueCustomerValues(values) {
+  return [
+    ...new Set(
+      values
+        .map(normalizeCustomerUploadValue)
+        .filter(Boolean),
+    ),
+  ].join(' / ');
+}
+
+function formatCustomerPhoneWithDdd(dddValue, phoneValue) {
+  const phone = normalizeCustomerUploadValue(phoneValue);
+  if (!phone) return '';
+
+  const ddd = normalizeCustomerUploadValue(dddValue).replace(/\D/g, '');
+  if (!ddd) return phone;
+
+  const phoneDigits = phone.replace(/\D/g, '');
+  if (phoneDigits.startsWith(ddd)) return phone;
+  return `(${ddd}) ${phone}`;
+}
+
+function getCustomerPhoneDisplay(customer) {
+  return joinUniqueCustomerValues([
+    customer.phone,
+    formatCustomerPhoneWithDdd(customer.ddd, customer.phoneNumber),
+    formatCustomerPhoneWithDdd(customer.ddd, customer.mobile),
+  ]);
+}
+
+function getCustomerEmailDisplay(customer) {
+  return joinUniqueCustomerValues([customer.email, customer.commercialEmail, customer.invoiceEmail, customer.billingEmail]);
+}
+
+function getCustomerDocumentValue(customer) {
+  return customer.document || customer.cnpj || customer.cpf || '';
+}
+
+function buildCustomerRegistrationsFromUploadRows(rows, existingCustomers = []) {
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('codigo') && headers.includes('loja') && headers.includes('nome') && headers.includes('fisicajurid');
+  });
+  if (headerIndex < 0) return [];
+
+  const headers = rows[headerIndex].map(normalizeUploadHeader);
+  const columnIndex = {
+    billingEmail: findCustomerUploadColumn(headers, ['Email-Boleto'], -1),
+    city: findCustomerUploadColumn(headers, ['Municipio'], -1),
+    clientCode: findCustomerUploadColumn(headers, ['Codigo'], -1),
+    clientName: findCustomerUploadColumn(headers, ['Nome'], -1),
+    complement: findCustomerUploadColumn(headers, ['Complemento'], -1),
+    ddd: findCustomerUploadColumn(headers, ['DDD'], -1),
+    document: findCustomerUploadColumn(headers, ['CNPJ/CPF'], -1),
+    email: findCustomerUploadColumn(headers, ['E-mail', 'Email'], -1),
+    fiscalAddress: findCustomerUploadColumn(headers, ['Endereco'], -1),
+    invoiceEmail: findCustomerUploadColumn(headers, ['E-Mail Nfe', 'Email Nfe'], -1),
+    lastPurchaseAt: findCustomerUploadColumn(headers, ['Ult. Compra', 'Ult Compra'], -1),
+    mobile: findCustomerUploadColumn(headers, ['Celular'], -1),
+    neighborhood: findCustomerUploadColumn(headers, ['Bairro'], -1),
+    personType: findCustomerUploadColumn(headers, ['Fisica/Jurid', 'Fisica Juridica'], -1),
+    phoneNumber: findCustomerUploadColumn(headers, ['Telefone'], -1),
+    purchaseCount: findCustomerUploadColumn(headers, ['Nro Compras'], -1),
+    state: findCustomerUploadColumn(headers, ['Estado'], -1),
+    stateRegistration: findCustomerUploadColumn(headers, ['Ins. Estad.', 'Ins Estad'], -1),
+    storeCode: findCustomerUploadColumn(headers, ['Loja'], -1),
+    tradeName: findCustomerUploadColumn(headers, ['N Fantasia'], -1),
+    zipCode: findCustomerUploadColumn(headers, ['CEP'], -1),
+    commercialEmail: findCustomerUploadColumn(headers, ['E-mail Comer', 'Email Comer'], -1),
+  };
+  const existingByKey = new Map();
+  existingCustomers.forEach((customer) => {
+    if (customer.clientCode) existingByKey.set(normalizeCustomerKey(`${customer.clientCode}-${customer.storeCode || ''}`), customer);
+    if (customer.clientCode) existingByKey.set(normalizeCustomerKey(customer.clientCode), customer);
+    if (customer.clientName) existingByKey.set(normalizeCustomerKey(customer.clientName), customer);
+  });
+
+  const grouped = new Map();
+
+  for (const row of rows.slice(headerIndex + 1)) {
+    const clientCode = normalizeCustomerCode(row[columnIndex.clientCode], 6);
+    const storeCode = normalizeCustomerCode(row[columnIndex.storeCode], 2);
+    const clientName = normalizeCustomerUploadValue(row[columnIndex.clientName]);
+    if (!clientCode && !clientName) continue;
+
+    const key = normalizeCustomerKey(`${clientCode || clientName}-${storeCode}`);
+    const existing = grouped.get(key) || existingByKey.get(key) || existingByKey.get(normalizeCustomerKey(clientCode || clientName));
+    const nowIso = new Date().toISOString();
+    const personType = normalizeCustomerUploadValue(row[columnIndex.personType]);
+    const { cpf, cnpj } = getCustomerDocumentParts(row[columnIndex.document], personType);
+    const phoneNumber = normalizeCustomerUploadValue(row[columnIndex.phoneNumber]);
+    const mobile = normalizeCustomerUploadValue(row[columnIndex.mobile]);
+    const ddd = normalizeCustomerUploadValue(row[columnIndex.ddd]);
+    const invoiceEmail = normalizeCustomerEmail(row[columnIndex.invoiceEmail]);
+    const commercialEmail = normalizeCustomerEmail(row[columnIndex.commercialEmail]);
+    const billingEmail = normalizeCustomerEmail(row[columnIndex.billingEmail]);
+    const customer = existing
+      ? { ...existing, purchases: [...(existing.purchases || [])] }
+      : {
+          id: crypto.randomUUID(),
+          purchases: [],
+          createdAt: nowIso,
+        };
+
+    customer.billingEmail = billingEmail;
+    customer.city = normalizeCustomerUploadValue(row[columnIndex.city]);
+    customer.clientCode = clientCode || customer.clientCode || '';
+    customer.clientName = clientName || customer.clientName || '';
+    customer.cnpj = cnpj;
+    customer.commercialEmail = commercialEmail;
+    customer.complement = normalizeCustomerUploadValue(row[columnIndex.complement]);
+    customer.cpf = cpf;
+    customer.ddd = ddd;
+    customer.document = cnpj || cpf || customer.document || '';
+    customer.email = getCustomerEmailDisplay({ commercialEmail, invoiceEmail, billingEmail });
+    customer.fiscalAddress = normalizeCustomerUploadValue(row[columnIndex.fiscalAddress]);
+    customer.invoiceEmail = invoiceEmail;
+    customer.lastPurchaseAt = formatUploadDateValue(row[columnIndex.lastPurchaseAt]);
+    customer.mobile = mobile;
+    customer.neighborhood = normalizeCustomerUploadValue(row[columnIndex.neighborhood]);
+    customer.personType = personType;
+    customer.phoneNumber = phoneNumber;
+    customer.phone = getCustomerPhoneDisplay({ ddd, phoneNumber, mobile });
+    customer.purchaseCount = normalizeCustomerCount(row[columnIndex.purchaseCount]);
+    customer.state = normalizeCustomerUploadValue(row[columnIndex.state]);
+    customer.stateRegistration = normalizeCustomerUploadValue(row[columnIndex.stateRegistration]);
+    customer.storeCode = storeCode;
+    customer.tradeName = normalizeCustomerUploadValue(row[columnIndex.tradeName]);
+    customer.zipCode = normalizeCustomerUploadValue(row[columnIndex.zipCode]);
+    customer.updatedAt = nowIso;
+
+    grouped.set(key, customer);
+  }
+
+  return sortCustomers([...grouped.values()]);
+}
+
 function buildCustomersFromUploadRows(rows, existingCustomers = []) {
   const headerIndex = rows.findIndex((row) => {
     const headers = row.map(normalizeUploadHeader);
@@ -1065,6 +1252,10 @@ function buildCustomersFromUploadRows(rows, existingCustomers = []) {
 }
 
 async function parseCustomersUploadFile(file, existingCustomers) {
+  const registrationRows = await readSheet(file, 1);
+  const registrationCustomers = buildCustomerRegistrationsFromUploadRows(registrationRows, existingCustomers);
+  if (registrationCustomers.length > 0) return registrationCustomers;
+
   const rows = await readSheet(file, 2);
   const customers = buildCustomersFromUploadRows(rows, existingCustomers);
   if (customers.length === 0) throw new Error('Nao encontrei clientes validos na segunda aba da planilha.');
@@ -2614,7 +2805,19 @@ export function App() {
         purchase.productDescription,
       ]);
 
-      return [customer.clientName, customer.clientCode, customer.seller, customer.document, customer.phone, customer.email, ...purchaseSearchValues]
+      return [
+        customer.clientName,
+        customer.clientCode,
+        customer.storeCode,
+        customer.tradeName,
+        customer.seller,
+        getCustomerDocumentValue(customer),
+        getCustomerPhoneDisplay(customer),
+        getCustomerEmailDisplay(customer),
+        customer.city,
+        customer.neighborhood,
+        ...purchaseSearchValues,
+      ]
         .filter(Boolean)
         .some((value) => normalize(value).includes(query));
     });
@@ -4659,15 +4862,31 @@ export function App() {
   function openCustomerEditModal(customer) {
     setCustomerEditModal(customer);
     setCustomerEditForm({
+      billingEmail: customer.billingEmail || '',
+      city: customer.city || '',
       clientCode: customer.clientCode || '',
       clientName: customer.clientName || '',
-      seller: customer.seller || '',
+      cnpj: customer.cnpj || '',
+      commercialEmail: customer.commercialEmail || '',
+      complement: customer.complement || '',
+      cpf: customer.cpf || '',
+      ddd: customer.ddd || '',
       document: customer.document || '',
-      phone: customer.phone || '',
-      fiscalAddress: customer.fiscalAddress || '',
-      deliveryAddress: customer.deliveryAddress || '',
-      state: customer.state || '',
       email: customer.email || '',
+      fiscalAddress: customer.fiscalAddress || '',
+      invoiceEmail: customer.invoiceEmail || '',
+      lastPurchaseAt: customer.lastPurchaseAt || '',
+      mobile: customer.mobile || '',
+      neighborhood: customer.neighborhood || '',
+      personType: customer.personType || '',
+      phone: customer.phone || '',
+      phoneNumber: customer.phoneNumber || '',
+      purchaseCount: customer.purchaseCount || '',
+      seller: customer.seller || '',
+      state: customer.state || '',
+      stateRegistration: customer.stateRegistration || '',
+      storeCode: customer.storeCode || '',
+      tradeName: customer.tradeName || '',
       zipCode: customer.zipCode || '',
     });
     setCustomerEditErrors({});
@@ -4688,16 +4907,37 @@ export function App() {
     if (Object.keys(nextErrors).length > 0) return;
 
     const previousCustomers = customers;
+    const hasDetailedPhone = Boolean(customerEditForm.ddd.trim() || customerEditForm.phoneNumber.trim() || customerEditForm.mobile.trim());
+    const hasDetailedEmail = Boolean(
+      customerEditForm.commercialEmail.trim() || customerEditForm.invoiceEmail.trim() || customerEditForm.billingEmail.trim(),
+    );
+    const hasDetailedDocument = Boolean(customerEditForm.cnpj.trim() || customerEditForm.cpf.trim());
     const changes = {
+      billingEmail: customerEditForm.billingEmail.trim(),
+      city: customerEditForm.city.trim(),
       clientCode: customerEditForm.clientCode.trim(),
       clientName: customerEditForm.clientName.trim(),
-      seller: customerEditForm.seller.trim(),
-      document: customerEditForm.document.trim(),
-      phone: customerEditForm.phone.trim(),
+      cnpj: customerEditForm.cnpj.trim(),
+      commercialEmail: customerEditForm.commercialEmail.trim(),
+      complement: customerEditForm.complement.trim(),
+      cpf: customerEditForm.cpf.trim(),
+      ddd: customerEditForm.ddd.trim(),
+      document: hasDetailedDocument ? customerEditForm.cnpj.trim() || customerEditForm.cpf.trim() : customerEditForm.document.trim(),
+      email: hasDetailedEmail ? getCustomerEmailDisplay({ ...customerEditForm, email: '' }) : customerEditForm.email.trim(),
       fiscalAddress: customerEditForm.fiscalAddress.trim(),
-      deliveryAddress: customerEditForm.deliveryAddress.trim(),
+      invoiceEmail: customerEditForm.invoiceEmail.trim(),
+      lastPurchaseAt: customerEditForm.lastPurchaseAt,
+      mobile: customerEditForm.mobile.trim(),
+      neighborhood: customerEditForm.neighborhood.trim(),
+      personType: customerEditForm.personType.trim(),
+      phone: hasDetailedPhone ? getCustomerPhoneDisplay({ ...customerEditForm, phone: '' }) : customerEditForm.phone.trim(),
+      phoneNumber: customerEditForm.phoneNumber.trim(),
+      purchaseCount: customerEditForm.purchaseCount.trim(),
+      seller: customerEditForm.seller.trim(),
       state: customerEditForm.state.trim(),
-      email: customerEditForm.email.trim(),
+      stateRegistration: customerEditForm.stateRegistration.trim(),
+      storeCode: customerEditForm.storeCode.trim(),
+      tradeName: customerEditForm.tradeName.trim(),
       zipCode: customerEditForm.zipCode.trim(),
     };
 
@@ -4752,11 +4992,12 @@ export function App() {
     return {
       name: customer.clientName || clientName,
       address: customer.fiscalAddress || customer.deliveryAddress || '',
+      city: customer.city || '',
       state: customer.state || '',
       zipCode: customer.zipCode || '',
-      document: customer.document || '',
-      email: customer.email || '',
-      phone: customer.phone || '',
+      document: getCustomerDocumentValue(customer),
+      email: getCustomerEmailDisplay(customer),
+      phone: getCustomerPhoneDisplay(customer),
     };
   }
 
@@ -10116,6 +10357,20 @@ function ContractOwnerFields({ compact = false, customers, form, onUpdateField, 
   );
 }
 
+function formatCustomerLastPurchase(customer) {
+  if (!customer.lastPurchaseAt) return '—';
+  return formatDate(`${customer.lastPurchaseAt}T12:00:00`);
+}
+
+function CustomerDetailField({ label, value }) {
+  return (
+    <span>
+      <b>{label}</b>
+      {value || '—'}
+    </span>
+  );
+}
+
 function CustomersWorkspace({
   customers,
   expandedCustomerIds,
@@ -10194,9 +10449,7 @@ function CustomersWorkspace({
               <th>Cliente</th>
               <th>CNPJ/CPF</th>
               <th>Telefone</th>
-              <th>UF</th>
               <th>E-mail</th>
-              <th>Compras</th>
               <th>Ações</th>
             </tr>
           </thead>
@@ -10210,11 +10463,9 @@ function CustomersWorkspace({
                   <tr className="quote-row expandable" onClick={() => onToggleCustomer(customer.id)}>
                     <td className="strong-text">{customer.clientCode || '—'}</td>
                     <td>{customer.clientName}</td>
-                    <td>{formatDocumentNumber(customer.document) || '—'}</td>
-                    <td>{customer.phone || '—'}</td>
-                    <td>{customer.state || '—'}</td>
-                    <td>{customer.email || '—'}</td>
-                    <td>{customer.purchases?.length || 0}</td>
+                    <td>{formatDocumentNumber(getCustomerDocumentValue(customer)) || '—'}</td>
+                    <td>{getCustomerPhoneDisplay(customer) || '—'}</td>
+                    <td>{getCustomerEmailDisplay(customer) || '—'}</td>
                     <td>
                       <button
                         className="icon-button neutral"
@@ -10232,80 +10483,82 @@ function CustomersWorkspace({
                   </tr>
                   {expanded && (
                     <tr className="closed-details-row">
-                      <td colSpan="8">
+                      <td colSpan="6">
                         <div className="customer-details">
-                          <div className="customer-address-grid">
-                            <span>
-                              <b>Vendedor</b>
-                              {customer.seller || '—'}
-                            </span>
-                            <span>
-                              <b>End. Cadastro</b>
-                              {customer.fiscalAddress || '—'}
-                            </span>
-                            <span>
-                              <b>End. Entrega</b>
-                              {customer.deliveryAddress || '—'}
-                            </span>
-                            <span>
-                              <b>CEP</b>
-                              {customer.zipCode || '—'}
-                            </span>
-                          </div>
+                          <details className="customer-dropdown" open>
+                            <summary>Informações complementares</summary>
+                            <div className="customer-address-grid">
+                              <CustomerDetailField label="Nome fantasia" value={customer.tradeName} />
+                              <CustomerDetailField label="Física/Jurídica" value={customer.personType} />
+                              <CustomerDetailField label="Endereço" value={customer.fiscalAddress} />
+                              <CustomerDetailField label="Município" value={customer.city} />
+                              <CustomerDetailField label="Estado" value={customer.state} />
+                              <CustomerDetailField label="Bairro" value={customer.neighborhood} />
+                              <CustomerDetailField label="CEP" value={customer.zipCode} />
+                              <CustomerDetailField label="Complemento" value={customer.complement} />
+                              <CustomerDetailField label="Telefones" value={getCustomerPhoneDisplay(customer)} />
+                              <CustomerDetailField label="Inscrição estadual" value={customer.stateRegistration} />
+                              <CustomerDetailField label="Última compra" value={formatCustomerLastPurchase(customer)} />
+                              <CustomerDetailField label="Nº de compras" value={customer.purchaseCount} />
+                              <CustomerDetailField label="E-mails" value={getCustomerEmailDisplay(customer)} />
+                            </div>
+                          </details>
 
-                          <div className="customer-products">
-                            <strong>Últimos produtos comprados</strong>
-                            {productGroups.length === 0 ? (
-                              <p>Nenhuma compra de produto cadastrada.</p>
-                            ) : (
-                              productGroups.map((product) => {
-                                const productKey = `${customer.id}-${product.key}`;
-                                const productExpanded = expandedProductKeys.includes(productKey);
-                                const averageUnitValue = product.totalQuantity ? product.totalValue / product.totalQuantity : 0;
+                          <details className="customer-dropdown">
+                            <summary>Itens por compras</summary>
+                            <div className="customer-products">
+                              {productGroups.length === 0 ? (
+                                <p>Nenhuma compra de produto cadastrada.</p>
+                              ) : (
+                                productGroups.map((product) => {
+                                  const productKey = `${customer.id}-${product.key}`;
+                                  const productExpanded = expandedProductKeys.includes(productKey);
+                                  const averageUnitValue = product.totalQuantity ? product.totalValue / product.totalQuantity : 0;
 
-                                return (
-                                  <div className="customer-product-card" key={productKey}>
-                                    <button type="button" onClick={() => onToggleProduct(productKey)}>
-                                      <span>
-                                        <b>{product.productPartNumber}</b>
-                                        {product.productDescription}
-                                      </span>
-                                      <span>{Number(product.totalQuantity || 0).toLocaleString('pt-BR')} un.</span>
-                                      <span>{formatCurrencyValue(product.latestPurchase.totalValue)}</span>
-                                      <span>{formatDate(`${product.latestPurchase.purchaseDate}T12:00:00`)}</span>
-                                    </button>
-                                    {productExpanded && (
-                                      <div className="customer-product-history">
-                                        <div className="customer-product-average">
-                                          Média de preço de venda: <b>{formatCurrencyValue(averageUnitValue)}</b>
-                                        </div>
-                                        <table>
-                                          <thead>
-                                            <tr>
-                                              <th>Data</th>
-                                              <th>Qtd.</th>
-                                              <th>Valor pago</th>
-                                              <th>Unitário</th>
-                                            </tr>
-                                          </thead>
-                                          <tbody>
-                                            {product.purchases.map((purchase) => (
-                                              <tr key={purchase.id}>
-                                                <td>{purchase.purchaseDate ? formatDate(`${purchase.purchaseDate}T12:00:00`) : '—'}</td>
-                                                <td>{Number(purchase.quantity || 0).toLocaleString('pt-BR')}</td>
-                                                <td>{formatCurrencyValue(purchase.totalValue)}</td>
-                                                <td>{formatCurrencyValue(purchase.unitValue)}</td>
+                                  return (
+                                    <div className="customer-product-card" key={productKey}>
+                                      <button type="button" onClick={() => onToggleProduct(productKey)}>
+                                        <span>
+                                          <b>{product.productPartNumber}</b>
+                                          {product.productDescription}
+                                        </span>
+                                        <span>{Number(product.totalQuantity || 0).toLocaleString('pt-BR')} un.</span>
+                                        <span>{formatCurrencyValue(product.latestPurchase.totalValue)}</span>
+                                        <span>{formatDate(`${product.latestPurchase.purchaseDate}T12:00:00`)}</span>
+                                      </button>
+                                      {productExpanded && (
+                                        <div className="customer-product-history">
+                                          <div className="customer-product-average">
+                                            Média de preço de venda: <b>{formatCurrencyValue(averageUnitValue)}</b>
+                                          </div>
+                                          <table>
+                                            <thead>
+                                              <tr>
+                                                <th>Data</th>
+                                                <th>Qtd.</th>
+                                                <th>Valor pago</th>
+                                                <th>Unitário</th>
                                               </tr>
-                                            ))}
-                                          </tbody>
-                                        </table>
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })
-                            )}
-                          </div>
+                                            </thead>
+                                            <tbody>
+                                              {product.purchases.map((purchase) => (
+                                                <tr key={purchase.id}>
+                                                  <td>{purchase.purchaseDate ? formatDate(`${purchase.purchaseDate}T12:00:00`) : '—'}</td>
+                                                  <td>{Number(purchase.quantity || 0).toLocaleString('pt-BR')}</td>
+                                                  <td>{formatCurrencyValue(purchase.totalValue)}</td>
+                                                  <td>{formatCurrencyValue(purchase.unitValue)}</td>
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </details>
                         </div>
                       </td>
                     </tr>
@@ -12468,10 +12721,15 @@ function CustomerEditModal({ errors = {}, form, onCancel, onDelete, onSubmit, on
           </button>
         </div>
 
-        <div className="form-pair wide">
+        <div className="form-grid-3">
           <label>
             Cod. Cliente
             <input value={form.clientCode} onChange={(event) => onUpdate('clientCode', event.target.value)} placeholder="Código" />
+          </label>
+
+          <label>
+            Loja
+            <input value={form.storeCode} onChange={(event) => onUpdate('storeCode', event.target.value)} placeholder="Loja" />
           </label>
 
           <label>
@@ -12488,42 +12746,117 @@ function CustomerEditModal({ errors = {}, form, onCancel, onDelete, onSubmit, on
 
         <div className="form-pair wide">
           <label>
+            Nome fantasia
+            <input value={form.tradeName} onChange={(event) => onUpdate('tradeName', event.target.value)} placeholder="Nome fantasia" />
+          </label>
+
+          <label>
+            Física/Jurídica
+            <input value={form.personType} onChange={(event) => onUpdate('personType', event.target.value)} placeholder="Tipo" />
+          </label>
+        </div>
+
+        <div className="form-pair wide">
+          <label>
             CNPJ/CPF
             <input value={form.document} onChange={(event) => onUpdate('document', event.target.value)} placeholder="Documento" />
           </label>
 
           <label>
+            Inscrição estadual
+            <input value={form.stateRegistration} onChange={(event) => onUpdate('stateRegistration', event.target.value)} placeholder="IE" />
+          </label>
+        </div>
+
+        <div className="form-grid-3">
+          <label>
+            DDD
+            <input value={form.ddd} onChange={(event) => onUpdate('ddd', event.target.value)} placeholder="DDD" />
+          </label>
+
+          <label>
             Telefone
-            <input value={form.phone} onChange={(event) => onUpdate('phone', event.target.value)} placeholder="Telefone" />
+            <input value={form.phoneNumber} onChange={(event) => onUpdate('phoneNumber', event.target.value)} placeholder="Telefone" />
+          </label>
+
+          <label>
+            Celular
+            <input value={form.mobile} onChange={(event) => onUpdate('mobile', event.target.value)} placeholder="Celular" />
           </label>
         </div>
 
         <div className="form-pair wide">
+          <label>
+            CPF
+            <input value={form.cpf} onChange={(event) => onUpdate('cpf', event.target.value)} placeholder="CPF" />
+          </label>
+
+          <label>
+            CNPJ
+            <input value={form.cnpj} onChange={(event) => onUpdate('cnpj', event.target.value)} placeholder="CNPJ" />
+          </label>
+        </div>
+
+        <label>
+          Endereço
+          <input value={form.fiscalAddress} onChange={(event) => onUpdate('fiscalAddress', event.target.value)} placeholder="Endereço" />
+        </label>
+
+        <div className="form-grid-4">
+          <label>
+            Município
+            <input value={form.city} onChange={(event) => onUpdate('city', event.target.value)} placeholder="Município" />
+          </label>
+
           <label>
             Estado
             <input value={form.state} onChange={(event) => onUpdate('state', event.target.value)} placeholder="UF" />
           </label>
 
           <label>
-            E-mail
-            <input value={form.email} onChange={(event) => onUpdate('email', event.target.value)} placeholder="E-mail" />
+            Bairro
+            <input value={form.neighborhood} onChange={(event) => onUpdate('neighborhood', event.target.value)} placeholder="Bairro" />
+          </label>
+
+          <label>
+            CEP
+            <input value={form.zipCode} onChange={(event) => onUpdate('zipCode', event.target.value)} placeholder="CEP" />
           </label>
         </div>
 
         <label>
-          End. Cadastro
-          <input value={form.fiscalAddress} onChange={(event) => onUpdate('fiscalAddress', event.target.value)} placeholder="Endereço de cadastro" />
+          Complemento
+          <input value={form.complement} onChange={(event) => onUpdate('complement', event.target.value)} placeholder="Complemento" />
         </label>
 
-        <label>
-          End. Entrega
-          <input value={form.deliveryAddress} onChange={(event) => onUpdate('deliveryAddress', event.target.value)} placeholder="Endereço de entrega" />
-        </label>
+        <div className="form-pair wide">
+          <label>
+            Última compra
+            <input type="date" value={form.lastPurchaseAt} onChange={(event) => onUpdate('lastPurchaseAt', event.target.value)} />
+          </label>
 
-        <label>
-          CEP
-          <input value={form.zipCode} onChange={(event) => onUpdate('zipCode', event.target.value)} placeholder="CEP" />
-        </label>
+          <label>
+            Nº de compras
+            <input value={form.purchaseCount} onChange={(event) => onUpdate('purchaseCount', event.target.value)} placeholder="Quantidade" />
+          </label>
+        </div>
+
+        <div className="form-grid-3">
+          <label>
+            E-mail comercial
+            <input value={form.commercialEmail} onChange={(event) => onUpdate('commercialEmail', event.target.value)} placeholder="Comercial" />
+          </label>
+
+          <label>
+            E-mail NF-e
+            <input value={form.invoiceEmail} onChange={(event) => onUpdate('invoiceEmail', event.target.value)} placeholder="NF-e" />
+          </label>
+
+          <label>
+            E-mail boleto
+            <input value={form.billingEmail} onChange={(event) => onUpdate('billingEmail', event.target.value)} placeholder="Boleto" />
+          </label>
+        </div>
 
         <div className="modal-actions">
           <button className="danger-button" type="button" onClick={onDelete}>

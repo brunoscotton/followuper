@@ -2477,16 +2477,14 @@ td {
 }
 
 .customers-table {
-  min-width: 1040px;
+  min-width: 960px;
 }
 
-.customers-table th:nth-child(4),
-.customers-table th:nth-child(7) {
-  width: 96px;
+.customers-table th:nth-child(4) {
+  width: 180px;
 }
 
-.customers-table th:nth-child(5),
-.customers-table th:nth-child(8) {
+.customers-table th:last-child {
   width: 76px;
 }
 
@@ -2506,17 +2504,38 @@ td {
 
 .customer-details {
   display: grid;
-  gap: 14px;
+  gap: 10px;
+}
+
+.customer-dropdown {
+  background: #ffffff;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.customer-dropdown summary {
+  background: #f8fafc;
+  color: #17212b;
+  cursor: pointer;
+  font-weight: 900;
+  list-style-position: inside;
+  padding: 10px 12px;
+}
+
+.customer-dropdown[open] summary {
+  border-bottom: 1px solid #d9e0e7;
 }
 
 .customer-address-grid {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 10px;
 }
 
 .customer-address-grid span {
-  background: #ffffff;
+  background: #f8fafc;
   border: 1px solid #d9e0e7;
   border-radius: 8px;
   color: #354353;
@@ -2535,6 +2554,7 @@ td {
 .customer-products {
   display: grid;
   gap: 8px;
+  padding: 10px;
 }
 
 .customer-products p {
