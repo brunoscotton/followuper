@@ -5,6 +5,7 @@ import {
   BookOpenText,
   CalendarClock,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   CircleDot,
   Clock3,
@@ -12,6 +13,7 @@ import {
   FileText,
   GraduationCap,
   Heading1,
+  Home,
   Image as ImageIcon,
   List,
   Link as LinkIcon,
@@ -2090,6 +2092,7 @@ export function App() {
   const [activeRotaxSessionId, setActiveRotaxSessionId] = useState('');
   const [activeRotaxInfoCategory, setActiveRotaxInfoCategory] = useState('internal');
   const [activeBillingSeller, setActiveBillingSeller] = useState(billingSellers[0]);
+  const [sideMenuCollapsed, setSideMenuCollapsed] = useState(false);
   const [activeReturnTab, setActiveReturnTab] = useState('andamento');
   const [activeWarrantyTab, setActiveWarrantyTab] = useState('andamento');
   const [activeReminderTab, setActiveReminderTab] = useState('new');
@@ -6090,6 +6093,12 @@ export function App() {
     if (view !== 'quotes') setSideQuoteFormOpen(false);
   }
 
+  function navigateSideMenuHome() {
+    setActiveView('quotes');
+    setActiveTab('abertas');
+    setSideQuoteFormOpen(false);
+  }
+
   if (!authChecked) {
     return (
       <main className="app-shell center-shell">
@@ -6369,26 +6378,37 @@ export function App() {
 
       {appError && <div className="app-alert">{appError}</div>}
 
-      <div className={useSideMenu ? 'app-main-with-sidebar' : 'app-main-without-sidebar'}>
+      <div className={`${useSideMenu ? 'app-main-with-sidebar' : 'app-main-without-sidebar'}${sideMenuCollapsed ? ' sidebar-collapsed' : ''}`}>
         {useSideMenu && (
-          <SideNavigation
-            activeView={activeView}
-            dataStatus={dataStatus}
-            errors={errors}
-            form={form}
-            isMasterUser={isMasterUser}
-            metrics={metrics}
-            onNavigate={navigateFromSideMenu}
-            pendingReminderCount={pendingReminderCount}
-            onSubmitQuote={handleSubmit}
-            onUpdateForm={updateForm}
-            quoteFormOpen={sideQuoteFormOpen}
-            setActiveTab={setActiveTab}
-            setActiveTrackingTab={setActiveTrackingTab}
-            setQuoteFormOpen={setSideQuoteFormOpen}
-            smartAlerts={metrics.smartAlerts}
-            trackingMetrics={trackingMetrics}
-          />
+          <div className="side-navigation-frame">
+            <SideNavigation
+              activeView={activeView}
+              dataStatus={dataStatus}
+              errors={errors}
+              form={form}
+              isMasterUser={isMasterUser}
+              metrics={metrics}
+              onCollapse={() => setSideMenuCollapsed(true)}
+              onNavigate={navigateFromSideMenu}
+              pendingReminderCount={pendingReminderCount}
+              onSubmitQuote={handleSubmit}
+              onUpdateForm={updateForm}
+              quoteFormOpen={sideQuoteFormOpen}
+              setActiveTab={setActiveTab}
+              setActiveTrackingTab={setActiveTrackingTab}
+              setQuoteFormOpen={setSideQuoteFormOpen}
+              smartAlerts={metrics.smartAlerts}
+              trackingMetrics={trackingMetrics}
+            />
+            <div className="side-collapsed-rail" aria-label="Menu recolhido">
+              <button type="button" title="Abrir menu lateral" aria-label="Abrir menu lateral" onClick={() => setSideMenuCollapsed(false)}>
+                <ChevronRight size={20} />
+              </button>
+              <button type="button" title="Ir para home" aria-label="Ir para home" onClick={navigateSideMenuHome}>
+                <Home size={20} />
+              </button>
+            </div>
+          </div>
         )}
         <div className={useSideMenu ? 'app-content-area' : undefined}>
       {layoutMode === 'dashboard' ? (
@@ -8099,6 +8119,7 @@ function SideNavigation({
   form,
   isMasterUser,
   metrics,
+  onCollapse,
   onNavigate,
   pendingReminderCount,
   onSubmitQuote,
@@ -8117,6 +8138,10 @@ function SideNavigation({
 
   return (
     <aside className="side-navigation">
+      <button className="side-collapse-button" type="button" title="Recolher menu lateral" aria-label="Recolher menu lateral" onClick={onCollapse}>
+        <ChevronLeft size={18} />
+      </button>
+
       <button className="side-logo-button" type="button" aria-label="Voltar para cotações" onClick={() => navigateQuotes('abertas')}>
         <img className="app-logo side-logo" src="/followuper-logo.png" alt="FollowUper" />
       </button>
