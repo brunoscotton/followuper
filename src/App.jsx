@@ -37,7 +37,7 @@ import {
   X,
 } from 'lucide-react';
 import React from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { readSheet } from 'read-excel-file/browser';
 import { getCurrentSession, onAuthChange, signIn, signOut } from './services/authRepository';
 import {
@@ -1110,24 +1110,40 @@ function getCustomerSearchValues(customer) {
   ].filter(Boolean);
 }
 
-function customerMatchesSearch(customer, searchTerm) {
-  const query = normalize(searchTerm);
-  if (!query) return true;
-
+function buildCustomerSearchEntry(customer) {
   const values = getCustomerSearchValues(customer);
   const normalizedText = normalize(values.join(' '));
-  const normalizedCompactText = normalizedText.replace(/[^a-z0-9]+/g, '');
-  const digitText = values.map((value) => String(value).replace(/\D/g, '')).filter(Boolean).join(' ');
-  const tokens = query.split(/\s+/).filter(Boolean);
 
-  return tokens.every((token) => {
-    const compactToken = token.replace(/[^a-z0-9]+/g, '');
-    const digitToken = token.replace(/\D/g, '');
+  return {
+    customer,
+    digitText: values.map((value) => String(value).replace(/\D/g, '')).filter(Boolean).join(' '),
+    normalizedCompactText: normalizedText.replace(/[^a-z0-9]+/g, ''),
+    normalizedText,
+  };
+}
 
+function buildCustomerSearchQuery(searchTerm) {
+  const query = normalize(searchTerm);
+  const tokens = query.split(/\s+/).filter(Boolean).map((token) => ({
+    compactToken: token.replace(/[^a-z0-9]+/g, ''),
+    digitToken: token.replace(/\D/g, ''),
+    token,
+  }));
+
+  return {
+    hasQuery: tokens.length > 0,
+    tokens,
+  };
+}
+
+function customerSearchEntryMatches(entry, query) {
+  if (!query.hasQuery) return true;
+
+  return query.tokens.every(({ token, compactToken, digitToken }) => {
     return (
-      normalizedText.includes(token) ||
-      (compactToken && normalizedCompactText.includes(compactToken)) ||
-      (digitToken && digitText.includes(digitToken))
+      entry.normalizedText.includes(token) ||
+      (compactToken && entry.normalizedCompactText.includes(compactToken)) ||
+      (digitToken && entry.digitText.includes(digitToken))
     );
   });
 }
@@ -2089,6 +2105,7 @@ export function App() {
   const [isUploadingStock, setIsUploadingStock] = useState(false);
   const [uploadPreview, setUploadPreview] = useState(null);
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
+  const deferredCustomerSearchTerm = useDeferredValue(customerSearchTerm);
   const [expandedCustomerIds, setExpandedCustomerIds] = useState([]);
   const [expandedCustomerProductKeys, setExpandedCustomerProductKeys] = useState([]);
   const [customerEditModal, setCustomerEditModal] = useState(null);
@@ -2882,9 +2899,14 @@ export function App() {
     [trackingEntries],
   );
 
+  const customerSearchIndex = useMemo(() => customers.map(buildCustomerSearchEntry), [customers]);
+
+  const customerSearchQuery = useMemo(() => buildCustomerSearchQuery(deferredCustomerSearchTerm), [deferredCustomerSearchTerm]);
+
   const visibleCustomers = useMemo(() => {
-    return customers.filter((customer) => customerMatchesSearch(customer, customerSearchTerm));
-  }, [customerSearchTerm, customers]);
+    if (!customerSearchQuery.hasQuery) return customers;
+    return customerSearchIndex.filter((entry) => customerSearchEntryMatches(entry, customerSearchQuery)).map((entry) => entry.customer);
+  }, [customerSearchIndex, customerSearchQuery, customers]);
 
   const visibleReminders = useMemo(
     () => reminders.filter((reminder) => reminderVisibleToUser(reminder, user)),
