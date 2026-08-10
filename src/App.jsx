@@ -1021,6 +1021,27 @@ function joinUniqueCustomerValues(values) {
   ].join(' / ');
 }
 
+function extractCustomerEmailValues(value) {
+  const normalized = normalizeCustomerEmail(value);
+  if (!normalized) return [];
+
+  const matches = normalized.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi);
+  if (matches?.length) return matches.map(normalizeCustomerEmail).filter(Boolean);
+
+  return normalized.split(/[;,\/|]+/).map(normalizeCustomerEmail).filter(Boolean);
+}
+
+function joinUniqueCustomerEmails(values) {
+  const uniqueEmails = new Map();
+
+  values.flatMap(extractCustomerEmailValues).forEach((email) => {
+    const key = email.toLowerCase();
+    if (!uniqueEmails.has(key)) uniqueEmails.set(key, email);
+  });
+
+  return [...uniqueEmails.values()].join(' / ');
+}
+
 function formatCustomerPhoneWithDdd(dddValue, phoneValue) {
   const phone = normalizeCustomerUploadValue(phoneValue);
   if (!phone) return '';
@@ -1042,7 +1063,7 @@ function getCustomerPhoneDisplay(customer) {
 }
 
 function getCustomerEmailDisplay(customer) {
-  return joinUniqueCustomerValues([customer.email, customer.commercialEmail, customer.invoiceEmail, customer.billingEmail]);
+  return joinUniqueCustomerEmails([customer.email, customer.commercialEmail, customer.invoiceEmail, customer.billingEmail]);
 }
 
 function getCustomerDocumentValue(customer) {
@@ -1104,9 +1125,9 @@ function buildCustomerRegistrationsFromUploadRows(rows, existingCustomers = []) 
     const phoneNumber = normalizeCustomerUploadValue(row[columnIndex.phoneNumber]);
     const mobile = normalizeCustomerUploadValue(row[columnIndex.mobile]);
     const ddd = normalizeCustomerUploadValue(row[columnIndex.ddd]);
-    const invoiceEmail = normalizeCustomerEmail(row[columnIndex.invoiceEmail]);
-    const commercialEmail = normalizeCustomerEmail(row[columnIndex.commercialEmail]);
-    const billingEmail = normalizeCustomerEmail(row[columnIndex.billingEmail]);
+    const invoiceEmail = joinUniqueCustomerEmails([row[columnIndex.invoiceEmail]]);
+    const commercialEmail = joinUniqueCustomerEmails([row[columnIndex.commercialEmail]]);
+    const billingEmail = joinUniqueCustomerEmails([row[columnIndex.billingEmail]]);
     const customer = existing
       ? { ...existing, purchases: [...(existing.purchases || [])] }
       : {
@@ -4913,19 +4934,19 @@ export function App() {
     );
     const hasDetailedDocument = Boolean(customerEditForm.cnpj.trim() || customerEditForm.cpf.trim());
     const changes = {
-      billingEmail: customerEditForm.billingEmail.trim(),
+      billingEmail: joinUniqueCustomerEmails([customerEditForm.billingEmail]),
       city: customerEditForm.city.trim(),
       clientCode: customerEditForm.clientCode.trim(),
       clientName: customerEditForm.clientName.trim(),
       cnpj: customerEditForm.cnpj.trim(),
-      commercialEmail: customerEditForm.commercialEmail.trim(),
+      commercialEmail: joinUniqueCustomerEmails([customerEditForm.commercialEmail]),
       complement: customerEditForm.complement.trim(),
       cpf: customerEditForm.cpf.trim(),
       ddd: customerEditForm.ddd.trim(),
       document: hasDetailedDocument ? customerEditForm.cnpj.trim() || customerEditForm.cpf.trim() : customerEditForm.document.trim(),
       email: hasDetailedEmail ? getCustomerEmailDisplay({ ...customerEditForm, email: '' }) : customerEditForm.email.trim(),
       fiscalAddress: customerEditForm.fiscalAddress.trim(),
-      invoiceEmail: customerEditForm.invoiceEmail.trim(),
+      invoiceEmail: joinUniqueCustomerEmails([customerEditForm.invoiceEmail]),
       lastPurchaseAt: customerEditForm.lastPurchaseAt,
       mobile: customerEditForm.mobile.trim(),
       neighborhood: customerEditForm.neighborhood.trim(),
