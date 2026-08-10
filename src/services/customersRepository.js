@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient';
 
 const STORAGE_KEY = 'followuper.customers.v1';
+const CUSTOMER_SELECT_BATCH_SIZE = 1000;
 const CUSTOMER_UPSERT_BATCH_SIZE = 500;
 
 function loadLocalCustomers() {
@@ -162,12 +163,29 @@ function dedupeCustomersById(customers) {
   return sortCustomers([...byId.values()]);
 }
 
+async function fetchAllCustomerRows() {
+  const rows = [];
+
+  for (let start = 0; ; start += CUSTOMER_SELECT_BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from('customers')
+      .select('*')
+      .order('client_name', { ascending: true })
+      .range(start, start + CUSTOMER_SELECT_BATCH_SIZE - 1);
+
+    if (error) return { data: rows, error };
+
+    rows.push(...(data || []));
+    if (!data || data.length < CUSTOMER_SELECT_BATCH_SIZE) return { data: rows, error: null };
+  }
+}
+
 export async function loadCustomers() {
   if (!supabase) {
     return { customers: sortCustomers(loadLocalCustomers()), mode: 'local' };
   }
 
-  const { data, error } = await supabase.from('customers').select('*').order('client_name', { ascending: true });
+  const { data, error } = await fetchAllCustomerRows();
 
   if (error) {
     if (isMissingTableError(error)) {
