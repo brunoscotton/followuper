@@ -13329,6 +13329,27 @@ function formatCarrierContacts(carrierCode, carriersByCode) {
   return contacts.length ? contacts.join(' / ') : '';
 }
 
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back to the legacy copy path below.
+    }
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.left = '-9999px';
+  textarea.style.position = 'fixed';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
+}
+
 function TrackingWorkspace({
   activeTrackingTab,
   customers = [],
@@ -13352,7 +13373,9 @@ function TrackingWorkspace({
   const tableWrapRef = useRef(null);
   const tableRef = useRef(null);
   const topScrollRef = useRef(null);
+  const copyFeedbackTimeoutRef = useRef(null);
   const [tableScrollWidth, setTableScrollWidth] = useState(0);
+  const [copyFeedback, setCopyFeedback] = useState(null);
 
   useEffect(() => {
     function updateScrollWidth() {
@@ -13390,6 +13413,23 @@ function TrackingWorkspace({
     if (!normalizedClientName) return '';
     return customers.find((customer) => normalize(customer.clientName || '') === normalizedClientName)?.phone || '';
   }
+
+  async function copyTrackingCode(event, trackingCode) {
+    event.stopPropagation();
+    if (!trackingCode) return;
+
+    await copyTextToClipboard(trackingCode);
+    if (copyFeedbackTimeoutRef.current) clearTimeout(copyFeedbackTimeoutRef.current);
+    setCopyFeedback({ x: event.clientX, y: event.clientY });
+    copyFeedbackTimeoutRef.current = window.setTimeout(() => setCopyFeedback(null), 1200);
+  }
+
+  useEffect(
+    () => () => {
+      if (copyFeedbackTimeoutRef.current) clearTimeout(copyFeedbackTimeoutRef.current);
+    },
+    [],
+  );
 
   const carriersByCode = useMemo(
     () => new Map(shippingCarriers.map((carrier) => [normalizeClientCodePart(carrier.code, 6), carrier])),
@@ -13509,9 +13549,18 @@ function TrackingWorkspace({
                       )}
                     </td>
                     <td>
-                      <span className={entry.trackingCode ? 'tracking-code' : 'tracking-code missing'}>
-                        {entry.trackingCode || 'Sem rastreio'}
-                      </span>
+                      {entry.trackingCode ? (
+                        <button
+                          className="tracking-code copyable"
+                          type="button"
+                          title="Copiar codigo de rastreio"
+                          onClick={(event) => copyTrackingCode(event, entry.trackingCode)}
+                        >
+                          {entry.trackingCode}
+                        </button>
+                      ) : (
+                        <span className="tracking-code missing">Sem rastreio</span>
+                      )}
                     </td>
                     <td>{entry.freightValue || '—'}</td>
                     <td>
@@ -13580,6 +13629,11 @@ function TrackingWorkspace({
             })}
           </tbody>
         </table>
+        {copyFeedback && (
+          <div className="tracking-copy-feedback" style={{ left: copyFeedback.x, top: copyFeedback.y }}>
+            Código Copiado!
+          </div>
+        )}
 
         {entries.length === 0 && (
           <div className="empty-state">

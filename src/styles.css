@@ -2535,8 +2535,38 @@ td {
   font-weight: 800;
 }
 
+.tracking-code.copyable {
+  background: transparent;
+  border: 0;
+  cursor: copy;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.tracking-code.copyable:hover {
+  color: #0f766e;
+  text-decoration: underline;
+}
+
 .tracking-code.missing {
   color: #be123c;
+}
+
+.tracking-copy-feedback {
+  background: #0f766e;
+  border: 1px solid #0d9488;
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 7px 9px;
+  pointer-events: none;
+  position: fixed;
+  transform: translate(-50%, -135%);
+  white-space: nowrap;
+  z-index: 9999;
 }
 
 .carrier-contact-dropdown {
