@@ -10,6 +10,7 @@ import {
   CircleDot,
   Clock3,
   Database,
+  ExternalLink,
   FileText,
   GraduationCap,
   Heading1,
@@ -223,6 +224,7 @@ const regularizationStatuses = [
 ];
 const BILLING_NOTE_DRAFTS_STORAGE_KEY = 'followuper.billingNoteDrafts.v1';
 const LAYOUT_STORAGE_KEY = 'followuper.layoutMode.v1';
+const ROTAX_SYSTEM_URL = 'https://rotax-system.vercel.app/';
 const AUTO_ARCHIVE_INACTIVE_DAYS = 15;
 const DOLLAR_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 const monthNames = [
@@ -6660,6 +6662,11 @@ export function App() {
     }
   }
 
+  function openRotaxSystem() {
+    const rotaxWindow = window.open(ROTAX_SYSTEM_URL, '_blank', 'noopener,noreferrer');
+    if (rotaxWindow) rotaxWindow.opener = null;
+  }
+
   function navigateFromMenu(view) {
     setActiveView(view);
     setMainMenuOpen(false);
@@ -6743,6 +6750,10 @@ export function App() {
                   </div>
                 )}
               </div>
+              <button className="view-button" type="button" onClick={openRotaxSystem}>
+                <ExternalLink size={16} />
+                Rotax System
+              </button>
               {isSupabaseConfigured && (
                 <button className="logout-button" type="button" onClick={handleSignOut}>
                   <LogOut size={16} />
@@ -6807,6 +6818,10 @@ export function App() {
                   </div>
                 )}
               </div>
+              <button className="view-button" type="button" onClick={openRotaxSystem}>
+                <ExternalLink size={16} />
+                Rotax System
+              </button>
               {isSupabaseConfigured && (
                 <button className="logout-button" type="button" onClick={handleSignOut}>
                   <LogOut size={16} />
@@ -6907,6 +6922,10 @@ export function App() {
                     </div>
                   )}
                 </div>
+                <button className="view-button" type="button" onClick={openRotaxSystem}>
+                  <ExternalLink size={16} />
+                  Rotax System
+                </button>
                 {isSupabaseConfigured && (
                   <button className="logout-button" type="button" onClick={handleSignOut}>
                     <LogOut size={16} />
