@@ -28,6 +28,7 @@ function toTrackingEntry(row) {
     phone: row.phone || '',
     orderNumber: row.order_number || '',
     invoiceNumber: row.invoice_number || '',
+    invoiceIssueDate: row.invoice_issue_date || '',
     carrier: row.carrier || '',
     carrierCode: row.carrier_code || '',
     freightValue: row.freight_value || '',
@@ -54,6 +55,7 @@ function toRow(entry) {
   if ('phone' in entry) row.phone = entry.phone || null;
   if ('orderNumber' in entry) row.order_number = entry.orderNumber || null;
   if ('invoiceNumber' in entry) row.invoice_number = entry.invoiceNumber || null;
+  if ('invoiceIssueDate' in entry && entry.invoiceIssueDate) row.invoice_issue_date = entry.invoiceIssueDate;
   if ('carrier' in entry) row.carrier = entry.carrier || null;
   if ('carrierCode' in entry) row.carrier_code = entry.carrierCode || null;
   if ('freightValue' in entry) row.freight_value = entry.freightValue || null;

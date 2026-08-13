@@ -32,6 +32,7 @@ create table if not exists public.tracking_entries (
   phone text,
   order_number text,
   invoice_number text,
+  invoice_issue_date text,
   carrier text,
   carrier_code text,
   freight_value text,
@@ -719,6 +720,7 @@ alter table public.quotes add column if not exists quote_value text;
 alter table public.quotes add column if not exists loss_reason jsonb;
 alter table public.quotes add column if not exists history jsonb not null default '[]'::jsonb;
 alter table public.tracking_entries add column if not exists invoice_number text;
+alter table public.tracking_entries add column if not exists invoice_issue_date text;
 alter table public.tracking_entries add column if not exists phone text;
 alter table public.quotes add column if not exists client_code text;
 alter table public.tracking_entries add column if not exists client_code text;

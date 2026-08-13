@@ -506,6 +506,7 @@ const initialTrackingForm = {
   carrierCode: '',
   trackingCode: '',
   invoiceNumber: '',
+  invoiceIssueDate: '',
   deliverySituation: 'etiqueta',
   expectedDeliveryDate: '',
   notes: '',
@@ -1087,6 +1088,7 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
   const headers = rows[headerIndex].map(normalizeUploadHeader);
   const columnIndex = {
     invoiceNumber: headers.indexOf('numero'),
+    invoiceIssueDate: headers.indexOf('dtemissao'),
     clientCode: headers.indexOf('cliente'),
     storeCode: headers.indexOf('loja'),
     freightValue: headers.indexOf('vlrfrete'),
@@ -1117,12 +1119,19 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
       carriers: [],
       clientCode,
       freightValue: 0,
+      invoiceIssueDates: [],
       invoiceNumbers: [],
       trackingCodes: [],
     };
+    const invoiceIssueDate = columnIndex.invoiceIssueDate >= 0
+      ? formatUploadDateValue(row[columnIndex.invoiceIssueDate])
+      : '';
     const invoiceNumber = normalizeUploadIdentifier(row[columnIndex.invoiceNumber]);
     const trackingCode = normalizeUploadIdentifier(row[columnIndex.trackingCode]);
 
+    if (invoiceIssueDate && !current.invoiceIssueDates.includes(invoiceIssueDate)) {
+      current.invoiceIssueDates.push(invoiceIssueDate);
+    }
     if (invoiceNumber && !current.invoiceNumbers.includes(invoiceNumber)) current.invoiceNumbers.push(invoiceNumber);
     if (trackingCode && !current.trackingCodes.includes(trackingCode)) current.trackingCodes.push(trackingCode);
     if (carrierCode && !current.carrierCodes.includes(carrierCode)) current.carrierCodes.push(carrierCode);
@@ -1142,6 +1151,7 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
     carrierCode: item.carrierCodes.join(' / '),
     clientCode: item.clientCode,
     freightValue: item.freightValue ? formatUploadCurrency(item.freightValue) : '',
+    invoiceIssueDate: item.invoiceIssueDates.join(' / '),
     invoiceNumber: item.invoiceNumbers.join(' / '),
     trackingCode: item.trackingCodes.join(' / '),
   }));
@@ -2211,6 +2221,21 @@ function formatDateWithWeekday(dateValue) {
     year: 'numeric',
     weekday: 'long',
   }).format(new Date(`${dateValue}T12:00:00`));
+}
+
+function formatTrackingDateList(dateValue) {
+  const dates = normalizeUploadValue(dateValue)
+    .split(/\s+\/\s+/)
+    .map((item) => formatUploadDateValue(item.trim()))
+    .filter(Boolean);
+  if (dates.length === 0) return '—';
+
+  return dates
+    .map((date) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
+      return new Intl.DateTimeFormat('pt-BR').format(new Date(`${date}T12:00:00`));
+    })
+    .join(' / ');
 }
 
 function normalize(text) {
@@ -3401,6 +3426,7 @@ export function App() {
             entry.phone || customer?.phone,
             entry.orderNumber,
             entry.invoiceNumber,
+            entry.invoiceIssueDate,
             entry.carrier,
             entry.carrierCode,
             entry.freightValue,
@@ -4587,6 +4613,7 @@ export function App() {
           carrier: trackingUpdate.carrier || trackingUpdate.carrierCode || entry.carrier,
           carrierCode: trackingUpdate.carrierCode,
           freightValue: trackingUpdate.freightValue,
+          invoiceIssueDate: trackingUpdate.invoiceIssueDate,
           invoiceNumber: trackingUpdate.invoiceNumber,
           trackingCode: trackingUpdate.trackingCode,
           correiosUpdateFailed: false,
@@ -6212,6 +6239,7 @@ export function App() {
       phone,
       orderNumber: details.orderNumber,
       invoiceNumber: '',
+      invoiceIssueDate: '',
       carrier: details.carrier,
       trackingCode: '',
       deliverySituation: 'etiqueta',
@@ -6315,6 +6343,7 @@ export function App() {
       carrierCode: entry.carrierCode || '',
       trackingCode: entry.trackingCode || '',
       invoiceNumber: entry.invoiceNumber || '',
+      invoiceIssueDate: entry.invoiceIssueDate || '',
       deliverySituation: entry.deliverySituation || 'etiqueta',
       expectedDeliveryDate: entry.expectedDeliveryDate || '',
       notes: entry.notes || '',
@@ -6398,6 +6427,7 @@ export function App() {
       carrierCode: trackingForm.carrierCode || '',
       trackingCode: trackingForm.trackingCode.trim(),
       invoiceNumber: trackingForm.invoiceNumber.trim(),
+      invoiceIssueDate: trackingForm.invoiceIssueDate.trim(),
       deliverySituation: trackingForm.deliverySituation,
       expectedDeliveryDate: trackingForm.expectedDeliveryDate,
       notes: trackingForm.notes.trim(),
@@ -6467,6 +6497,7 @@ export function App() {
       phone,
       orderNumber: '',
       invoiceNumber: trackingForm.invoiceNumber.trim(),
+      invoiceIssueDate: trackingForm.invoiceIssueDate.trim(),
       carrier: trackingForm.carrier.trim(),
       carrierCode: trackingForm.carrierCode || '',
       trackingCode: trackingForm.trackingCode.trim(),
@@ -12665,6 +12696,7 @@ const activityFieldLabels = {
   delivery_situation: 'situação da entrega',
   email: 'e-mail',
   expected_delivery_date: 'previsão de entrega',
+  invoice_issue_date: 'data emissão NF',
   follow_up_started_at: 'follow-up',
   invoice_number: 'nota fiscal',
   message: 'lembrete',
@@ -13919,13 +13951,13 @@ function TrackingWorkspace({
               <th>Cliente</th>
               <th>Telefone</th>
               <th>Nº pedido</th>
+              <th>DT Emissão</th>
               <th>Nº Nota Fiscal</th>
               <th>Transportadora</th>
               <th>Cod. Rastreio</th>
               <th>Vlr. Frete</th>
               <th>Situação entrega</th>
               <th>Previsão de entrega</th>
-              <th>Status</th>
               <th>Ações</th>
             </tr>
           </thead>
@@ -13944,6 +13976,7 @@ function TrackingWorkspace({
                     <td>{entry.clientName}</td>
                     <td>{phone || '—'}</td>
                     <td>{entry.orderNumber || '—'}</td>
+                    <td>{formatTrackingDateList(entry.invoiceIssueDate)}</td>
                     <td>{entry.invoiceNumber || '—'}</td>
                     <td>
                       {entry.carrier ? (
@@ -13985,7 +14018,6 @@ function TrackingWorkspace({
                       )}
                     </td>
                     <td>{formatDateWithWeekday(entry.expectedDeliveryDate)}</td>
-                    <td>{entry.status}</td>
                     <td>
                       <div className="row-actions">
                         <button
@@ -15017,6 +15049,15 @@ function TrackingEditModal({ entry, errors = {}, form, isStandalone = false, onC
             value={form.invoiceNumber}
             onChange={(event) => onUpdate('invoiceNumber', event.target.value)}
             placeholder="Ex: NF-2048"
+          />
+        </label>
+
+        <label>
+          DT Emissão NF
+          <input
+            value={form.invoiceIssueDate}
+            onChange={(event) => onUpdate('invoiceIssueDate', event.target.value)}
+            placeholder="Ex: 03/08/2026"
           />
         </label>
 
