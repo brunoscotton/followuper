@@ -281,6 +281,23 @@ async function fetchAllCustomerRows() {
   }
 }
 
+async function fetchCustomerIdentityRows() {
+  const rows = [];
+
+  for (let start = 0; ; start += CUSTOMER_SELECT_BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from('customers')
+      .select('id, client_code, store_code, client_name, document, cpf, cnpj')
+      .order('id', { ascending: true })
+      .range(start, start + CUSTOMER_SELECT_BATCH_SIZE - 1);
+
+    if (error) return { data: rows, error };
+
+    rows.push(...(data || []));
+    if (!data || data.length < CUSTOMER_SELECT_BATCH_SIZE) return { data: rows, error: null };
+  }
+}
+
 export async function loadCustomers() {
   if (!supabase) {
     return { customers: sortCustomers(loadLocalCustomers()), mode: 'local' };
@@ -408,7 +425,7 @@ export async function insertNewCustomers(nextCustomers) {
     return { customers: newCustomers, skippedCount };
   }
 
-  const { data, error } = await fetchAllCustomerRows();
+  const { data, error } = await fetchCustomerIdentityRows();
   if (error) throw error;
 
   const existingCustomers = data.map(toCustomer);
