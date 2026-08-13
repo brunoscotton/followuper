@@ -574,6 +574,26 @@ create table if not exists public.reminders (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.regularization_entries (
+  id uuid primary key,
+  row_key text not null unique,
+  client_code text not null,
+  store_code text,
+  client_name text not null,
+  accumulated_value numeric not null default 0,
+  phone text,
+  mobile text,
+  invoice_email text,
+  contract_email text,
+  commercial_email text,
+  seller text not null,
+  status text not null default 'priority_not_sent' check (
+    status in ('priority_not_sent', 'sent', 'received_signature', 'signed', 'refused', 'no_whatsapp')
+  ),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create or replace function public.log_user_activity()
 returns trigger
 language plpgsql
@@ -670,7 +690,8 @@ begin
     'warranty_entries',
     'contract_templates',
     'rotax_revenue_entries',
-    'reminders'
+    'reminders',
+    'regularization_entries'
   ]
   loop
     execute format('drop trigger if exists audit_user_changes on public.%I', audited_table);
@@ -762,6 +783,25 @@ alter table public.reminders drop constraint if exists reminders_schedule_type_c
 alter table public.reminders
   add constraint reminders_schedule_type_check
   check (schedule_type in ('immediate', 'first_login', 'interval', 'date'));
+alter table public.regularization_entries add column if not exists row_key text;
+alter table public.regularization_entries add column if not exists client_code text;
+alter table public.regularization_entries add column if not exists store_code text;
+alter table public.regularization_entries add column if not exists client_name text;
+alter table public.regularization_entries add column if not exists accumulated_value numeric not null default 0;
+alter table public.regularization_entries add column if not exists phone text;
+alter table public.regularization_entries add column if not exists mobile text;
+alter table public.regularization_entries add column if not exists invoice_email text;
+alter table public.regularization_entries add column if not exists contract_email text;
+alter table public.regularization_entries add column if not exists commercial_email text;
+alter table public.regularization_entries add column if not exists seller text;
+alter table public.regularization_entries add column if not exists status text not null default 'priority_not_sent';
+alter table public.regularization_entries add column if not exists created_at timestamptz not null default now();
+alter table public.regularization_entries add column if not exists updated_at timestamptz not null default now();
+alter table public.regularization_entries drop constraint if exists regularization_entries_status_check;
+alter table public.regularization_entries
+  add constraint regularization_entries_status_check
+  check (status in ('priority_not_sent', 'sent', 'received_signature', 'signed', 'refused', 'no_whatsapp'));
+create unique index if not exists regularization_entries_row_key_key on public.regularization_entries(row_key);
 
 alter table public.quotes drop constraint if exists quotes_follow_up_amount_check;
 alter table public.quotes add constraint quotes_follow_up_amount_check check (follow_up_amount > 0);
@@ -806,6 +846,7 @@ alter table public.rotax_revenue_entries replica identity full;
 alter table public.user_profiles replica identity full;
 alter table public.activity_logs replica identity full;
 alter table public.reminders replica identity full;
+alter table public.regularization_entries replica identity full;
 
 alter table public.quotes enable row level security;
 alter table public.tracking_entries enable row level security;
@@ -837,6 +878,7 @@ alter table public.rotax_revenue_entries enable row level security;
 alter table public.user_profiles enable row level security;
 alter table public.activity_logs enable row level security;
 alter table public.reminders enable row level security;
+alter table public.regularization_entries enable row level security;
 
 drop policy if exists "Authenticated users can read quotes" on public.quotes;
 drop policy if exists "Authenticated users can insert quotes" on public.quotes;
@@ -949,6 +991,10 @@ drop policy if exists "Authenticated users can read reminders" on public.reminde
 drop policy if exists "Authenticated users can insert reminders" on public.reminders;
 drop policy if exists "Authenticated users can update reminders" on public.reminders;
 drop policy if exists "Authenticated users can delete reminders" on public.reminders;
+drop policy if exists "Authenticated users can read regularization entries" on public.regularization_entries;
+drop policy if exists "Authenticated users can insert regularization entries" on public.regularization_entries;
+drop policy if exists "Authenticated users can update regularization entries" on public.regularization_entries;
+drop policy if exists "Authenticated users can delete regularization entries" on public.regularization_entries;
 drop policy if exists "Authenticated users can track FollowUper presence" on realtime.messages;
 drop policy if exists "Master user can read FollowUper presence" on realtime.messages;
 drop policy if exists "Authenticated users can read FollowUper presence" on realtime.messages;
@@ -1632,6 +1678,31 @@ create policy "Authenticated users can delete reminders"
   to authenticated
   using (true);
 
+create policy "Authenticated users can read regularization entries"
+  on public.regularization_entries
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can insert regularization entries"
+  on public.regularization_entries
+  for insert
+  to authenticated
+  with check (true);
+
+create policy "Authenticated users can update regularization entries"
+  on public.regularization_entries
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete regularization entries"
+  on public.regularization_entries
+  for delete
+  to authenticated
+  using (true);
+
 create policy "Authenticated users can track FollowUper presence"
   on realtime.messages
   for insert
@@ -1900,5 +1971,15 @@ begin
       and tablename = 'reminders'
   ) then
     alter publication supabase_realtime add table public.reminders;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'regularization_entries'
+  ) then
+    alter publication supabase_realtime add table public.regularization_entries;
   end if;
 end $$;

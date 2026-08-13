@@ -38,6 +38,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import JSZip from 'jszip';
 import React from 'react';
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { readSheet } from 'read-excel-file/browser';
@@ -166,6 +167,14 @@ import {
   subscribeToReminderChanges,
   updateReminder,
 } from './services/remindersRepository';
+import {
+  cacheRegularizationEntries,
+  loadRegularizationEntries,
+  mergeRegularizationEntries,
+  sortRegularizationEntries,
+  subscribeToRegularizationChanges,
+  updateRegularizationEntry,
+} from './services/regularizationRepository';
 import { generateContractPdf } from './services/contractsPdfService';
 import { createUploadAudit, loadUploadAudits } from './services/uploadAuditsRepository';
 import {
@@ -202,6 +211,15 @@ import {
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 const billingSellers = ['Bruno', 'Elton', 'Stephanie'];
 const trackingAllowedSellerCodes = new Set(['000022', '000036', '000063']);
+const regularizationAllowedSellers = new Set(['BRUNO SCOTTON', 'ELTON']);
+const regularizationStatuses = [
+  { value: 'priority_not_sent', label: 'prioridade - não enviado', color: 'yellow' },
+  { value: 'sent', label: 'enviado ao cliente', color: 'blue' },
+  { value: 'received_signature', label: 'recebido assinatura', color: 'green' },
+  { value: 'signed', label: 'Já assinou', color: 'purple' },
+  { value: 'refused', label: 'Não quer assinar', color: 'red' },
+  { value: 'no_whatsapp', label: 'sem wpp - precisa mandar por email', color: 'orange' },
+];
 const BILLING_NOTE_DRAFTS_STORAGE_KEY = 'followuper.billingNoteDrafts.v1';
 const LAYOUT_STORAGE_KEY = 'followuper.layoutMode.v1';
 const AUTO_ARCHIVE_INACTIVE_DAYS = 15;
@@ -1093,6 +1111,119 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
     invoiceNumber: item.invoiceNumbers.join(' / '),
     trackingCode: item.trackingCodes.join(' / '),
   }));
+}
+
+function formatRegularizationPhone(dddValue, phoneValue) {
+  const ddd = normalizeUploadIdentifier(dddValue);
+  const phone = normalizeUploadIdentifier(phoneValue);
+  if (!phone || phone === '-') return '';
+  return ddd ? `${ddd}-${phone}` : phone;
+}
+
+function getRequiredUploadColumn(headers, name, label) {
+  const index = headers.indexOf(name);
+  if (index < 0) throw new Error(`Nao encontrei a coluna ${label} na planilha.`);
+  return index;
+}
+
+function getExcelColumnIndex(cellReference) {
+  const letters = String(cellReference || '').replace(/\d/g, '').toUpperCase();
+  return letters.split('').reduce((index, letter) => index * 26 + letter.charCodeAt(0) - 64, 0) - 1;
+}
+
+function getXmlText(node) {
+  return node?.textContent || '';
+}
+
+async function readRegularizationSheetRows(file) {
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const sharedStringsXml = await zip.file('xl/sharedStrings.xml')?.async('text');
+  const parser = new DOMParser();
+  const sharedStrings = [];
+
+  if (sharedStringsXml) {
+    const sharedDoc = parser.parseFromString(sharedStringsXml, 'application/xml');
+    sharedDoc.querySelectorAll('si').forEach((item) => {
+      sharedStrings.push([...item.querySelectorAll('t')].map(getXmlText).join(''));
+    });
+  }
+
+  const sheetXml = await zip.file('xl/worksheets/sheet3.xml')?.async('text');
+  if (!sheetXml) throw new Error('Nao encontrei a terceira aba da planilha de regularizacao.');
+
+  const sheetDoc = parser.parseFromString(sheetXml, 'application/xml');
+  return [...sheetDoc.querySelectorAll('sheetData row')].map((row) => {
+    const values = [];
+    row.querySelectorAll('c').forEach((cell) => {
+      const columnIndex = getExcelColumnIndex(cell.getAttribute('r'));
+      if (columnIndex < 0 || columnIndex > 38) return;
+
+      const type = cell.getAttribute('t');
+      const rawValue = getXmlText(cell.querySelector('v'));
+      const inlineValue = [...cell.querySelectorAll('is t')].map(getXmlText).join('');
+      values[columnIndex] = type === 's' ? sharedStrings[Number(rawValue)] || '' : inlineValue || rawValue;
+    });
+    return values;
+  });
+}
+
+async function parseRegularizationUploadFile(file) {
+  const rows = await readRegularizationSheetRows(file);
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('codigo') && headers.includes('nome') && headers.includes('valoracumulado') && headers.includes('vendedor');
+  });
+
+  if (headerIndex === -1) {
+    throw new Error('Nao encontrei Codigo, Nome, Valor Acumulado e Vendedor na aba de clientes irregulares.');
+  }
+
+  const headers = rows[headerIndex].map(normalizeUploadHeader);
+  const columnIndex = {
+    clientCode: getRequiredUploadColumn(headers, 'codigo', 'Codigo'),
+    storeCode: getRequiredUploadColumn(headers, 'loja', 'Loja'),
+    clientName: getRequiredUploadColumn(headers, 'nome', 'Nome'),
+    accumulatedValue: getRequiredUploadColumn(headers, 'valoracumulado', 'Valor Acumulado'),
+    ddd: getRequiredUploadColumn(headers, 'ddd', 'DDD'),
+    phone: getRequiredUploadColumn(headers, 'telefone', 'Telefone'),
+    mobile: getRequiredUploadColumn(headers, 'celular', 'Celular'),
+    invoiceEmail: getRequiredUploadColumn(headers, 'emailnfe', 'E-mail Nfe'),
+    contractEmail: getRequiredUploadColumn(headers, 'emailcontr', 'E-mail Contr'),
+    commercialEmail: getRequiredUploadColumn(headers, 'emailcomer', 'E-mail Comer'),
+    seller: getRequiredUploadColumn(headers, 'vendedor', 'Vendedor'),
+  };
+  const entriesByKey = new Map();
+
+  for (const row of rows.slice(headerIndex + 1)) {
+    const seller = normalizeUploadText(row[columnIndex.seller]);
+    if (!regularizationAllowedSellers.has(seller)) continue;
+
+    const clientCode = normalizeClientCodePart(row[columnIndex.clientCode], 6);
+    const storeCode = normalizeClientCodePart(row[columnIndex.storeCode], 2);
+    const clientName = normalizeUploadValue(row[columnIndex.clientName]);
+    if (!clientCode || !clientName) continue;
+
+    const rowKey = `${clientCode}-${storeCode || '00'}`;
+    entriesByKey.set(rowKey, {
+      id: crypto.randomUUID(),
+      rowKey,
+      clientCode,
+      storeCode,
+      clientName,
+      accumulatedValue: parseUploadCurrency(row[columnIndex.accumulatedValue]),
+      phone: formatRegularizationPhone(row[columnIndex.ddd], row[columnIndex.phone]),
+      mobile: formatRegularizationPhone(row[columnIndex.ddd], row[columnIndex.mobile]),
+      invoiceEmail: normalizeUploadValue(row[columnIndex.invoiceEmail]),
+      contractEmail: normalizeUploadValue(row[columnIndex.contractEmail]),
+      commercialEmail: normalizeUploadValue(row[columnIndex.commercialEmail]),
+      seller,
+      status: 'priority_not_sent',
+    });
+  }
+
+  const entries = [...entriesByKey.values()];
+  if (entries.length === 0) throw new Error('Nenhum cliente dos vendedores Bruno Scotton ou Elton foi encontrado.');
+  return entries;
 }
 
 function normalizeCustomerKey(value) {
@@ -2229,6 +2360,7 @@ export function App() {
   const [returnEntries, setReturnEntries] = useState([]);
   const [warrantyEntries, setWarrantyEntries] = useState([]);
   const [reminders, setReminders] = useState([]);
+  const [regularizationEntries, setRegularizationEntries] = useState([]);
   const [contractTemplates, setContractTemplates] = useState([]);
   const [activeContractType, setActiveContractType] = useState('motor');
   const [contractForms, setContractForms] = useState(initialContractForms);
@@ -2263,6 +2395,7 @@ export function App() {
   const [isUploadingStock, setIsUploadingStock] = useState(false);
   const [isUploadingShippingCarriers, setIsUploadingShippingCarriers] = useState(false);
   const [isUploadingTrackingSheet, setIsUploadingTrackingSheet] = useState(false);
+  const [isUploadingRegularization, setIsUploadingRegularization] = useState(false);
   const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
   const [uploadPreview, setUploadPreview] = useState(null);
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
@@ -2287,6 +2420,9 @@ export function App() {
   const [activeReminderPopup, setActiveReminderPopup] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
+  const [regularizationSearchTerm, setRegularizationSearchTerm] = useState('');
+  const [regularizationSortDirection, setRegularizationSortDirection] = useState('desc');
+  const [activeRegularizationTab, setActiveRegularizationTab] = useState('open');
   const [selectedSellers, setSelectedSellers] = useState([]);
   const [sortByRelevance, setSortByRelevance] = useState(false);
   const [quoteSort, setQuoteSort] = useState({ direction: 'desc', key: '' });
@@ -2328,6 +2464,7 @@ export function App() {
   const customerUploadInputRef = useRef(null);
   const shippingCarrierUploadInputRef = useRef(null);
   const trackingSheetUploadInputRef = useRef(null);
+  const regularizationUploadInputRef = useRef(null);
   const previousClosedQuoteIdsRef = useRef(null);
   const autoArchiveRunningRef = useRef(false);
   const uploadArchiveRecoveryRunningRef = useRef(false);
@@ -2468,6 +2605,7 @@ export function App() {
       setReturnEntries([]);
       setWarrantyEntries([]);
       setReminders([]);
+      setRegularizationEntries([]);
       setContractTemplates([]);
       setUploadAudits([]);
       setIsLoading(false);
@@ -2489,6 +2627,7 @@ export function App() {
       loadReturnEntries(),
       loadWarrantyEntries(),
       loadReminders(),
+      loadRegularizationEntries(),
     ])
       .then(
         ([
@@ -2503,6 +2642,7 @@ export function App() {
           returnResult,
           warrantyResult,
           remindersResult,
+          regularizationResult,
         ]) => {
         if (!active) return;
         setQuotes(quoteResult.quotes);
@@ -2521,6 +2661,7 @@ export function App() {
         setReturnEntries(returnResult.entries);
         setWarrantyEntries(warrantyResult.entries);
         setReminders(remindersResult.reminders);
+        setRegularizationEntries(regularizationResult.entries);
         setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
         setDataStatus(quoteResult.mode === 'supabase' ? 'Supabase · tempo real' : 'Local');
         setAppError('');
@@ -2591,6 +2732,11 @@ export function App() {
           const unsubscribeReminders = subscribeToReminderChanges(({ eventType, reminder, oldId }) => {
             setReminders((current) => syncCollection(current, eventType, reminder, oldId, sortReminders, cacheReminders));
           });
+          const unsubscribeRegularization = subscribeToRegularizationChanges(({ eventType, entry, oldId }) => {
+            setRegularizationEntries((current) =>
+              syncCollection(current, eventType, entry, oldId, sortRegularizationEntries, cacheRegularizationEntries),
+            );
+          });
 
           unsubscribeRealtime = () => {
             unsubscribeQuotes();
@@ -2602,6 +2748,7 @@ export function App() {
             unsubscribeReturns();
             unsubscribeWarranties();
             unsubscribeReminders();
+            unsubscribeRegularization();
           };
         }
       },
@@ -3230,6 +3377,29 @@ export function App() {
     },
     [activeTrackingTab, customers, trackingEntries, trackingSearchTerm],
   );
+
+  const regularizationMetrics = useMemo(
+    () => ({
+      finalized: regularizationEntries.filter((entry) => entry.status === 'signed').length,
+      open: regularizationEntries.filter((entry) => entry.status !== 'signed').length,
+      total: regularizationEntries.length,
+    }),
+    [regularizationEntries],
+  );
+
+  const visibleRegularizationEntries = useMemo(() => {
+    const query = normalize(regularizationSearchTerm);
+    const directionFactor = regularizationSortDirection === 'asc' ? 1 : -1;
+
+    return regularizationEntries
+      .filter((entry) => (activeRegularizationTab === 'finalized' ? entry.status === 'signed' : entry.status !== 'signed'))
+      .filter((entry) => !query || normalize(entry.clientName).includes(query))
+      .sort((a, b) => {
+        const valueDiff = (Number(a.accumulatedValue) || 0) - (Number(b.accumulatedValue) || 0);
+        if (valueDiff !== 0) return valueDiff * directionFactor;
+        return (a.clientName || '').localeCompare(b.clientName || '', 'pt-BR');
+      });
+  }, [activeRegularizationTab, regularizationEntries, regularizationSearchTerm, regularizationSortDirection]);
 
   const correiosTrackingCandidates = useMemo(
     () => trackingEntries.filter(isCorreiosTrackingCandidate),
@@ -4401,6 +4571,46 @@ export function App() {
       setAppError(error.message || 'Nao foi possivel importar a planilha de rastreio.');
     } finally {
       setIsUploadingTrackingSheet(false);
+    }
+  }
+
+  async function handleRegularizationUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setIsUploadingRegularization(true);
+    try {
+      const parsedEntries = await parseRegularizationUploadFile(file);
+      const result = await mergeRegularizationEntries(parsedEntries);
+      setRegularizationEntries(result.entries);
+      setActiveView('regularization');
+      setAppError(`Regularização importada: ${result.insertedCount} novo(s), ${result.skippedCount} já existente(s) preservado(s).`);
+    } catch (error) {
+      setAppError(error.message || 'Nao foi possivel importar a planilha de regularizacao.');
+    } finally {
+      setIsUploadingRegularization(false);
+    }
+  }
+
+  async function changeRegularizationStatus(entry, status) {
+    if (!entry || entry.status === status) return;
+
+    const previousEntries = regularizationEntries;
+    setRegularizationEntries((current) =>
+      sortRegularizationEntries(current.map((item) => (item.id === entry.id ? { ...item, status } : item))),
+    );
+
+    try {
+      const savedEntry = await updateRegularizationEntry(entry.id, { status });
+      setRegularizationEntries((current) =>
+        sortRegularizationEntries(current.map((item) => (item.id === savedEntry.id ? savedEntry : item))),
+      );
+      setAppError('');
+      if (status === 'signed') setActiveRegularizationTab('finalized');
+    } catch (error) {
+      setRegularizationEntries(previousEntries);
+      setAppError(error.message || 'Nao foi possivel atualizar o status da regularizacao.');
     }
   }
 
@@ -6443,6 +6653,10 @@ export function App() {
                           <Truck size={16} />
                           Rastreio
                         </button>
+                        <button type="button" onClick={() => navigateFromMenu('regularization')}>
+                          <CheckCircle2 size={16} />
+                          Regularização Cad.
+                        </button>
                         <hr />
                       </>
                     )}
@@ -6532,6 +6746,14 @@ export function App() {
                   <Truck size={16} />
                   Rastreio
                 </button>
+                <button
+                  className={activeView === 'regularization' ? 'view-button active' : 'view-button'}
+                  type="button"
+                  onClick={() => setActiveView('regularization')}
+                >
+                  <CheckCircle2 size={16} />
+                  Regularização Cad.
+                </button>
                 <div className="menu-dropdown-wrap">
                   <button className="view-button" type="button" onClick={() => setLayoutMenuOpen((current) => !current)}>
                     Layout
@@ -6610,6 +6832,7 @@ export function App() {
       <input ref={customerUploadInputRef} accept=".xlsx" hidden type="file" onChange={handleCustomersUpload} />
       <input ref={shippingCarrierUploadInputRef} accept=".xlsx" hidden type="file" onChange={handleShippingCarriersUpload} />
       <input ref={trackingSheetUploadInputRef} accept=".xlsx" hidden type="file" onChange={handleTrackingSheetUpload} />
+      <input ref={regularizationUploadInputRef} accept=".xlsx" hidden type="file" onChange={handleRegularizationUpload} />
       <datalist id="customer-name-options">
         {customers.map((customer) => (
           <option key={customer.id} value={customer.clientName} />
@@ -6743,6 +6966,20 @@ export function App() {
               current.includes(id) ? current.filter((entryId) => entryId !== id) : [...current, id],
             )
           }
+        />
+      ) : activeView === 'regularization' ? (
+        <RegularizationWorkspace
+          activeTab={activeRegularizationTab}
+          entries={visibleRegularizationEntries}
+          isUploading={isUploadingRegularization}
+          metrics={regularizationMetrics}
+          onChangeSortDirection={setRegularizationSortDirection}
+          onChangeStatus={changeRegularizationStatus}
+          onUploadClick={() => regularizationUploadInputRef.current?.click()}
+          searchTerm={regularizationSearchTerm}
+          setActiveTab={setActiveRegularizationTab}
+          setSearchTerm={setRegularizationSearchTerm}
+          sortDirection={regularizationSortDirection}
         />
       ) : activeView === 'customers' ? (
         <CustomersWorkspace
@@ -8558,6 +8795,10 @@ function SideNavigation({
         <button className={activeView === 'tracking' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('tracking')}>
           <Truck size={17} />
           Rastreio
+        </button>
+        <button className={activeView === 'regularization' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('regularization')}>
+          <CheckCircle2 size={17} />
+          Regularização Cad.
         </button>
         <button className={activeView === 'customers' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('customers')}>
           <Users size={17} />
@@ -12235,6 +12476,7 @@ const activityEntityLabels = {
   dashboard_settings: 'Configuração do dashboard',
   info_blocks: 'Painel de informações',
   quotes: 'Cotações',
+  regularization_entries: 'Regularização Cad.',
   reminders: 'Lembretes',
   return_entries: 'Devoluções',
   rotax_revenue_entries: 'Faturamento Rotax',
@@ -12267,6 +12509,7 @@ const activityFieldLabels = {
   payment_terms: 'pagamento',
   phone: 'telefone',
   quote_value: 'valor',
+  accumulated_value: 'valor acumulado',
   seller: 'vendedor',
   status: 'status',
   tracking_code: 'código de rastreio',
@@ -12278,6 +12521,7 @@ const userViewLabels = {
   customers: 'Clientes',
   info: 'Painel de informações',
   quotes: 'Cotações',
+  regularization: 'Regularização Cad.',
   reminders: 'Lembretes',
   returns: 'Devoluções',
   rotax: 'Treinamento Rotax',
@@ -13691,6 +13935,226 @@ function LossReasonModal({ form, mode, onCancel, onSubmit, onUpdate }) {
         </div>
       </form>
     </div>
+  );
+}
+
+function getRegularizationStatusMeta(status) {
+  return regularizationStatuses.find((item) => item.value === status) || regularizationStatuses[0];
+}
+
+function RegularizationWorkspace({
+  activeTab,
+  entries,
+  isUploading,
+  metrics,
+  onChangeSortDirection,
+  onChangeStatus,
+  onUploadClick,
+  searchTerm,
+  setActiveTab,
+  setSearchTerm,
+  sortDirection,
+}) {
+  const tableWrapRef = useRef(null);
+  const tableRef = useRef(null);
+  const topScrollRef = useRef(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
+  const [columnWidths, setColumnWidths] = useState({
+    accumulatedValue: 160,
+    clientCode: 120,
+    clientName: 280,
+    commercialEmail: 220,
+    contractEmail: 220,
+    invoiceEmail: 220,
+    mobile: 150,
+    phone: 150,
+    seller: 160,
+    status: 520,
+  });
+  const columns = [
+    { key: 'clientCode', label: 'Codigo' },
+    { key: 'clientName', label: 'Nome' },
+    { key: 'accumulatedValue', label: 'Valor Acumulado', sortable: true },
+    { key: 'phone', label: 'DDD+Telefone' },
+    { key: 'mobile', label: 'DDD+Celular' },
+    { key: 'invoiceEmail', label: 'E-mail Nfe' },
+    { key: 'contractEmail', label: 'E-mail Contr' },
+    { key: 'commercialEmail', label: 'E-mail Comer' },
+    { key: 'seller', label: 'Vendedor' },
+    { key: 'status', label: 'Status' },
+  ];
+
+  useEffect(() => {
+    function updateScrollWidth() {
+      const nextWidth = tableRef.current?.scrollWidth || tableWrapRef.current?.scrollWidth || 0;
+      setTableScrollWidth(nextWidth);
+    }
+
+    updateScrollWidth();
+    window.addEventListener('resize', updateScrollWidth);
+
+    if (typeof ResizeObserver === 'undefined') {
+      return () => window.removeEventListener('resize', updateScrollWidth);
+    }
+
+    const resizeObserver = new ResizeObserver(updateScrollWidth);
+    if (tableRef.current) resizeObserver.observe(tableRef.current);
+    if (tableWrapRef.current) resizeObserver.observe(tableWrapRef.current);
+
+    return () => {
+      window.removeEventListener('resize', updateScrollWidth);
+      resizeObserver.disconnect();
+    };
+  }, [entries.length, columnWidths]);
+
+  function syncTableScrollFromTop(event) {
+    if (tableWrapRef.current) tableWrapRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
+
+  function syncTopScrollFromTable(event) {
+    if (topScrollRef.current) topScrollRef.current.scrollLeft = event.currentTarget.scrollLeft;
+  }
+
+  function startColumnResize(event, columnKey) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const startX = event.clientX;
+    const startWidth = columnWidths[columnKey] || 140;
+
+    function handleMouseMove(moveEvent) {
+      const nextWidth = Math.max(90, Math.min(520, startWidth + moveEvent.clientX - startX));
+      setColumnWidths((current) => ({ ...current, [columnKey]: nextWidth }));
+    }
+
+    function handleMouseUp() {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    }
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }
+
+  function getCellValue(entry, columnKey) {
+    if (columnKey === 'accumulatedValue') return formatCurrencyValue(entry.accumulatedValue);
+    if (columnKey === 'status') return null;
+    return entry[columnKey] || '-';
+  }
+
+  return (
+    <section className="regularization-panel">
+      <div className="panel-toolbar">
+        <div className="section-title">
+          <CheckCircle2 size={20} />
+          <h2>Regularização Cad.</h2>
+        </div>
+        <div className="panel-actions">
+          <button className="secondary-button compact" type="button" disabled={isUploading} onClick={onUploadClick}>
+            <Upload size={16} />
+            {isUploading ? 'Importando...' : 'Upload'}
+          </button>
+          <label className="search-box">
+            <Search size={18} />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Buscar pelo nome do cliente"
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="regularization-status-cards" aria-label="Status de regularizacao">
+        {regularizationStatuses.map((status) => (
+          <div className={`regularization-status-card ${status.color}`} key={status.value}>
+            {status.label}
+          </div>
+        ))}
+      </div>
+
+      <div className="tabs regularization-tabs" role="tablist" aria-label="Regularização cadastral">
+        <button className={activeTab === 'open' ? 'tab active' : 'tab'} type="button" onClick={() => setActiveTab('open')}>
+          Novos
+          <strong>{metrics.open}</strong>
+        </button>
+        <button className={activeTab === 'finalized' ? 'tab active' : 'tab'} type="button" onClick={() => setActiveTab('finalized')}>
+          Finalizados
+          <strong>{metrics.finalized}</strong>
+        </button>
+      </div>
+
+      <div className="table-top-scroll" ref={topScrollRef} onScroll={syncTableScrollFromTop} aria-label="Mover tabela lateralmente">
+        <div style={{ width: `${tableScrollWidth}px` }} />
+      </div>
+
+      <div className="table-wrap regularization-table-wrap" ref={tableWrapRef} onScroll={syncTopScrollFromTable}>
+        <table className="regularization-table" ref={tableRef}>
+          <thead>
+            <tr>
+              {columns.map((column) => (
+                <th key={column.key} style={{ minWidth: `${columnWidths[column.key]}px`, width: `${columnWidths[column.key]}px` }}>
+                  {column.sortable ? (
+                    <button
+                      className="sortable-header-button"
+                      type="button"
+                      onClick={() => onChangeSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')}
+                    >
+                      {column.label}
+                      <span>{sortDirection === 'asc' ? 'menor' : 'maior'}</span>
+                    </button>
+                  ) : (
+                    column.label
+                  )}
+                  <button
+                    className="column-resize-handle"
+                    type="button"
+                    aria-label={`Ajustar coluna ${column.label}`}
+                    onMouseDown={(event) => startColumnResize(event, column.key)}
+                  />
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => {
+              const statusMeta = getRegularizationStatusMeta(entry.status);
+              return (
+                <tr className={`regularization-row ${statusMeta.color}`} key={entry.id}>
+                  {columns.map((column) => (
+                    <td key={column.key} style={{ minWidth: `${columnWidths[column.key]}px`, width: `${columnWidths[column.key]}px` }}>
+                      {column.key === 'status' ? (
+                        <div className="regularization-status-actions">
+                          {regularizationStatuses.map((status) => (
+                            <button
+                              className={`regularization-status-button ${status.color}${entry.status === status.value ? ' active' : ''}`}
+                              key={status.value}
+                              type="button"
+                              onClick={() => onChangeStatus(entry, status.value)}
+                            >
+                              {status.label}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        getCellValue(entry, column.key)
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {entries.length === 0 && (
+          <div className="empty-state">
+            <CheckCircle2 size={28} />
+            <p>Nenhum cliente nesta aba.</p>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
