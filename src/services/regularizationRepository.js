@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient';
 
 const STORAGE_KEY = 'followuper.regularizationEntries.v1';
+const CORRUPTED_ACCUMULATED_VALUE_THRESHOLD = 100000000;
 
 function loadLocalEntries() {
   try {
@@ -67,6 +68,41 @@ function toRow(entry) {
   return row;
 }
 
+function shouldRepairAccumulatedValue(existingEntry, uploadEntry) {
+  const existingValue = Number(existingEntry?.accumulatedValue || 0);
+  const uploadValue = Number(uploadEntry?.accumulatedValue || 0);
+  return (
+    Number.isFinite(existingValue) &&
+    Number.isFinite(uploadValue) &&
+    existingValue >= CORRUPTED_ACCUMULATED_VALUE_THRESHOLD &&
+    uploadValue >= 0 &&
+    uploadValue < CORRUPTED_ACCUMULATED_VALUE_THRESHOLD
+  );
+}
+
+function mergeLocalRegularizationEntries(existingEntries, uploadRows, now) {
+  const existingByKey = new Map(existingEntries.map((entry) => [entry.rowKey, entry]));
+  const uploadByKey = new Map(uploadRows.map((entry) => [entry.rowKey, entry]));
+  const newEntries = uploadRows
+    .filter((entry) => !existingByKey.has(entry.rowKey))
+    .map((entry) => ({ ...entry, createdAt: now, updatedAt: now }));
+  const repairedEntries = existingEntries.map((entry) => {
+    const uploadEntry = uploadByKey.get(entry.rowKey);
+    if (!shouldRepairAccumulatedValue(entry, uploadEntry)) return entry;
+    return { ...entry, accumulatedValue: uploadEntry.accumulatedValue, updatedAt: now };
+  });
+  const repairedCount = repairedEntries.filter((entry, index) => entry !== existingEntries[index]).length;
+  const entries = sortRegularizationEntries([...repairedEntries, ...newEntries]);
+  saveLocalEntries(entries);
+
+  return {
+    entries,
+    insertedCount: newEntries.length,
+    repairedCount,
+    skippedCount: uploadRows.length - newEntries.length,
+  };
+}
+
 export async function loadRegularizationEntries() {
   if (!supabase) {
     return { entries: sortRegularizationEntries(loadLocalEntries()), mode: 'local' };
@@ -93,51 +129,65 @@ export async function mergeRegularizationEntries(uploadRows) {
   const now = new Date().toISOString();
 
   if (!supabase) {
-    const existingEntries = loadLocalEntries();
-    const existingKeys = new Set(existingEntries.map((entry) => entry.rowKey));
-    const newEntries = uploadRows
-      .filter((entry) => !existingKeys.has(entry.rowKey))
-      .map((entry) => ({ ...entry, createdAt: now, updatedAt: now }));
-    const entries = sortRegularizationEntries([...existingEntries, ...newEntries]);
-    saveLocalEntries(entries);
-    return { entries, insertedCount: newEntries.length, skippedCount: uploadRows.length - newEntries.length };
+    return mergeLocalRegularizationEntries(loadLocalEntries(), uploadRows, now);
   }
 
   const { data: existingData, error: existingError } = await supabase.from('regularization_entries').select('*');
   if (existingError) {
     if (!isMissingTableError(existingError)) throw existingError;
-    const existingEntries = loadLocalEntries();
-    const existingKeys = new Set(existingEntries.map((entry) => entry.rowKey));
-    const newEntries = uploadRows
-      .filter((entry) => !existingKeys.has(entry.rowKey))
-      .map((entry) => ({ ...entry, createdAt: now, updatedAt: now }));
-    const entries = sortRegularizationEntries([...existingEntries, ...newEntries]);
-    saveLocalEntries(entries);
-    return { entries, insertedCount: newEntries.length, skippedCount: uploadRows.length - newEntries.length };
+    return mergeLocalRegularizationEntries(loadLocalEntries(), uploadRows, now);
   }
 
   const existingEntries = (existingData || []).map(toRegularizationEntry);
-  const existingKeys = new Set(existingEntries.map((entry) => entry.rowKey));
+  const existingByKey = new Map(existingEntries.map((entry) => [entry.rowKey, entry]));
   const newEntries = uploadRows
-    .filter((entry) => !existingKeys.has(entry.rowKey))
+    .filter((entry) => !existingByKey.has(entry.rowKey))
     .map((entry) => ({ ...entry, createdAt: now, updatedAt: now }));
+  const repairRows = uploadRows.filter((entry) =>
+    shouldRepairAccumulatedValue(existingByKey.get(entry.rowKey), entry),
+  );
 
-  if (newEntries.length === 0) {
+  if (newEntries.length === 0 && repairRows.length === 0) {
     const entries = sortRegularizationEntries(existingEntries);
     saveLocalEntries(entries);
-    return { entries, insertedCount: 0, skippedCount: uploadRows.length };
+    return { entries, insertedCount: 0, repairedCount: 0, skippedCount: uploadRows.length };
   }
 
-  const { data, error } = await supabase
-    .from('regularization_entries')
-    .insert(newEntries.map(toRow))
-    .select('*');
-  if (error) throw error;
+  const repairedEntries = [];
+  for (const row of repairRows) {
+    const existingEntry = existingByKey.get(row.rowKey);
+    const { data, error } = await supabase
+      .from('regularization_entries')
+      .update(toRow({ accumulatedValue: row.accumulatedValue, updatedAt: now }))
+      .eq('id', existingEntry.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    repairedEntries.push(toRegularizationEntry(data));
+  }
 
-  const savedEntries = (data || []).map(toRegularizationEntry);
-  const entries = sortRegularizationEntries([...existingEntries, ...savedEntries]);
+  let savedEntries = [];
+  if (newEntries.length > 0) {
+    const { data, error } = await supabase
+      .from('regularization_entries')
+      .insert(newEntries.map(toRow))
+      .select('*');
+    if (error) throw error;
+    savedEntries = (data || []).map(toRegularizationEntry);
+  }
+
+  const repairedById = new Map(repairedEntries.map((entry) => [entry.id, entry]));
+  const entries = sortRegularizationEntries([
+    ...existingEntries.map((entry) => repairedById.get(entry.id) || entry),
+    ...savedEntries,
+  ]);
   saveLocalEntries(entries);
-  return { entries, insertedCount: savedEntries.length, skippedCount: uploadRows.length - savedEntries.length };
+  return {
+    entries,
+    insertedCount: savedEntries.length,
+    repairedCount: repairedEntries.length,
+    skippedCount: uploadRows.length - savedEntries.length,
+  };
 }
 
 export async function updateRegularizationEntry(id, changes) {

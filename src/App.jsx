@@ -714,6 +714,23 @@ function parseUploadCurrency(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parseRegularizationCurrency(value) {
+  if (typeof value === 'number') return Math.round(value * 100) / 100;
+  const normalized = normalizeUploadValue(value).replace(/R\$/gi, '').trim();
+  if (!normalized) return 0;
+
+  const hasComma = normalized.includes(',');
+  const hasDot = normalized.includes('.');
+  const dotParts = normalized.split('.');
+  const lastDotPart = dotParts[dotParts.length - 1]?.replace(/\D/g, '') || '';
+  const shouldTreatDotAsThousands = hasDot && !hasComma && (dotParts.length > 2 || lastDotPart.length === 3);
+  const numericText = hasDot && !hasComma && !shouldTreatDotAsThousands
+    ? normalized.replace(/[^0-9.-]/g, '')
+    : normalized.replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, '');
+  const parsed = Number(numericText);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : 0;
+}
+
 function formatUploadCurrency(value) {
   return value.toLocaleString('pt-BR', { currency: 'BRL', minimumFractionDigits: 2, style: 'currency' });
 }
@@ -1225,7 +1242,7 @@ async function parseRegularizationUploadFile(file) {
       clientCode,
       storeCode,
       clientName,
-      accumulatedValue: parseUploadCurrency(row[columnIndex.accumulatedValue]),
+      accumulatedValue: parseRegularizationCurrency(row[columnIndex.accumulatedValue]),
       phone: formatRegularizationPhone(row[columnIndex.ddd], row[columnIndex.phone]),
       mobile: formatRegularizationPhone(row[columnIndex.ddd], row[columnIndex.mobile]),
       invoiceEmail: normalizeUploadValue(row[columnIndex.invoiceEmail]),
@@ -4603,7 +4620,12 @@ export function App() {
       const result = await mergeRegularizationEntries(parsedEntries);
       setRegularizationEntries(result.entries);
       setActiveView('regularization');
-      setAppError(`Regularização importada: ${result.insertedCount} novo(s), ${result.skippedCount} já existente(s) preservado(s).`);
+      const repairedMessage = result.repairedCount
+        ? `, ${result.repairedCount} valor(es) corrigido(s)`
+        : '';
+      setAppError(
+        `Regularização importada: ${result.insertedCount} novo(s), ${result.skippedCount} já existente(s) preservado(s)${repairedMessage}.`,
+      );
     } catch (error) {
       setAppError(error.message || 'Nao foi possivel importar a planilha de regularizacao.');
     } finally {
@@ -4676,7 +4698,7 @@ export function App() {
 
     const previousEntries = regularizationEntries;
     const changes = {
-      accumulatedValue: parseUploadCurrency(regularizationEditForm.accumulatedValue),
+      accumulatedValue: parseRegularizationCurrency(regularizationEditForm.accumulatedValue),
       clientCode: regularizationEditForm.clientCode.trim(),
       clientName: regularizationEditForm.clientName.trim(),
       commercialEmail: regularizationEditForm.commercialEmail.trim(),
