@@ -169,6 +169,7 @@ import {
 } from './services/remindersRepository';
 import {
   cacheRegularizationEntries,
+  deleteRegularizationEntry,
   loadRegularizationEntries,
   mergeRegularizationEntries,
   sortRegularizationEntries,
@@ -507,6 +508,20 @@ const initialTrackingForm = {
   expectedDeliveryDate: '',
   notes: '',
   status: 'Em andamento',
+};
+
+const initialRegularizationEditForm = {
+  accumulatedValue: '',
+  clientCode: '',
+  clientName: '',
+  commercialEmail: '',
+  contractEmail: '',
+  invoiceEmail: '',
+  mobile: '',
+  phone: '',
+  seller: '',
+  status: 'priority_not_sent',
+  storeCode: '',
 };
 
 const initialCustomerEditForm = {
@@ -2423,6 +2438,9 @@ export function App() {
   const [regularizationSearchTerm, setRegularizationSearchTerm] = useState('');
   const [regularizationSortDirection, setRegularizationSortDirection] = useState('desc');
   const [activeRegularizationTab, setActiveRegularizationTab] = useState('open');
+  const [regularizationEditModal, setRegularizationEditModal] = useState(null);
+  const [regularizationEditForm, setRegularizationEditForm] = useState(initialRegularizationEditForm);
+  const [regularizationEditErrors, setRegularizationEditErrors] = useState({});
   const [selectedSellers, setSelectedSellers] = useState([]);
   const [sortByRelevance, setSortByRelevance] = useState(false);
   const [quoteSort, setQuoteSort] = useState({ direction: 'desc', key: '' });
@@ -4611,6 +4629,98 @@ export function App() {
     } catch (error) {
       setRegularizationEntries(previousEntries);
       setAppError(error.message || 'Nao foi possivel atualizar o status da regularizacao.');
+    }
+  }
+
+  function openRegularizationEditModal(entry) {
+    setRegularizationEditModal(entry);
+    setRegularizationEditForm({
+      accumulatedValue: formatCurrencyValue(entry.accumulatedValue),
+      clientCode: entry.clientCode || '',
+      clientName: entry.clientName || '',
+      commercialEmail: entry.commercialEmail || '',
+      contractEmail: entry.contractEmail || '',
+      invoiceEmail: entry.invoiceEmail || '',
+      mobile: entry.mobile || '',
+      phone: entry.phone || '',
+      seller: entry.seller || '',
+      status: entry.status || 'priority_not_sent',
+      storeCode: entry.storeCode || '',
+    });
+    setRegularizationEditErrors({});
+  }
+
+  function updateRegularizationEditForm(field, value) {
+    setRegularizationEditForm((current) => ({ ...current, [field]: value }));
+    setRegularizationEditErrors((current) => ({ ...current, [field]: '' }));
+  }
+
+  function cancelRegularizationEditModal() {
+    setRegularizationEditModal(null);
+    setRegularizationEditForm(initialRegularizationEditForm);
+    setRegularizationEditErrors({});
+  }
+
+  async function saveRegularizationEditForm(event) {
+    event.preventDefault();
+    if (!regularizationEditModal) return;
+
+    const nextErrors = {};
+    if (!regularizationEditForm.clientCode.trim()) nextErrors.clientCode = 'Informe o codigo.';
+    if (!regularizationEditForm.clientName.trim()) nextErrors.clientName = 'Informe o nome.';
+    if (!regularizationEditForm.seller.trim()) nextErrors.seller = 'Informe o vendedor.';
+    if (Object.keys(nextErrors).length > 0) {
+      setRegularizationEditErrors(nextErrors);
+      return;
+    }
+
+    const previousEntries = regularizationEntries;
+    const changes = {
+      accumulatedValue: parseUploadCurrency(regularizationEditForm.accumulatedValue),
+      clientCode: regularizationEditForm.clientCode.trim(),
+      clientName: regularizationEditForm.clientName.trim(),
+      commercialEmail: regularizationEditForm.commercialEmail.trim(),
+      contractEmail: regularizationEditForm.contractEmail.trim(),
+      invoiceEmail: regularizationEditForm.invoiceEmail.trim(),
+      mobile: regularizationEditForm.mobile.trim(),
+      phone: regularizationEditForm.phone.trim(),
+      seller: regularizationEditForm.seller.trim(),
+      status: regularizationEditForm.status,
+      storeCode: regularizationEditForm.storeCode.trim(),
+    };
+
+    setRegularizationEntries((current) =>
+      sortRegularizationEntries(current.map((entry) => (entry.id === regularizationEditModal.id ? { ...entry, ...changes } : entry))),
+    );
+
+    try {
+      const savedEntry = await updateRegularizationEntry(regularizationEditModal.id, changes);
+      setRegularizationEntries((current) =>
+        sortRegularizationEntries(current.map((entry) => (entry.id === savedEntry.id ? savedEntry : entry))),
+      );
+      cancelRegularizationEditModal();
+      if (changes.status === 'signed') setActiveRegularizationTab('finalized');
+      setAppError('');
+    } catch (error) {
+      setRegularizationEntries(previousEntries);
+      setAppError(error.message || 'Nao foi possivel salvar a regularizacao.');
+    }
+  }
+
+  async function removeRegularizationEntry(entry) {
+    if (!entry) return;
+    const confirmed = window.confirm(`Excluir ${entry.clientName} da regularizacao cadastral?`);
+    if (!confirmed) return;
+
+    const previousEntries = regularizationEntries;
+    setRegularizationEntries((current) => current.filter((item) => item.id !== entry.id));
+
+    try {
+      await deleteRegularizationEntry(entry.id);
+      setAppError('');
+    } catch (error) {
+      setRegularizationEntries(previousEntries);
+      setAppError(error.message || 'Nao foi possivel excluir a regularizacao.');
     }
   }
 
@@ -6975,6 +7085,8 @@ export function App() {
           metrics={regularizationMetrics}
           onChangeSortDirection={setRegularizationSortDirection}
           onChangeStatus={changeRegularizationStatus}
+          onEdit={openRegularizationEditModal}
+          onRemove={removeRegularizationEntry}
           onUploadClick={() => regularizationUploadInputRef.current?.click()}
           searchTerm={regularizationSearchTerm}
           setActiveTab={setActiveRegularizationTab}
@@ -7249,6 +7361,16 @@ export function App() {
           onCancel={cancelTrackingModal}
           onSubmit={saveStandaloneTrackingForm}
           onUpdate={updateTrackingForm}
+        />
+      )}
+
+      {regularizationEditModal && (
+        <RegularizationEditModal
+          errors={regularizationEditErrors}
+          form={regularizationEditForm}
+          onCancel={cancelRegularizationEditModal}
+          onSubmit={saveRegularizationEditForm}
+          onUpdate={updateRegularizationEditForm}
         />
       )}
 
@@ -13949,6 +14071,8 @@ function RegularizationWorkspace({
   metrics,
   onChangeSortDirection,
   onChangeStatus,
+  onEdit,
+  onRemove,
   onUploadClick,
   searchTerm,
   setActiveTab,
@@ -13969,7 +14093,8 @@ function RegularizationWorkspace({
     mobile: 150,
     phone: 150,
     seller: 160,
-    status: 520,
+    status: 230,
+    actions: 96,
   });
   const columns = [
     { key: 'clientCode', label: 'Codigo' },
@@ -13982,6 +14107,7 @@ function RegularizationWorkspace({
     { key: 'commercialEmail', label: 'E-mail Comer' },
     { key: 'seller', label: 'Vendedor' },
     { key: 'status', label: 'Status' },
+    { key: 'actions', label: 'Acoes' },
   ];
 
   useEffect(() => {
@@ -14038,7 +14164,7 @@ function RegularizationWorkspace({
 
   function getCellValue(entry, columnKey) {
     if (columnKey === 'accumulatedValue') return formatCurrencyValue(entry.accumulatedValue);
-    if (columnKey === 'status') return null;
+    if (columnKey === 'status' || columnKey === 'actions') return null;
     return entry[columnKey] || '-';
   }
 
@@ -14124,17 +14250,37 @@ function RegularizationWorkspace({
                   {columns.map((column) => (
                     <td key={column.key} style={{ minWidth: `${columnWidths[column.key]}px`, width: `${columnWidths[column.key]}px` }}>
                       {column.key === 'status' ? (
-                        <div className="regularization-status-actions">
+                        <select
+                          className={`regularization-status-select ${statusMeta.color}`}
+                          value={entry.status}
+                          onChange={(event) => onChangeStatus(entry, event.target.value)}
+                        >
                           {regularizationStatuses.map((status) => (
-                            <button
-                              className={`regularization-status-button ${status.color}${entry.status === status.value ? ' active' : ''}`}
-                              key={status.value}
-                              type="button"
-                              onClick={() => onChangeStatus(entry, status.value)}
-                            >
+                            <option key={status.value} value={status.value}>
                               {status.label}
-                            </button>
+                            </option>
                           ))}
+                        </select>
+                      ) : column.key === 'actions' ? (
+                        <div className="row-actions">
+                          <button
+                            className="icon-button neutral"
+                            type="button"
+                            title="Editar regularizacao"
+                            aria-label="Editar regularizacao"
+                            onClick={() => onEdit(entry)}
+                          >
+                            <Pencil size={17} />
+                          </button>
+                          <button
+                            className="icon-button"
+                            type="button"
+                            title="Excluir regularizacao"
+                            aria-label="Excluir regularizacao"
+                            onClick={() => onRemove(entry)}
+                          >
+                            <Trash2 size={17} />
+                          </button>
                         </div>
                       ) : (
                         getCellValue(entry, column.key)
@@ -14155,6 +14301,101 @@ function RegularizationWorkspace({
         )}
       </div>
     </section>
+  );
+}
+
+function RegularizationEditModal({ errors = {}, form, onCancel, onSubmit, onUpdate }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form className="modal-panel regularization-edit-modal" role="dialog" aria-modal="true" onSubmit={onSubmit}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Regularização Cad.</p>
+            <h2>Editar cliente</h2>
+          </div>
+          <button className="modal-close" type="button" aria-label="Fechar janela" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="form-pair">
+          <label>
+            Código
+            <input value={form.clientCode} onChange={(event) => onUpdate('clientCode', event.target.value)} />
+            {errors.clientCode && <small>{errors.clientCode}</small>}
+          </label>
+          <label>
+            Loja
+            <input value={form.storeCode} onChange={(event) => onUpdate('storeCode', event.target.value)} />
+          </label>
+        </div>
+
+        <label>
+          Nome
+          <input value={form.clientName} onChange={(event) => onUpdate('clientName', event.target.value)} />
+          {errors.clientName && <small>{errors.clientName}</small>}
+        </label>
+
+        <div className="form-pair">
+          <label>
+            Valor Acumulado
+            <input value={form.accumulatedValue} onChange={(event) => onUpdate('accumulatedValue', event.target.value)} />
+          </label>
+          <label>
+            Vendedor
+            <input value={form.seller} onChange={(event) => onUpdate('seller', event.target.value)} />
+            {errors.seller && <small>{errors.seller}</small>}
+          </label>
+        </div>
+
+        <div className="form-pair">
+          <label>
+            DDD+Telefone
+            <input value={form.phone} onChange={(event) => onUpdate('phone', event.target.value)} />
+          </label>
+          <label>
+            DDD+Celular
+            <input value={form.mobile} onChange={(event) => onUpdate('mobile', event.target.value)} />
+          </label>
+        </div>
+
+        <label>
+          E-mail Nfe
+          <input value={form.invoiceEmail} onChange={(event) => onUpdate('invoiceEmail', event.target.value)} />
+        </label>
+
+        <label>
+          E-mail Contr
+          <input value={form.contractEmail} onChange={(event) => onUpdate('contractEmail', event.target.value)} />
+        </label>
+
+        <label>
+          E-mail Comer
+          <input value={form.commercialEmail} onChange={(event) => onUpdate('commercialEmail', event.target.value)} />
+        </label>
+
+        <label>
+          Status
+          <select value={form.status} onChange={(event) => onUpdate('status', event.target.value)}>
+            {regularizationStatuses.map((status) => (
+              <option key={status.value} value={status.value}>
+                {status.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button className="primary-button" type="submit">
+            <Save size={16} />
+            Salvar
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 

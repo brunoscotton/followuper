@@ -162,6 +162,18 @@ export async function updateRegularizationEntry(id, changes) {
   return savedEntry;
 }
 
+export async function deleteRegularizationEntry(id) {
+  if (!supabase) {
+    saveLocalEntries(loadLocalEntries().filter((entry) => entry.id !== id));
+    return;
+  }
+
+  const { error } = await supabase.from('regularization_entries').delete().eq('id', id);
+  if (error) throw error;
+
+  saveLocalEntries(loadLocalEntries().filter((entry) => entry.id !== id));
+}
+
 export function subscribeToRegularizationChanges(onChange) {
   if (!supabase) return () => {};
 
