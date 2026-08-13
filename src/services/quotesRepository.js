@@ -31,6 +31,8 @@ function toQuote(row) {
     clientName: row.client_name,
     phone: row.phone || '',
     quoteValue: row.quote_value || '',
+    groupCodes: row.group_codes || '',
+    rotaxValue: Number(row.rotax_value || 0),
     paymentTerms: row.payment_terms || '',
     quoteDate: row.quote_date,
     seller: row.seller,
@@ -59,6 +61,8 @@ function toRow(quote) {
   if ('clientName' in quote) row.client_name = quote.clientName;
   if ('phone' in quote) row.phone = quote.phone || null;
   if ('quoteValue' in quote) row.quote_value = quote.quoteValue || null;
+  if ('groupCodes' in quote) row.group_codes = quote.groupCodes || null;
+  if ('rotaxValue' in quote) row.rotax_value = Number(quote.rotaxValue || 0);
   if ('paymentTerms' in quote) row.payment_terms = quote.paymentTerms || null;
   if ('quoteDate' in quote) row.quote_date = quote.quoteDate;
   if ('seller' in quote) row.seller = quote.seller;

@@ -213,6 +213,7 @@ import {
 const sellers = ['Elton', 'Bruno', 'Stephanie'];
 const billingSellers = ['Bruno', 'Elton', 'Stephanie'];
 const trackingAllowedSellerCodes = new Set(['000022', '000036', '000063']);
+const rotaxQuoteGroupCodes = new Set(['9002', '9007', '9017']);
 const regularizationAllowedSellers = new Set(['BRUNO SCOTTON', 'ELTON']);
 const regularizationStatuses = [
   { value: 'priority_not_sent', label: 'prioridade - não enviado', color: 'yellow' },
@@ -675,6 +676,10 @@ function normalizeUploadIdentifier(value) {
   return normalizeUploadValue(value).replace(/\.0$/, '');
 }
 
+function normalizeUploadGroupCode(value) {
+  return normalizeUploadIdentifier(value).replace(/\D/g, '');
+}
+
 function normalizeClientCodePart(value, length) {
   const normalized = normalizeUploadIdentifier(value);
   if (!normalized) return '';
@@ -757,6 +762,11 @@ function getQuoteInterestStars(quote) {
 
 function getQuoteNumericValue(quote) {
   return parseQuoteValue(quote.quoteValue || quote.closeDetails?.totalValue);
+}
+
+function getQuoteRotaxNumericValue(quote) {
+  const value = Number(quote.rotaxValue || quote.closeDetails?.rotaxValue || 0);
+  return Number.isFinite(value) ? value : 0;
 }
 
 function formatCurrencyValue(value) {
@@ -844,6 +854,8 @@ function serializeDashboardQuotes(quotes) {
     quoteNumber: quote.quoteNumber,
     clientName: quote.clientName,
     quoteValue: quote.quoteValue,
+    groupCodes: quote.groupCodes || '',
+    rotaxValue: Number(quote.rotaxValue || 0),
     seller: quote.seller,
     status: quote.status,
     isInterest: quote.isInterest,
@@ -985,6 +997,7 @@ async function parseQuotesUploadFile(file) {
     seller: headers.indexOf('vendedor1'),
     orderNumber: headers.indexOf('pedidovenda'),
     quoteDate: findCustomerUploadColumn(headers, ['DT Emissao', 'DT Emissão', 'Data Cotacao', 'Data Cotação'], -1),
+    groupCode: headers.indexOf('grupo'),
   };
 
   const requiredColumnIndexes = [
@@ -1018,15 +1031,24 @@ async function parseQuotesUploadFile(file) {
       orderNumber: '',
       seller: getSellerFromUploadCode(row[columnIndex.seller]),
       totalValue: 0,
+      rotaxValue: 0,
+      groupCodes: [],
+      hasGroupData: columnIndex.groupCode >= 0,
       quoteDate: rowQuoteDate,
     };
+    const rowTotalValue = parseUploadCurrency(row[columnIndex.totalValue]);
+    const groupCode = columnIndex.groupCode >= 0 ? normalizeUploadGroupCode(row[columnIndex.groupCode]) : '';
 
     current.clientName = current.clientName || normalizeUploadValue(row[columnIndex.clientName]);
     current.clientCode = current.clientCode || normalizeUploadClientCode(row[columnIndex.clientCode]);
     current.seller = current.seller || getSellerFromUploadCode(row[columnIndex.seller]);
     current.orderNumber = current.orderNumber || normalizeUploadOrderNumber(row[columnIndex.orderNumber]);
     current.quoteDate = current.quoteDate || rowQuoteDate;
-    current.totalValue = Math.round((current.totalValue + parseUploadCurrency(row[columnIndex.totalValue])) * 100) / 100;
+    if (groupCode && !current.groupCodes.includes(groupCode)) current.groupCodes.push(groupCode);
+    current.totalValue = Math.round((current.totalValue + rowTotalValue) * 100) / 100;
+    if (rotaxQuoteGroupCodes.has(groupCode)) {
+      current.rotaxValue = Math.round((current.rotaxValue + rowTotalValue) * 100) / 100;
+    }
     grouped.set(quoteNumber, current);
   }
 
@@ -2359,6 +2381,7 @@ function buildUploadPreview(importedRows, quotes, ignoredCruzeiroCount, fileName
     totals: {
       open: importedRows.filter((row) => !row.orderNumber).reduce((sum, row) => sum + row.totalValue, 0),
       closed: importedRows.filter((row) => row.orderNumber).reduce((sum, row) => sum + row.totalValue, 0),
+      closedRotax: importedRows.filter((row) => row.orderNumber).reduce((sum, row) => sum + Number(row.rotaxValue || 0), 0),
     },
   };
 }
@@ -4256,6 +4279,9 @@ export function App() {
 
         const closedAt = new Date().toISOString();
         const formattedTotalValue = formatUploadCurrency(row.totalValue);
+        const formattedGroupCodes = (row.groupCodes || []).join(' / ');
+        const hasGroupData = row.hasGroupData === true;
+        const rotaxValue = Number(row.rotaxValue || 0);
         const isClosedUpload = Boolean(row.orderNumber);
         const hasUploadClientName = row.clientName && !isFinalClientName(row.clientName);
         const shouldUpdateClientName = hasUploadClientName && (isFinalClientName(existingQuote.clientName) || existingQuote.clientName !== row.clientName);
@@ -4264,6 +4290,10 @@ export function App() {
           quoteValue: formattedTotalValue,
           isInterest: existingQuote.isInterest || row.totalValue >= 5000,
         };
+        if (hasGroupData) {
+          changes.groupCodes = formattedGroupCodes;
+          changes.rotaxValue = rotaxValue;
+        }
         if (row.clientCode && existingQuote.clientCode !== row.clientCode) changes.clientCode = row.clientCode;
         if (shouldUpdateClientName) changes.clientName = row.clientName;
         if (row.quoteDate && existingQuote.quoteDate !== row.quoteDate) changes.quoteDate = row.quoteDate;
@@ -4281,6 +4311,7 @@ export function App() {
               existingQuote.closeDetails?.freight ||
               '',
             totalValue: formattedTotalValue,
+            ...(hasGroupData ? { rotaxValue } : {}),
             notes: existingQuote.closeDetails?.notes || '',
             closedAt: existingQuote.closeDetails?.closedAt || closedAt,
           };
@@ -4313,12 +4344,16 @@ export function App() {
         const createdAt = new Date().toISOString();
         const isClosedUpload = Boolean(row.orderNumber);
         const formattedTotalValue = formatUploadCurrency(row.totalValue);
+        const formattedGroupCodes = (row.groupCodes || []).join(' / ');
+        const hasGroupData = row.hasGroupData === true;
+        const rotaxValue = Number(row.rotaxValue || 0);
         const closeDetails = isClosedUpload
           ? {
               orderNumber: row.orderNumber,
               agreedPaymentTerms: '',
               carrier: '',
               totalValue: formattedTotalValue,
+              ...(hasGroupData ? { rotaxValue } : {}),
               notes: '',
               closedAt: createdAt,
             }
@@ -4398,6 +4433,9 @@ export function App() {
 
         const changedAt = new Date().toISOString();
         const formattedTotalValue = formatUploadCurrency(row.totalValue);
+        const formattedGroupCodes = (row.groupCodes || []).join(' / ');
+        const hasGroupData = row.hasGroupData === true;
+        const rotaxValue = Number(row.rotaxValue || 0);
         const isClosedUpload = Boolean(row.orderNumber);
         const hasUploadClientName = row.clientName && !isFinalClientName(row.clientName);
         const shouldUpdateClientName =
@@ -4407,6 +4445,10 @@ export function App() {
           quoteValue: formattedTotalValue,
           isInterest: existingQuote.isInterest || row.totalValue >= 5000,
         };
+        if (hasGroupData) {
+          changes.groupCodes = formattedGroupCodes;
+          changes.rotaxValue = rotaxValue;
+        }
         const historyEvents = [];
 
         if (row.clientCode && existingQuote.clientCode !== row.clientCode) {
@@ -4443,6 +4485,7 @@ export function App() {
               existingQuote.closeDetails?.freight ||
               '',
             totalValue: formattedTotalValue,
+            ...(hasGroupData ? { rotaxValue } : {}),
             notes: existingQuote.closeDetails?.notes || '',
             closedAt: existingQuote.closeDetails?.closedAt || changedAt,
           };
@@ -4480,12 +4523,16 @@ export function App() {
         const createdAt = new Date().toISOString();
         const isClosedUpload = Boolean(row.orderNumber);
         const formattedTotalValue = formatUploadCurrency(row.totalValue);
+        const formattedGroupCodes = (row.groupCodes || []).join(' / ');
+        const hasGroupData = row.hasGroupData === true;
+        const rotaxValue = Number(row.rotaxValue || 0);
         const closeDetails = isClosedUpload
           ? {
               orderNumber: row.orderNumber,
               agreedPaymentTerms: '',
               carrier: '',
               totalValue: formattedTotalValue,
+              ...(hasGroupData ? { rotaxValue } : {}),
               notes: '',
               closedAt: createdAt,
             }
@@ -4511,6 +4558,10 @@ export function App() {
           archivedAt: '',
           closeDetails,
         };
+        if (hasGroupData) {
+          nextQuote.groupCodes = formattedGroupCodes;
+          nextQuote.rotaxValue = rotaxValue;
+        }
         nextQuote.history = [
           ...createInitialQuoteHistory(nextQuote, createdAt, 'upload'),
           ...(isClosedUpload ? [buildQuoteHistoryEvent('closed', 'Virou pedido pelo upload', { orderNumber: row.orderNumber }, createdAt)] : []),
@@ -7647,6 +7698,7 @@ function SalesDashboard({
   const openPercent = getPercent(openQuotes.length, totalQuotes);
   const totalOpenValue = openQuotes.reduce((sum, quote) => sum + getQuoteNumericValue(quote), 0);
   const totalClosedValue = closedQuotes.reduce((sum, quote) => sum + getQuoteNumericValue(quote), 0);
+  const totalClosedRotaxValue = closedQuotes.reduce((sum, quote) => sum + getQuoteRotaxNumericValue(quote), 0);
   const totalClosedCount = closedQuotes.length;
   const sortedRelevantQuotes = [...activeQuotes]
     .sort((a, b) => {
@@ -7885,6 +7937,10 @@ function SalesDashboard({
         <div className="dashboard-total-card closed">
           <span>Total fechado</span>
           <strong>{formatCurrencyValue(totalClosedValue)}</strong>
+        </div>
+        <div className="dashboard-total-card rotax">
+          <span>Total fechado ROTAX</span>
+          <strong>{formatCurrencyValue(totalClosedRotaxValue)}</strong>
         </div>
       </div>
 
@@ -12698,12 +12754,14 @@ const activityFieldLabels = {
   expected_delivery_date: 'previsão de entrega',
   invoice_issue_date: 'data emissão NF',
   follow_up_started_at: 'follow-up',
+  group_codes: 'grupos',
   invoice_number: 'nota fiscal',
   message: 'lembrete',
   notes: 'observações',
   payment_terms: 'pagamento',
   phone: 'telefone',
   quote_value: 'valor',
+  rotax_value: 'valor Rotax',
   accumulated_value: 'valor acumulado',
   seller: 'vendedor',
   status: 'status',
@@ -14512,6 +14570,10 @@ function UploadPreviewModal({ isUploading, onCancel, onConfirm, preview }) {
           <span>
             <b>Total finalizado</b>
             {formatCurrencyValue(preview.totals.closed)}
+          </span>
+          <span>
+            <b>Total finalizado ROTAX</b>
+            {formatCurrencyValue(preview.totals.closedRotax)}
           </span>
         </div>
 

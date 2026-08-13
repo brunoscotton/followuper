@@ -1778,7 +1778,7 @@ small {
 .dashboard-totals {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .dashboard-total-card {
@@ -1805,6 +1805,10 @@ small {
 
 .dashboard-total-card.closed strong {
   color: #15803d;
+}
+
+.dashboard-total-card.rotax strong {
+  color: #0f766e;
 }
 
 .dashboard-gauges {
@@ -4780,5 +4784,9 @@ button:disabled {
   .dashboard-period-control select {
     min-width: 0;
     width: 100%;
+  }
+
+  .dashboard-totals {
+    grid-template-columns: 1fr;
   }
 }

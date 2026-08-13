@@ -5,6 +5,8 @@ create table if not exists public.quotes (
   client_name text not null,
   phone text,
   quote_value text,
+  group_codes text,
+  rotax_value numeric not null default 0,
   payment_terms text,
   quote_date date not null,
   seller text not null check (seller in ('Elton', 'Bruno', 'Stephanie')),
@@ -717,6 +719,8 @@ alter table public.quotes add column if not exists notes text;
 alter table public.quotes add column if not exists is_interest boolean not null default false;
 alter table public.quotes add column if not exists phone text;
 alter table public.quotes add column if not exists quote_value text;
+alter table public.quotes add column if not exists group_codes text;
+alter table public.quotes add column if not exists rotax_value numeric not null default 0;
 alter table public.quotes add column if not exists loss_reason jsonb;
 alter table public.quotes add column if not exists history jsonb not null default '[]'::jsonb;
 alter table public.tracking_entries add column if not exists invoice_number text;
