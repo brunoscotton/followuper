@@ -514,6 +514,11 @@ const initialTrackingForm = {
   status: 'Em andamento',
 };
 
+const initialTrackingCompleteUploadFiles = {
+  first: null,
+  second: null,
+};
+
 const initialRegularizationEditForm = {
   accumulatedValue: '',
   clientCode: '',
@@ -1106,8 +1111,49 @@ async function parseShippingCarriersUploadFile(file) {
   return carriers;
 }
 
-async function parseTrackingUploadFile(file, shippingCarriers = []) {
-  const rows = await readSheet(file, 1);
+function normalizeTrackingCorrelationKey(value) {
+  if (value === null || value === undefined) return '';
+  const normalized = normalizeUploadIdentifier(value);
+  if (!normalized) return '';
+  const digits = normalized.replace(/\D/g, '');
+  if (digits) return digits.replace(/^0+/, '') || '0';
+  return normalizeUploadText(normalized);
+}
+
+function getTrackingWorkbookType(rows, fileName) {
+  const type = normalizeUploadText(rows?.[0]?.[0]);
+  if (type === 'SF2' || type === 'SC5') return type;
+  throw new Error(`O arquivo ${fileName || 'selecionado'} nao foi identificado como SF2 ou SC5 na celula A1.`);
+}
+
+function buildOrdersByInvoiceFromSc5Rows(rows) {
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeUploadHeader);
+    return headers.includes('numero') && headers.includes('notafiscal');
+  });
+
+  if (headerIndex === -1) {
+    throw new Error('Nao encontrei Numero e Nota Fiscal na planilha SC5.');
+  }
+
+  const headers = rows[headerIndex].map(normalizeUploadHeader);
+  const columnIndex = {
+    invoiceNumber: headers.indexOf('notafiscal'),
+    orderNumber: headers.indexOf('numero'),
+  };
+  const ordersByInvoice = new Map();
+
+  for (const row of rows.slice(headerIndex + 1)) {
+    const invoiceKey = normalizeTrackingCorrelationKey(row[columnIndex.invoiceNumber]);
+    const orderNumber = normalizeUploadOrderNumber(row[columnIndex.orderNumber]);
+    if (!invoiceKey || !orderNumber) continue;
+    if (!ordersByInvoice.has(invoiceKey)) ordersByInvoice.set(invoiceKey, orderNumber);
+  }
+
+  return ordersByInvoice;
+}
+
+function buildTrackingUpdatesFromRows(rows, shippingCarriers = [], options = {}) {
   const headerIndex = rows.findIndex((row) => {
     const headers = row.map(normalizeUploadHeader);
     return headers.includes('numero') && headers.includes('cliente') && headers.includes('loja') && headers.includes('transp') && headers.includes('vendedor1');
@@ -1126,6 +1172,8 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
     freightValue: headers.indexOf('vlrfrete'),
     carrierCode: headers.indexOf('transp'),
     trackingCode: headers.indexOf('conhecfrete'),
+    orderNumber: findCustomerUploadColumn(headers, ['N. Pedido', 'N Pedido', 'Pedido'], -1),
+    titleNumber: findCustomerUploadColumn(headers, ['Num. Titulo', 'Num Titulo'], -1),
     seller: headers.indexOf('vendedor1'),
   };
 
@@ -1133,8 +1181,13 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
     throw new Error('A planilha de rastreio precisa ter a coluna Conhec Frete.');
   }
 
+  if (options.requireOrderNumber && columnIndex.titleNumber < 0 && columnIndex.orderNumber < 0) {
+    throw new Error('A planilha SF2 precisa ter Num. Titulo ou N. Pedido para o upload completo.');
+  }
+
   const carriersByCode = new Map(shippingCarriers.map((carrier) => [normalizeClientCodePart(carrier.code, 6), carrier]));
   const grouped = new Map();
+  let ignoredWithoutOrder = 0;
 
   for (const row of rows.slice(headerIndex + 1)) {
     const sellerCode = normalizeClientCodePart(row[columnIndex.seller], 6);
@@ -1143,7 +1196,23 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
     const clientCode = buildUploadClientCode(row[columnIndex.clientCode], row[columnIndex.storeCode]);
     if (!clientCode) continue;
 
-    const key = normalizeClientCodeKey(clientCode);
+    const invoiceLookupKey = columnIndex.titleNumber >= 0
+      ? normalizeTrackingCorrelationKey(row[columnIndex.titleNumber])
+      : normalizeTrackingCorrelationKey(row[columnIndex.invoiceNumber]);
+    const crossedOrderNumber = options.ordersByInvoice?.get(invoiceLookupKey) || '';
+    const rowOrderNumber = normalizeUploadOrderNumber(
+      crossedOrderNumber || (columnIndex.orderNumber >= 0 ? row[columnIndex.orderNumber] : ''),
+    );
+    if (options.requireOrderNumber && !rowOrderNumber) {
+      ignoredWithoutOrder += 1;
+      continue;
+    }
+
+    const key = options.groupBy === 'order'
+      ? normalizeTrackingCorrelationKey(rowOrderNumber)
+      : normalizeClientCodeKey(clientCode);
+    if (!key) continue;
+
     const carrierCode = normalizeClientCodePart(row[columnIndex.carrierCode], 6);
     const carrier = carriersByCode.get(carrierCode);
     const current = grouped.get(key) || {
@@ -1153,6 +1222,7 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
       freightValue: 0,
       invoiceIssueDates: [],
       invoiceNumbers: [],
+      orderNumber: options.groupBy === 'order' ? rowOrderNumber : '',
       trackingCodes: [],
     };
     const invoiceIssueDate = columnIndex.invoiceIssueDate >= 0
@@ -1164,6 +1234,7 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
     if (invoiceIssueDate && !current.invoiceIssueDates.includes(invoiceIssueDate)) {
       current.invoiceIssueDates.push(invoiceIssueDate);
     }
+    if (options.groupBy === 'order') current.orderNumber = current.orderNumber || rowOrderNumber;
     if (invoiceNumber && !current.invoiceNumbers.includes(invoiceNumber)) current.invoiceNumbers.push(invoiceNumber);
     if (trackingCode && !current.trackingCodes.includes(trackingCode)) current.trackingCodes.push(trackingCode);
     if (carrierCode && !current.carrierCodes.includes(carrierCode)) current.carrierCodes.push(carrierCode);
@@ -1178,15 +1249,44 @@ async function parseTrackingUploadFile(file, shippingCarriers = []) {
   );
   if (updates.length === 0) throw new Error('Nenhuma informacao valida de rastreio foi encontrada.');
 
-  return updates.map((item) => ({
-    carrier: item.carriers.join(' / '),
-    carrierCode: item.carrierCodes.join(' / '),
-    clientCode: item.clientCode,
-    freightValue: item.freightValue ? formatUploadCurrency(item.freightValue) : '',
-    invoiceIssueDate: item.invoiceIssueDates.join(' / '),
-    invoiceNumber: item.invoiceNumbers.join(' / '),
-    trackingCode: item.trackingCodes.join(' / '),
-  }));
+  return {
+    ignoredWithoutOrder,
+    updates: updates.map((item) => ({
+      carrier: item.carriers.join(' / '),
+      carrierCode: item.carrierCodes.join(' / '),
+      clientCode: item.clientCode,
+      freightValue: item.freightValue ? formatUploadCurrency(item.freightValue) : '',
+      invoiceIssueDate: item.invoiceIssueDates.join(' / '),
+      invoiceNumber: item.invoiceNumbers.join(' / '),
+      orderNumber: item.orderNumber || '',
+      trackingCode: item.trackingCodes.join(' / '),
+    })),
+  };
+}
+
+async function parseTrackingUploadFile(file, shippingCarriers = []) {
+  const rows = await readSheet(file, 1);
+  return buildTrackingUpdatesFromRows(rows, shippingCarriers).updates;
+}
+
+async function parseTrackingCompleteUploadFiles(firstFile, secondFile, shippingCarriers = []) {
+  const [firstRows, secondRows] = await Promise.all([readSheet(firstFile, 1), readSheet(secondFile, 1)]);
+  const firstType = getTrackingWorkbookType(firstRows, firstFile.name);
+  const secondType = getTrackingWorkbookType(secondRows, secondFile.name);
+
+  if (firstType === secondType) {
+    throw new Error(`Os dois arquivos foram identificados como ${firstType}. Selecione uma SF2 e uma SC5.`);
+  }
+
+  const sf2Rows = firstType === 'SF2' ? firstRows : secondRows;
+  const sc5Rows = firstType === 'SC5' ? firstRows : secondRows;
+  const ordersByInvoice = buildOrdersByInvoiceFromSc5Rows(sc5Rows);
+
+  return buildTrackingUpdatesFromRows(sf2Rows, shippingCarriers, {
+    groupBy: 'order',
+    ordersByInvoice,
+    requireOrderNumber: true,
+  });
 }
 
 function formatRegularizationPhone(dddValue, phoneValue) {
@@ -2537,6 +2637,8 @@ export function App() {
   const [standaloneTrackingModal, setStandaloneTrackingModal] = useState(false);
   const [trackingForm, setTrackingForm] = useState(initialTrackingForm);
   const [trackingFormErrors, setTrackingFormErrors] = useState({});
+  const [trackingCompleteUploadModalOpen, setTrackingCompleteUploadModalOpen] = useState(false);
+  const [trackingCompleteUploadFiles, setTrackingCompleteUploadFiles] = useState(initialTrackingCompleteUploadFiles);
   const [rotaxSessionModalOpen, setRotaxSessionModalOpen] = useState(false);
   const [rotaxSessionForm, setRotaxSessionForm] = useState(initialRotaxSessionForm);
   const [rotaxSessionErrors, setRotaxSessionErrors] = useState({});
@@ -4654,6 +4756,53 @@ export function App() {
     }
   }
 
+  async function applyTrackingUpdates(trackingUpdates, options = {}) {
+    const matchMode = options.matchMode || 'client';
+    const updatesByClientCode = new Map(trackingUpdates.map((item) => [normalizeClientCodeKey(item.clientCode), item]));
+    const updatesByOrderNumber = new Map(
+      trackingUpdates
+        .filter((item) => normalizeTrackingCorrelationKey(item.orderNumber))
+        .map((item) => [normalizeTrackingCorrelationKey(item.orderNumber), item]),
+    );
+    const eligibleEntries = trackingEntries.filter((entry) => entry.status !== 'Finalizado');
+    const matchedUpdates = new Set();
+    let updatedCount = 0;
+
+    for (const entry of eligibleEntries) {
+      const entryOrderKey = normalizeTrackingCorrelationKey(entry.orderNumber);
+      const entryClientKey = normalizeClientCodeKey(entry.clientCode);
+      const trackingUpdate = matchMode === 'order'
+        ? (entryOrderKey ? updatesByOrderNumber.get(entryOrderKey) : updatesByClientCode.get(entryClientKey))
+        : updatesByClientCode.get(entryClientKey);
+      if (!trackingUpdate) continue;
+
+      matchedUpdates.add(trackingUpdate);
+      const changes = {
+        carrier: trackingUpdate.carrier || trackingUpdate.carrierCode || entry.carrier,
+        carrierCode: trackingUpdate.carrierCode,
+        freightValue: trackingUpdate.freightValue,
+        invoiceIssueDate: trackingUpdate.invoiceIssueDate,
+        invoiceNumber: trackingUpdate.invoiceNumber,
+        orderNumber: trackingUpdate.orderNumber || entry.orderNumber,
+        trackingCode: trackingUpdate.trackingCode,
+        correiosUpdateFailed: false,
+      };
+      const hasChanges = Object.entries(changes).some(([key, value]) => (entry[key] || '') !== (value || ''));
+      if (!hasChanges) continue;
+
+      const savedEntry = await updateTrackingEntry(entry.id, changes);
+      updatedCount += 1;
+      setTrackingEntries((current) =>
+        sortTrackingEntries(current.map((currentEntry) => (currentEntry.id === savedEntry.id ? savedEntry : currentEntry))),
+      );
+    }
+
+    return {
+      unmatchedCount: trackingUpdates.filter((item) => !matchedUpdates.has(item)).length,
+      updatedCount,
+    };
+  }
+
   async function handleTrackingSheetUpload(event) {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -4662,38 +4811,38 @@ export function App() {
     setIsUploadingTrackingSheet(true);
     try {
       const trackingUpdates = await parseTrackingUploadFile(file, shippingCarriers);
-      const updatesByClientCode = new Map(trackingUpdates.map((item) => [normalizeClientCodeKey(item.clientCode), item]));
-      const eligibleEntries = trackingEntries.filter((entry) => entry.status !== 'Finalizado');
-      const matchedEntries = eligibleEntries.filter((entry) => updatesByClientCode.has(normalizeClientCodeKey(entry.clientCode)));
-      const matchedClientKeys = new Set(matchedEntries.map((entry) => normalizeClientCodeKey(entry.clientCode)));
-      let updatedCount = 0;
-
-      for (const entry of matchedEntries) {
-        const trackingUpdate = updatesByClientCode.get(normalizeClientCodeKey(entry.clientCode));
-        const changes = {
-          carrier: trackingUpdate.carrier || trackingUpdate.carrierCode || entry.carrier,
-          carrierCode: trackingUpdate.carrierCode,
-          freightValue: trackingUpdate.freightValue,
-          invoiceIssueDate: trackingUpdate.invoiceIssueDate,
-          invoiceNumber: trackingUpdate.invoiceNumber,
-          trackingCode: trackingUpdate.trackingCode,
-          correiosUpdateFailed: false,
-        };
-        const hasChanges = Object.entries(changes).some(([key, value]) => (entry[key] || '') !== (value || ''));
-        if (!hasChanges) continue;
-
-        const savedEntry = await updateTrackingEntry(entry.id, changes);
-        updatedCount += 1;
-        setTrackingEntries((current) =>
-          sortTrackingEntries(current.map((currentEntry) => (currentEntry.id === savedEntry.id ? savedEntry : currentEntry))),
-        );
-      }
-
+      const result = await applyTrackingUpdates(trackingUpdates, { matchMode: 'client' });
       setAppError(
-        `Rastreio atualizado: ${updatedCount} registro(s) alterado(s), ${trackingUpdates.filter((item) => !matchedClientKeys.has(normalizeClientCodeKey(item.clientCode))).length} cliente(s) sem rastreio aberto correspondente.`,
+        `Rastreio atualizado: ${result.updatedCount} registro(s) alterado(s), ${result.unmatchedCount} cliente(s) sem rastreio aberto correspondente.`,
       );
     } catch (error) {
       setAppError(error.message || 'Nao foi possivel importar a planilha de rastreio.');
+    } finally {
+      setIsUploadingTrackingSheet(false);
+    }
+  }
+
+  async function handleTrackingCompleteUpload() {
+    const { first, second } = trackingCompleteUploadFiles;
+    if (!first || !second) {
+      setAppError('Selecione os dois arquivos para o upload completo de rastreio.');
+      return;
+    }
+
+    setIsUploadingTrackingSheet(true);
+    try {
+      const result = await parseTrackingCompleteUploadFiles(first, second, shippingCarriers);
+      const updateResult = await applyTrackingUpdates(result.updates, { matchMode: 'order' });
+      setTrackingCompleteUploadModalOpen(false);
+      setTrackingCompleteUploadFiles(initialTrackingCompleteUploadFiles);
+      const ignoredMessage = result.ignoredWithoutOrder
+        ? `, ${result.ignoredWithoutOrder} linha(s) sem pedido ignorada(s)`
+        : '';
+      setAppError(
+        `Rastreio completo atualizado: ${updateResult.updatedCount} registro(s) alterado(s), ${updateResult.unmatchedCount} pedido(s) sem rastreio aberto correspondente${ignoredMessage}.`,
+      );
+    } catch (error) {
+      setAppError(error.message || 'Nao foi possivel importar o rastreio completo.');
     } finally {
       setIsUploadingTrackingSheet(false);
     }
@@ -7198,6 +7347,7 @@ export function App() {
           onRemove={removeTrackingEntry}
           onAddStandalone={openStandaloneTrackingModal}
           onUploadCarriers={() => shippingCarrierUploadInputRef.current?.click()}
+          onOpenTrackingCompleteUpload={() => setTrackingCompleteUploadModalOpen(true)}
           onUploadTrackingSheet={() => trackingSheetUploadInputRef.current?.click()}
           setActiveTrackingTab={setActiveTrackingTab}
           searchTerm={trackingSearchTerm}
@@ -7504,6 +7654,19 @@ export function App() {
           onCancel={cancelRegularizationEditModal}
           onSubmit={saveRegularizationEditForm}
           onUpdate={updateRegularizationEditForm}
+        />
+      )}
+
+      {trackingCompleteUploadModalOpen && (
+        <TrackingCompleteUploadModal
+          files={trackingCompleteUploadFiles}
+          isUploading={isUploadingTrackingSheet}
+          onCancel={() => {
+            setTrackingCompleteUploadModalOpen(false);
+            setTrackingCompleteUploadFiles(initialTrackingCompleteUploadFiles);
+          }}
+          onSubmit={handleTrackingCompleteUpload}
+          onUpdate={(field, file) => setTrackingCompleteUploadFiles((current) => ({ ...current, [field]: file }))}
         />
       )}
 
@@ -13867,6 +14030,7 @@ function TrackingWorkspace({
   metrics,
   onAddStandalone,
   onEdit,
+  onOpenTrackingCompleteUpload,
   onRemove,
   onToggleDetails,
   onUploadCarriers,
@@ -13883,6 +14047,7 @@ function TrackingWorkspace({
   const copyFeedbackTimeoutRef = useRef(null);
   const [tableScrollWidth, setTableScrollWidth] = useState(0);
   const [copyFeedback, setCopyFeedback] = useState(null);
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
 
   useEffect(() => {
     function updateScrollWidth() {
@@ -13954,10 +14119,39 @@ function TrackingWorkspace({
           <h2>Rastreios</h2>
         </div>
         <div className="panel-actions">
-          <button className="secondary-button compact tracking-upload-button" type="button" disabled={isUploadingTrackingSheet} onClick={onUploadTrackingSheet}>
-            <Upload size={16} />
-            {isUploadingTrackingSheet ? 'Importando...' : 'Upload rastreio'}
-          </button>
+          <div className="menu-dropdown-wrap tracking-upload-menu-wrap">
+            <button
+              className="secondary-button compact tracking-upload-button"
+              type="button"
+              disabled={isUploadingTrackingSheet}
+              onClick={() => setUploadMenuOpen((current) => !current)}
+            >
+              <Upload size={16} />
+              {isUploadingTrackingSheet ? 'Importando...' : 'Upload rastreio'}
+            </button>
+            {uploadMenuOpen && (
+              <div className="top-dropdown-menu tracking-upload-menu" role="menu">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUploadMenuOpen(false);
+                    onOpenTrackingCompleteUpload();
+                  }}
+                >
+                  Upload completo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUploadMenuOpen(false);
+                    onUploadTrackingSheet();
+                  }}
+                >
+                  Upload simples
+                </button>
+              </div>
+            )}
+          </div>
           <button className="secondary-button compact tracking-upload-button" type="button" disabled={isUploadingCarriers} onClick={onUploadCarriers}>
             <Upload size={16} />
             {isUploadingCarriers ? 'Importando...' : 'Transportadoras'}
@@ -14536,6 +14730,54 @@ function RegularizationEditModal({ errors = {}, form, onCancel, onSubmit, onUpda
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function TrackingCompleteUploadModal({ files, isUploading, onCancel, onSubmit, onUpdate }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <div className="close-modal tracking-complete-upload-modal" role="dialog" aria-modal="true">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Rastreio</p>
+            <h2>Upload completo</h2>
+          </div>
+          <button className="modal-close" type="button" aria-label="Fechar janela" onClick={onCancel} disabled={isUploading}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="tracking-complete-upload-grid">
+          <label>
+            Arquivo 1
+            <input
+              accept=".xlsx,.xlsm"
+              type="file"
+              onChange={(event) => onUpdate('first', event.target.files?.[0] || null)}
+            />
+            <span>{files.first?.name || 'Nenhum arquivo selecionado'}</span>
+          </label>
+          <label>
+            Arquivo 2
+            <input
+              accept=".xlsx,.xlsm"
+              type="file"
+              onChange={(event) => onUpdate('second', event.target.files?.[0] || null)}
+            />
+            <span>{files.second?.name || 'Nenhum arquivo selecionado'}</span>
+          </label>
+        </div>
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onCancel} disabled={isUploading}>
+            Cancelar
+          </button>
+          <button className="primary-button" type="button" onClick={onSubmit} disabled={isUploading || !files.first || !files.second}>
+            {isUploading ? 'Importando...' : 'Importar completo'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
