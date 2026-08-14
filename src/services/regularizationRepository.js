@@ -2,6 +2,9 @@ import { supabase } from './supabaseClient';
 
 const STORAGE_KEY = 'followuper.regularizationEntries.v1';
 const CORRUPTED_ACCUMULATED_VALUE_THRESHOLD = 100000000;
+const CENTS_SHIFT_REPAIR_MIN_VALUE = 1000;
+const CENTS_SHIFT_FACTOR = 100;
+const CENTS_SHIFT_TOLERANCE = 0.01;
 
 function loadLocalEntries() {
   try {
@@ -71,10 +74,16 @@ function toRow(entry) {
 function shouldRepairAccumulatedValue(existingEntry, uploadEntry) {
   const existingValue = Number(existingEntry?.accumulatedValue || 0);
   const uploadValue = Number(uploadEntry?.accumulatedValue || 0);
+  const isLegacyCorruptedValue = existingValue >= CORRUPTED_ACCUMULATED_VALUE_THRESHOLD;
+  const isCentsShiftedValue =
+    existingValue >= CENTS_SHIFT_REPAIR_MIN_VALUE &&
+    uploadValue > 0 &&
+    Math.abs(existingValue - uploadValue * CENTS_SHIFT_FACTOR) <= CENTS_SHIFT_TOLERANCE;
+
   return (
     Number.isFinite(existingValue) &&
     Number.isFinite(uploadValue) &&
-    existingValue >= CORRUPTED_ACCUMULATED_VALUE_THRESHOLD &&
+    (isLegacyCorruptedValue || isCentsShiftedValue) &&
     uploadValue >= 0 &&
     uploadValue < CORRUPTED_ACCUMULATED_VALUE_THRESHOLD
   );

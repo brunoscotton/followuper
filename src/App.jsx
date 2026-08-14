@@ -739,6 +739,16 @@ function parseRegularizationCurrency(value) {
   return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : 0;
 }
 
+function parseRegularizationUploadCurrency(value) {
+  const normalized = normalizeUploadValue(value).replace(/R\$/gi, '').trim();
+  const digitsOnly = normalized.replace(/\s/g, '');
+  if (/^-?\d+$/.test(digitsOnly) && Math.abs(Number(digitsOnly)) >= 1000) {
+    const parsed = Number(digitsOnly) / 100;
+    return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : 0;
+  }
+  return parseRegularizationCurrency(value);
+}
+
 function formatUploadCurrency(value) {
   return value.toLocaleString('pt-BR', { currency: 'BRL', minimumFractionDigits: 2, style: 'currency' });
 }
@@ -1276,7 +1286,7 @@ async function parseRegularizationUploadFile(file) {
       clientCode,
       storeCode,
       clientName,
-      accumulatedValue: parseRegularizationCurrency(row[columnIndex.accumulatedValue]),
+      accumulatedValue: parseRegularizationUploadCurrency(row[columnIndex.accumulatedValue]),
       phone: formatRegularizationPhone(row[columnIndex.ddd], row[columnIndex.phone]),
       mobile: formatRegularizationPhone(row[columnIndex.ddd], row[columnIndex.mobile]),
       invoiceEmail: normalizeUploadValue(row[columnIndex.invoiceEmail]),
