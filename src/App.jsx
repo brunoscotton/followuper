@@ -2241,6 +2241,25 @@ function getUserDisplayName(user) {
   return emailName ? emailName.replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Usuário';
 }
 
+function getUploadAuditKind(audit) {
+  if (audit?.summary?.kind) return audit.summary.kind;
+  if (audit?.summary && ('novos' in audit.summary || 'atualizados' in audit.summary || 'finalizados' in audit.summary)) return 'quotes';
+  return '';
+}
+
+function getLatestUploadAudit(audits, kinds) {
+  const allowedKinds = new Set(kinds);
+  return [...(audits || [])]
+    .filter((audit) => allowedKinds.has(getUploadAuditKind(audit)))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+}
+
+function formatLastUploadAudit(audit, fallback = '') {
+  if (!audit?.createdAt) return fallback;
+  const actor = audit.summary?.userName || audit.userEmail || 'usuário não informado';
+  return `Último upload: ${formatDateTime(audit.createdAt)} por ${actor}`;
+}
+
 function getTomorrowStartIso(dateValue = new Date()) {
   const date = dateValue instanceof Date ? new Date(dateValue) : new Date(dateValue);
   date.setDate(date.getDate() + 1);
@@ -3465,6 +3484,16 @@ export function App() {
       withoutCode: trackingEntries.filter((entry) => entry.status === 'Em andamento' && !entry.trackingCode.trim()).length,
     }),
     [trackingEntries],
+  );
+
+  const lastQuotesUploadLabel = useMemo(
+    () => formatLastUploadAudit(getLatestUploadAudit(uploadAudits, ['quotes'])),
+    [uploadAudits],
+  );
+
+  const lastTrackingUploadLabel = useMemo(
+    () => formatLastUploadAudit(getLatestUploadAudit(uploadAudits, ['shipping-carriers', 'tracking-simple', 'tracking-complete'])),
+    [uploadAudits],
   );
 
   const customerSearchIndex = useMemo(() => customers.map(buildCustomerSearchEntry), [customers]);
@@ -4700,6 +4729,8 @@ export function App() {
         userEmail: user?.email || '',
         fileName: uploadPreview.fileName,
         summary: {
+          kind: 'quotes',
+          userName: getUserDisplayName(user),
           ...uploadPreview.summary,
           novos: savedQuotes.length,
           atualizados: updatedQuotes.length,
@@ -4729,6 +4760,23 @@ export function App() {
     setUploadPreview(null);
   }
 
+  async function registerUploadAudit(kind, fileName, summary = {}) {
+    const audit = {
+      id: crypto.randomUUID(),
+      userEmail: user?.email || '',
+      fileName,
+      summary: {
+        kind,
+        userName: getUserDisplayName(user),
+        ...summary,
+      },
+      createdAt: new Date().toISOString(),
+    };
+    const savedAudit = await createUploadAudit(audit);
+    setUploadAudits((current) => [savedAudit, ...current.filter((item) => item.id !== savedAudit.id)]);
+    return savedAudit;
+  }
+
   async function handleCustomersUpload(event) {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -4737,9 +4785,7 @@ export function App() {
     await uploadCustomersFile(file);
   }
 
-  async function handleShippingCarriersUpload(event) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+  async function uploadShippingCarriersFile(file, options = {}) {
     if (!file) return;
 
     setIsUploadingShippingCarriers(true);
@@ -4748,12 +4794,24 @@ export function App() {
       const result = await replaceShippingCarriers(parsedCarriers, file.name);
       setShippingCarriers(result.carriers);
       setShippingCarrierMeta(result.meta);
+      await registerUploadAudit('shipping-carriers', file.name, {
+        registros: result.carriers.length,
+      });
       setAppError(`Transportadoras atualizadas: ${result.carriers.length} cadastro(s) na lista.`);
+      return true;
     } catch (error) {
       setAppError(error.message || 'Nao foi possivel importar a lista de transportadoras.');
+      if (options.rethrow) throw error;
+      return false;
     } finally {
       setIsUploadingShippingCarriers(false);
     }
+  }
+
+  async function handleShippingCarriersUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    await uploadShippingCarriersFile(file);
   }
 
   async function applyTrackingUpdates(trackingUpdates, options = {}) {
@@ -4803,29 +4861,40 @@ export function App() {
     };
   }
 
-  async function handleTrackingSheetUpload(event) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+  async function uploadTrackingSheetFile(file, options = {}) {
     if (!file) return;
 
     setIsUploadingTrackingSheet(true);
     try {
       const trackingUpdates = await parseTrackingUploadFile(file, shippingCarriers);
       const result = await applyTrackingUpdates(trackingUpdates, { matchMode: 'client' });
+      await registerUploadAudit('tracking-simple', file.name, {
+        atualizados: result.updatedCount,
+        semCorrespondencia: result.unmatchedCount,
+      });
       setAppError(
         `Rastreio atualizado: ${result.updatedCount} registro(s) alterado(s), ${result.unmatchedCount} cliente(s) sem rastreio aberto correspondente.`,
       );
+      return true;
     } catch (error) {
       setAppError(error.message || 'Nao foi possivel importar a planilha de rastreio.');
+      if (options.rethrow) throw error;
+      return false;
     } finally {
       setIsUploadingTrackingSheet(false);
     }
   }
 
-  async function handleTrackingCompleteUpload() {
-    const { first, second } = trackingCompleteUploadFiles;
+  async function handleTrackingSheetUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    await uploadTrackingSheetFile(file);
+  }
+
+  async function uploadTrackingCompleteFiles(first, second, options = {}) {
     if (!first || !second) {
       setAppError('Selecione os dois arquivos para o upload completo de rastreio.');
+      if (options.rethrow) throw new Error('Selecione os dois arquivos para o upload completo de rastreio.');
       return;
     }
 
@@ -4835,22 +4904,32 @@ export function App() {
       const updateResult = await applyTrackingUpdates(result.updates, { matchMode: 'order' });
       setTrackingCompleteUploadModalOpen(false);
       setTrackingCompleteUploadFiles(initialTrackingCompleteUploadFiles);
+      await registerUploadAudit('tracking-complete', `${first.name} + ${second.name}`, {
+        atualizados: updateResult.updatedCount,
+        ignoradosSemPedido: result.ignoredWithoutOrder,
+        semCorrespondencia: updateResult.unmatchedCount,
+      });
       const ignoredMessage = result.ignoredWithoutOrder
         ? `, ${result.ignoredWithoutOrder} linha(s) sem pedido ignorada(s)`
         : '';
       setAppError(
         `Rastreio completo atualizado: ${updateResult.updatedCount} registro(s) alterado(s), ${updateResult.unmatchedCount} pedido(s) sem rastreio aberto correspondente${ignoredMessage}.`,
       );
+      return true;
     } catch (error) {
       setAppError(error.message || 'Nao foi possivel importar o rastreio completo.');
+      if (options.rethrow) throw error;
+      return false;
     } finally {
       setIsUploadingTrackingSheet(false);
     }
   }
 
-  async function handleRegularizationUpload(event) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+  async function handleTrackingCompleteUpload() {
+    await uploadTrackingCompleteFiles(trackingCompleteUploadFiles.first, trackingCompleteUploadFiles.second);
+  }
+
+  async function uploadRegularizationFile(file, options = {}) {
     if (!file) return;
 
     setIsUploadingRegularization(true);
@@ -4858,18 +4937,32 @@ export function App() {
       const parsedEntries = await parseRegularizationUploadFile(file);
       const result = await mergeRegularizationEntries(parsedEntries);
       setRegularizationEntries(result.entries);
-      setActiveView('regularization');
+      if (!options.keepView) setActiveView('regularization');
+      await registerUploadAudit('regularization', file.name, {
+        corrigidos: result.repairedCount,
+        novos: result.insertedCount,
+        preservados: result.skippedCount,
+      });
       const repairedMessage = result.repairedCount
         ? `, ${result.repairedCount} valor(es) corrigido(s)`
         : '';
       setAppError(
         `Regularização importada: ${result.insertedCount} novo(s), ${result.skippedCount} já existente(s) preservado(s)${repairedMessage}.`,
       );
+      return true;
     } catch (error) {
       setAppError(error.message || 'Nao foi possivel importar a planilha de regularizacao.');
+      if (options.rethrow) throw error;
+      return false;
     } finally {
       setIsUploadingRegularization(false);
     }
+  }
+
+  async function handleRegularizationUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    await uploadRegularizationFile(file);
   }
 
   async function changeRegularizationStatus(entry, status) {
@@ -7308,6 +7401,7 @@ export function App() {
           isUploadingQuotes={isUploadingQuotes}
           metrics={metrics}
           isSimpleLayout={layoutMode === 'simple'}
+          lastUploadLabel={lastQuotesUploadLabel}
           now={now}
           onArchiveQuote={archiveQuote}
           onChangeStatus={changeStatus}
@@ -7343,6 +7437,7 @@ export function App() {
           metrics={trackingMetrics}
           isUploadingCarriers={isUploadingShippingCarriers}
           isUploadingTrackingSheet={isUploadingTrackingSheet}
+          lastUploadLabel={lastTrackingUploadLabel}
           onEdit={openTrackingModal}
           onRemove={removeTrackingEntry}
           onAddStandalone={openStandaloneTrackingModal}
@@ -7504,14 +7599,21 @@ export function App() {
             isUploadingBilling ||
             isUploadingRotaxParts ||
             isUploadingStock ||
+            isUploadingShippingCarriers ||
+            isUploadingTrackingSheet ||
+            isUploadingRegularization ||
             isSavingContractTemplate
           }
           onUploadBilling={(file, seller) => handleBillingUpload(file, seller, { keepView: true, rethrow: true })}
           onUploadContract={(type, file) => handleContractTemplateUpload(type, file, { rethrow: true })}
           onUploadCustomers={(file) => uploadCustomersFile(file, { keepView: true, rethrow: true })}
           onUploadQuotes={(file) => prepareQuotesUpload(file, { rethrow: true })}
+          onUploadRegularization={(file) => uploadRegularizationFile(file, { keepView: true, rethrow: true })}
           onUploadRotaxParts={(file) => handleRotaxPartsUpload(file, { keepView: true, rethrow: true })}
+          onUploadShippingCarriers={(file) => uploadShippingCarriersFile(file, { rethrow: true })}
           onUploadStock={(file) => handleStockUpload(file, { keepView: true, rethrow: true })}
+          onUploadTrackingComplete={(first, second) => uploadTrackingCompleteFiles(first, second, { rethrow: true })}
+          onUploadTrackingSimple={(file) => uploadTrackingSheetFile(file, { rethrow: true })}
         />
       ) : activeView === 'users' && isMasterUser ? (
         <UsersWorkspace
@@ -8759,9 +8861,14 @@ function GrandpaWorkspace({ errors, form, onSubmit, onUpdate }) {
 const initialCentralUploadFiles = {
   quotes: null,
   customers: null,
+  shippingCarriers: null,
+  trackingSimple: null,
+  trackingCompleteFirst: null,
+  trackingCompleteSecond: null,
   billingBruno: null,
   billingElton: null,
   billingStephanie: null,
+  regularization: null,
   rotaxParts: null,
   stock: [],
   contractMotor: null,
@@ -8807,8 +8914,12 @@ function UploadsWorkspace({
   onUploadContract,
   onUploadCustomers,
   onUploadQuotes,
+  onUploadRegularization,
   onUploadRotaxParts,
+  onUploadShippingCarriers,
   onUploadStock,
+  onUploadTrackingComplete,
+  onUploadTrackingSimple,
 }) {
   const [files, setFiles] = useState(initialCentralUploadFiles);
   const [statuses, setStatuses] = useState({});
@@ -8832,6 +8943,21 @@ function UploadsWorkspace({
         label: 'Clientes',
         run: () => onUploadCustomers(files.customers),
       },
+      files.shippingCarriers && {
+        id: 'shippingCarriers',
+        label: 'Transportadoras',
+        run: () => onUploadShippingCarriers(files.shippingCarriers),
+      },
+      files.trackingSimple && {
+        id: 'trackingSimple',
+        label: 'Rastreio simples',
+        run: () => onUploadTrackingSimple(files.trackingSimple),
+      },
+      (files.trackingCompleteFirst || files.trackingCompleteSecond) && {
+        id: 'trackingComplete',
+        label: 'Rastreio completo',
+        run: () => onUploadTrackingComplete(files.trackingCompleteFirst, files.trackingCompleteSecond),
+      },
       files.billingBruno && {
         id: 'billingBruno',
         label: 'Cobrança Bruno',
@@ -8851,6 +8977,11 @@ function UploadsWorkspace({
         id: 'rotaxParts',
         label: 'Consulta PN Rotax',
         run: () => onUploadRotaxParts(files.rotaxParts),
+      },
+      files.regularization && {
+        id: 'regularization',
+        label: 'Regularização',
+        run: () => onUploadRegularization(files.regularization),
       },
       ...files.stock.map((file, index) => ({
         id: `stock-${index}`,
@@ -8938,12 +9069,49 @@ function UploadsWorkspace({
         <div className="central-upload-grid">
           <UploadFileField label="Cotações" file={files.quotes} onChange={(file) => updateFiles('quotes', file)} />
           <UploadFileField label="Clientes" file={files.customers} onChange={(file) => updateFiles('customers', file)} />
+          <UploadFileField
+            label="Regularização"
+            file={files.regularization}
+            onChange={(file) => updateFiles('regularization', file)}
+          />
           <UploadFileField label="Cobrança Bruno" file={files.billingBruno} onChange={(file) => updateFiles('billingBruno', file)} />
           <UploadFileField label="Cobrança Elton" file={files.billingElton} onChange={(file) => updateFiles('billingElton', file)} />
           <UploadFileField
             label="Cobrança Stephanie"
             file={files.billingStephanie}
             onChange={(file) => updateFiles('billingStephanie', file)}
+          />
+        </div>
+      </div>
+
+      <div className="central-upload-section">
+        <div className="central-upload-section-title">
+          <Truck size={18} />
+          <div>
+            <h3>Rastreio</h3>
+            <p>Envie lista de transportadoras, rastreio simples ou o par SF2/SC5 do rastreio completo.</p>
+          </div>
+        </div>
+        <div className="central-upload-grid">
+          <UploadFileField
+            label="Transportadoras"
+            file={files.shippingCarriers}
+            onChange={(file) => updateFiles('shippingCarriers', file)}
+          />
+          <UploadFileField
+            label="Rastreio simples"
+            file={files.trackingSimple}
+            onChange={(file) => updateFiles('trackingSimple', file)}
+          />
+          <UploadFileField
+            label="Rastreio completo - arquivo 1"
+            file={files.trackingCompleteFirst}
+            onChange={(file) => updateFiles('trackingCompleteFirst', file)}
+          />
+          <UploadFileField
+            label="Rastreio completo - arquivo 2"
+            file={files.trackingCompleteSecond}
+            onChange={(file) => updateFiles('trackingCompleteSecond', file)}
           />
         </div>
       </div>
@@ -9309,6 +9477,7 @@ function QuotesWorkspace({
   form,
   isUploadingQuotes,
   isSimpleLayout,
+  lastUploadLabel,
   metrics,
   now,
   onArchiveQuote,
@@ -9515,6 +9684,7 @@ function QuotesWorkspace({
           <div className="section-title">
             <CircleDot size={20} />
             <h2>Cotações</h2>
+            {lastUploadLabel && <span className="last-upload-inline">{lastUploadLabel}</span>}
           </div>
           <div className="panel-actions">
             {!isSimpleLayout && (
@@ -14027,6 +14197,7 @@ function TrackingWorkspace({
   expandedEntryIds = [],
   isUploadingCarriers,
   isUploadingTrackingSheet,
+  lastUploadLabel,
   metrics,
   onAddStandalone,
   onEdit,
@@ -14174,6 +14345,7 @@ function TrackingWorkspace({
       <div className="tracking-carrier-meta">
         <Truck size={16} />
         <span>{carrierUploadLabel}</span>
+        {lastUploadLabel && <span className="last-upload-inline">{lastUploadLabel}</span>}
       </div>
 
       <div className="tabs tracking-tabs" role="tablist" aria-label="Status dos rastreios">

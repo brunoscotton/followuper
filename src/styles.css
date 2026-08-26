@@ -1134,10 +1134,19 @@ h2 {
   align-items: center;
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .section-title svg {
   color: #0f766e;
+}
+
+.last-upload-inline {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.25;
+  margin-left: 2px;
 }
 
 label {
@@ -2430,6 +2439,13 @@ td {
   gap: 8px;
   justify-self: start;
   padding: 8px 10px;
+}
+
+.tracking-carrier-meta .last-upload-inline {
+  border-left: 1px solid #b7deda;
+  color: #315f5b;
+  margin-left: 4px;
+  padding-left: 10px;
 }
 
 .tracking-upload-button {
