@@ -2543,6 +2543,12 @@ function sortTrackingEntries(entries) {
   return [...entries].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
+function getValidIsoDate(value, fallback = '') {
+  const timestamp = new Date(value || '').getTime();
+  if (!Number.isFinite(timestamp)) return fallback;
+  return new Date(timestamp).toISOString();
+}
+
 function syncCollection(current, eventType, item, oldId, sorter, cache) {
   let nextItems = current;
 
@@ -3630,6 +3636,32 @@ export function App() {
   const visibleTrackingEntries = useMemo(
     () => {
       const query = normalize(trackingSearchTerm);
+      const quotesById = new Map(quotes.map((quote) => [quote.id, quote]));
+      const quotesByNumber = new Map(quotes.map((quote) => [normalizeUploadQuoteNumber(quote.quoteNumber), quote]));
+      const getTrackingSortTimestamp = (entry) => {
+        if (entry.status === 'Finalizado') {
+          const finalizedTimestamp = new Date(entry.finalizedAt || '').getTime();
+          if (Number.isFinite(finalizedTimestamp)) return finalizedTimestamp;
+        }
+
+        const quote =
+          quotesById.get(entry.quoteId) ||
+          quotesByNumber.get(normalizeUploadQuoteNumber(entry.quoteNumber));
+        const candidates = [
+          quote?.closeDetails?.closedAt,
+          quote?.statusUpdatedAt,
+          entry.invoiceIssueDate,
+          entry.createdAt,
+          entry.updatedAt,
+        ];
+
+        for (const candidate of candidates) {
+          const timestamp = new Date(candidate || '').getTime();
+          if (Number.isFinite(timestamp)) return timestamp;
+        }
+
+        return 0;
+      };
 
       return trackingEntries
         .filter((entry) => entry.status === activeTrackingTab)
@@ -3654,9 +3686,10 @@ export function App() {
             entry.notes,
             entry.status,
           ].some((value) => normalize(value || '').includes(query));
-        });
+        })
+        .sort((a, b) => getTrackingSortTimestamp(b) - getTrackingSortTimestamp(a));
     },
-    [activeTrackingTab, customers, trackingEntries, trackingSearchTerm],
+    [activeTrackingTab, customers, quotes, trackingEntries, trackingSearchTerm],
   );
 
   const regularizationMetrics = useMemo(
@@ -4192,9 +4225,14 @@ export function App() {
     return customers.find((customer) => normalize(customer.clientName || '') === normalized) || null;
   }
 
+  function getTrackingCreatedAtForClosedQuote(quote, details, fallback = new Date().toISOString()) {
+    return getValidIsoDate(details?.closedAt || quote?.statusUpdatedAt || quote?.createdAt, fallback);
+  }
+
   function buildTrackingEntryForClosedQuote(quote, details, trackingEntriesByQuoteId) {
     const existingEntry = trackingEntriesByQuoteId.get(quote.id);
     const nowIso = new Date().toISOString();
+    const trackingCreatedAt = getTrackingCreatedAtForClosedQuote(quote, details, nowIso);
     const customer = findCustomerByName(quote.clientName);
     const phone = quote.phone || customer?.phone || '';
 
@@ -4207,6 +4245,7 @@ export function App() {
         phone,
         orderNumber: details.orderNumber,
         carrier: existingEntry.carrier || details.carrier || '',
+        createdAt: trackingCreatedAt,
         updatedAt: nowIso,
       };
     }
@@ -4229,7 +4268,7 @@ export function App() {
       notes: '',
       status: 'Em andamento',
       finalizedAt: '',
-      createdAt: nowIso,
+      createdAt: trackingCreatedAt,
       updatedAt: nowIso,
     };
   }
@@ -6697,6 +6736,7 @@ export function App() {
   async function ensureTrackingEntry(quote, details) {
     const existingEntry = trackingEntries.find((entry) => entry.quoteId === quote.id);
     const nowIso = new Date().toISOString();
+    const trackingCreatedAt = getTrackingCreatedAtForClosedQuote(quote, details, nowIso);
     const customer = findCustomerByName(quote.clientName);
     const phone = quote.phone || customer?.phone || '';
 
@@ -6708,6 +6748,7 @@ export function App() {
         phone,
         orderNumber: details.orderNumber,
         carrier: existingEntry.carrier || details.carrier || '',
+        createdAt: trackingCreatedAt,
       });
       setTrackingEntries((current) =>
         sortTrackingEntries(current.map((entry) => (entry.id === savedEntry.id ? savedEntry : entry))),
@@ -6732,7 +6773,7 @@ export function App() {
       notes: '',
       status: 'Em andamento',
       finalizedAt: '',
-      createdAt: nowIso,
+      createdAt: trackingCreatedAt,
       updatedAt: nowIso,
     };
 
