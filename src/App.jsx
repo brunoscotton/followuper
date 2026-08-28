@@ -52,7 +52,6 @@ import {
   persistenceMode,
   subscribeToQuoteChanges,
   updateQuote,
-  upsertQuotes,
 } from './services/quotesRepository';
 import { isSupabaseConfigured } from './services/supabaseClient';
 import {
@@ -70,7 +69,6 @@ import {
   loadTrackingEntries,
   subscribeToTrackingChanges,
   updateTrackingEntry,
-  upsertTrackingEntries,
 } from './services/trackingRepository';
 import {
   cacheInfoBlocks,
@@ -126,7 +124,6 @@ import {
   sortCustomers,
   subscribeToCustomerChanges,
   updateCustomer,
-  upsertCustomers,
 } from './services/customersRepository';
 import {
   cacheContractTemplates,
@@ -230,8 +227,6 @@ const BILLING_NOTE_DRAFTS_STORAGE_KEY = 'followuper.billingNoteDrafts.v1';
 const LAYOUT_STORAGE_KEY = 'followuper.layoutMode.v1';
 const ROTAX_SYSTEM_URL = 'https://rotax-system.vercel.app/';
 const AUTO_ARCHIVE_INACTIVE_DAYS = 15;
-const ARCHIVED_QUOTE_RETENTION_DAYS = 30;
-const FINALIZED_TRACKING_RETENTION_DAYS = 15;
 const DOLLAR_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 const monthNames = [
   'Janeiro',
@@ -2480,26 +2475,11 @@ function getQuoteLastActivityAt(quote) {
   return timestamps.length ? new Date(Math.max(...timestamps)) : new Date(quote.createdAt);
 }
 
-function isPastRetentionDate(dateValue, now, retentionDays) {
-  const timestamp = new Date(dateValue || 0).getTime();
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return false;
-  return now.getTime() - timestamp >= retentionDays * 86_400_000;
-}
-
 function shouldAutoArchiveQuote(quote, now) {
   if (isClosed(quote) || isArchived(quote)) return false;
 
   const archiveAfter = addDays(getQuoteLastActivityAt(quote), AUTO_ARCHIVE_INACTIVE_DAYS);
   return archiveAfter <= now;
-}
-
-function shouldDeleteArchivedQuote(quote, now) {
-  return isArchived(quote) && isPastRetentionDate(quote.archivedAt, now, ARCHIVED_QUOTE_RETENTION_DAYS);
-}
-
-function shouldDeleteFinalizedTrackingEntry(entry, now) {
-  if (entry.status !== 'Finalizado') return false;
-  return isPastRetentionDate(entry.finalizedAt || entry.updatedAt, now, FINALIZED_TRACKING_RETENTION_DAYS);
 }
 
 function buildUploadPreview(importedRows, quotes, ignoredCruzeiroCount, fileName) {
@@ -2703,7 +2683,6 @@ export function App() {
   const regularizationUploadInputRef = useRef(null);
   const previousClosedQuoteIdsRef = useRef(null);
   const autoArchiveRunningRef = useRef(false);
-  const retentionCleanupRunningRef = useRef(false);
   const uploadArchiveRecoveryRunningRef = useRef(false);
   const closedUnarchiveRunningRef = useRef(false);
   const celebrationTimeoutRef = useRef(null);
@@ -3411,39 +3390,6 @@ export function App() {
         autoArchiveRunningRef.current = false;
       });
   }, [isLoading, now, quotes]);
-
-  useEffect(() => {
-    if (isLoading || retentionCleanupRunningRef.current) return;
-
-    const quotesToDelete = quotes.filter((quote) => shouldDeleteArchivedQuote(quote, now));
-    const trackingEntriesToDelete = trackingEntries.filter((entry) => shouldDeleteFinalizedTrackingEntry(entry, now));
-    if (quotesToDelete.length === 0 && trackingEntriesToDelete.length === 0) return;
-
-    retentionCleanupRunningRef.current = true;
-    const quoteIds = new Set(quotesToDelete.map((quote) => quote.id));
-    const trackingIds = new Set(trackingEntriesToDelete.map((entry) => entry.id));
-    const previousQuotes = quotes;
-    const previousTrackingEntries = trackingEntries;
-
-    setQuotes((current) => current.filter((quote) => !quoteIds.has(quote.id)));
-    setTrackingEntries((current) => current.filter((entry) => !trackingIds.has(entry.id)));
-
-    Promise.all([
-      ...quotesToDelete.map((quote) => deleteQuote(quote.id)),
-      ...trackingEntriesToDelete.map((entry) => deleteTrackingEntry(entry.id)),
-    ])
-      .then(() => {
-        setAppError('');
-      })
-      .catch((error) => {
-        setQuotes(previousQuotes);
-        setTrackingEntries(previousTrackingEntries);
-        setAppError(error.message || 'Nao foi possivel limpar registros antigos.');
-      })
-      .finally(() => {
-        retentionCleanupRunningRef.current = false;
-      });
-  }, [isLoading, now, quotes, trackingEntries]);
 
   useEffect(() => {
     if (isLoading || closedUnarchiveRunningRef.current) return;
@@ -4192,90 +4138,6 @@ export function App() {
     return customers.find((customer) => normalize(customer.clientName || '') === normalized) || null;
   }
 
-  function buildTrackingEntryForClosedQuote(quote, details, trackingEntriesByQuoteId) {
-    const existingEntry = trackingEntriesByQuoteId.get(quote.id);
-    const nowIso = new Date().toISOString();
-    const customer = findCustomerByName(quote.clientName);
-    const phone = quote.phone || customer?.phone || '';
-
-    if (existingEntry) {
-      return {
-        ...existingEntry,
-        quoteNumber: quote.quoteNumber,
-        clientCode: quote.clientCode || existingEntry.clientCode || '',
-        clientName: quote.clientName,
-        phone,
-        orderNumber: details.orderNumber,
-        carrier: existingEntry.carrier || details.carrier || '',
-        updatedAt: nowIso,
-      };
-    }
-
-    return {
-      id: crypto.randomUUID(),
-      quoteId: quote.id,
-      quoteNumber: quote.quoteNumber,
-      clientCode: quote.clientCode || '',
-      clientName: quote.clientName,
-      phone,
-      orderNumber: details.orderNumber,
-      invoiceNumber: '',
-      invoiceIssueDate: '',
-      carrier: details.carrier || '',
-      trackingCode: '',
-      deliverySituation: 'etiqueta',
-      expectedDeliveryDate: '',
-      notes: '',
-      status: 'Em andamento',
-      finalizedAt: '',
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    };
-  }
-
-  function buildCustomerForClosedQuote(quote, details, customersByName) {
-    if (!quote?.clientName?.trim() || !customersLoaded) return null;
-
-    const customerKey = normalize(quote.clientName);
-    if (!customerKey) return null;
-
-    const existingCustomer = customersByName.get(customerKey);
-    const phone = quote.phone || details?.phone || '';
-    const seller = quote.seller || '';
-
-    if (existingCustomer) {
-      const changes = {};
-      if (phone && existingCustomer.phone !== phone) changes.phone = phone;
-      if (seller && existingCustomer.seller !== seller) changes.seller = seller;
-
-      if (Object.keys(changes).length === 0) return null;
-
-      const nextCustomer = { ...existingCustomer, ...changes, updatedAt: new Date().toISOString() };
-      customersByName.set(customerKey, nextCustomer);
-      return nextCustomer;
-    }
-
-    const nowIso = new Date().toISOString();
-    const customer = {
-      id: crypto.randomUUID(),
-      clientCode: quote.clientCode || '',
-      clientName: quote.clientName.trim(),
-      seller,
-      document: '',
-      phone,
-      fiscalAddress: '',
-      deliveryAddress: '',
-      state: '',
-      email: '',
-      zipCode: '',
-      purchases: [],
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    };
-    customersByName.set(customerKey, customer);
-    return customer;
-  }
-
   function updateGrandpaForm(field, value) {
     setGrandpaForm((current) => ({ ...current, [field]: value }));
     setGrandpaErrors((current) => ({ ...current, [field]: '' }));
@@ -4704,8 +4566,6 @@ export function App() {
       const newRows = importedRows.filter((row) => !existingQuoteNumbers.has(row.quoteNumber));
       const savedQuotes = [];
       const updatedQuotes = [];
-      const quotesToPersist = [];
-      const closedQuotesForLinkedRecords = [];
       let closedCount = 0;
 
       for (const row of existingRows) {
@@ -4790,13 +4650,13 @@ export function App() {
 
         if (!hasChanges) continue;
 
-        const nextQuote = { ...existingQuote, ...changes };
-        updatedQuotes.push(nextQuote);
-        quotesToPersist.push(nextQuote);
+        const savedQuote = await updateQuote(existingQuote.id, changes);
+        updatedQuotes.push(savedQuote);
 
-        if (isClosedUpload && nextQuote.closeDetails) {
+        if (isClosedUpload && savedQuote.closeDetails) {
           if (existingQuote.status !== 'fechada') closedCount += 1;
-          closedQuotesForLinkedRecords.push(nextQuote);
+          await ensureTrackingEntry(savedQuote, savedQuote.closeDetails);
+          await ensureCustomerFromClosedQuote(savedQuote, savedQuote.closeDetails);
         }
       }
 
@@ -4848,61 +4708,20 @@ export function App() {
           ...(isClosedUpload ? [buildQuoteHistoryEvent('closed', 'Virou pedido pelo upload', { orderNumber: row.orderNumber }, createdAt)] : []),
         ];
 
-        savedQuotes.push(nextQuote);
-        quotesToPersist.push(nextQuote);
-        existingQuoteNumbers.add(normalizeUploadQuoteNumber(nextQuote.quoteNumber));
+        const savedQuote = await createQuote(nextQuote);
+        savedQuotes.push(savedQuote);
+        existingQuoteNumbers.add(normalizeUploadQuoteNumber(savedQuote.quoteNumber));
 
-        if (isClosedUpload && nextQuote.closeDetails) {
+        if (isClosedUpload && savedQuote.closeDetails) {
           closedCount += 1;
-          closedQuotesForLinkedRecords.push(nextQuote);
-        }
-      }
-
-      const persistedQuotes = quotesToPersist.length ? await upsertQuotes(quotesToPersist) : [];
-      const persistedQuotesById = new Map(persistedQuotes.map((quote) => [quote.id, quote]));
-      const changedQuotes = [...savedQuotes, ...updatedQuotes].map((quote) => persistedQuotesById.get(quote.id) || quote);
-      const changedQuotesById = new Map(changedQuotes.map((quote) => [quote.id, quote]));
-      const linkedClosedQuotes = closedQuotesForLinkedRecords.map((quote) => changedQuotesById.get(quote.id) || quote);
-
-      if (linkedClosedQuotes.length > 0) {
-        const trackingEntriesByQuoteId = new Map(trackingEntries.map((entry) => [entry.quoteId, entry]));
-        const trackingEntriesToPersist = linkedClosedQuotes
-          .map((quote) => {
-            const nextEntry = buildTrackingEntryForClosedQuote(quote, quote.closeDetails, trackingEntriesByQuoteId);
-            trackingEntriesByQuoteId.set(quote.id, nextEntry);
-            return nextEntry;
-          })
-          .filter(Boolean);
-        const savedTrackingEntries = trackingEntriesToPersist.length
-          ? await upsertTrackingEntries(trackingEntriesToPersist)
-          : [];
-
-        if (savedTrackingEntries.length > 0) {
-          const savedTrackingIds = new Set(savedTrackingEntries.map((entry) => entry.id));
-          setTrackingEntries((current) =>
-            sortTrackingEntries([...savedTrackingEntries, ...current.filter((entry) => !savedTrackingIds.has(entry.id))]),
-          );
-        }
-
-        if (customersLoaded) {
-          const customersByName = new Map(customers.map((customer) => [normalize(customer.clientName || ''), customer]));
-          const customersToPersist = linkedClosedQuotes
-            .map((quote) => buildCustomerForClosedQuote(quote, quote.closeDetails, customersByName))
-            .filter(Boolean);
-          const savedCustomers = customersToPersist.length ? await upsertCustomers(customersToPersist) : [];
-
-          if (savedCustomers.length > 0) {
-            const savedCustomerIds = new Set(savedCustomers.map((customer) => customer.id));
-            setCustomers((current) =>
-              sortCustomers([...savedCustomers, ...current.filter((customer) => !savedCustomerIds.has(customer.id))]),
-            );
-          }
+          await ensureTrackingEntry(savedQuote, savedQuote.closeDetails);
+          await ensureCustomerFromClosedQuote(savedQuote, savedQuote.closeDetails);
         }
       }
 
       setQuotes((current) => {
-        const changedQuoteIds = new Set(changedQuotes.map((quote) => quote.id));
-        return [...changedQuotes, ...current.filter((quote) => !changedQuoteIds.has(quote.id))];
+        const changedQuotes = [...savedQuotes, ...updatedQuotes];
+        return [...changedQuotes, ...current.filter((quote) => !changedQuotes.some((saved) => saved.id === quote.id))];
       });
 
       const audit = {

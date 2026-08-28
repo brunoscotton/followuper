@@ -1,7 +1,6 @@
 import { supabase } from './supabaseClient';
 
 const STORAGE_KEY = 'followuper.quotes.v1';
-const QUOTE_UPSERT_BATCH_SIZE = 500;
 
 export const persistenceMode = supabase ? 'supabase' : 'local';
 
@@ -88,10 +87,6 @@ function sortQuotes(quotes) {
   return [...quotes].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
-function dedupeQuotesById(quotes) {
-  return [...new Map(quotes.filter(Boolean).map((quote) => [quote.id, quote])).values()];
-}
-
 export async function loadQuotes() {
   if (!supabase) {
     return { quotes: sortQuotes(loadLocalQuotes()), mode: 'local' };
@@ -134,37 +129,6 @@ export async function updateQuote(id, changes) {
   const quotes = loadLocalQuotes().map((quote) => (quote.id === id ? savedQuote : quote));
   saveLocalQuotes(sortQuotes(quotes));
   return savedQuote;
-}
-
-export async function upsertQuotes(nextQuotes) {
-  const dedupedQuotes = dedupeQuotesById(nextQuotes);
-
-  if (!supabase) {
-    const existingById = new Map(loadLocalQuotes().map((quote) => [quote.id, quote]));
-    dedupedQuotes.forEach((quote) => existingById.set(quote.id, { ...existingById.get(quote.id), ...quote }));
-    const quotes = sortQuotes([...existingById.values()]);
-    saveLocalQuotes(quotes);
-    return sortQuotes(dedupedQuotes);
-  }
-
-  const savedRows = [];
-  for (let index = 0; index < dedupedQuotes.length; index += QUOTE_UPSERT_BATCH_SIZE) {
-    const batch = dedupedQuotes.slice(index, index + QUOTE_UPSERT_BATCH_SIZE);
-    if (batch.length === 0) continue;
-
-    const { data, error } = await supabase
-      .from('quotes')
-      .upsert(batch.map(toRow), { onConflict: 'id' })
-      .select('*');
-    if (error) throw error;
-    savedRows.push(...(data || []));
-  }
-
-  const savedQuotes = sortQuotes(savedRows.map(toQuote));
-  const existingById = new Map(loadLocalQuotes().map((quote) => [quote.id, quote]));
-  savedQuotes.forEach((quote) => existingById.set(quote.id, quote));
-  saveLocalQuotes(sortQuotes([...existingById.values()]));
-  return savedQuotes;
 }
 
 export async function deleteQuote(id) {

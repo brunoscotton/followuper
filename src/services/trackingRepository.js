@@ -1,7 +1,6 @@
 import { supabase } from './supabaseClient';
 
 const STORAGE_KEY = 'followuper.tracking.v1';
-const TRACKING_UPSERT_BATCH_SIZE = 500;
 
 function loadLocalTrackingEntries() {
   try {
@@ -77,25 +76,6 @@ function sortTrackingEntries(entries) {
   return [...entries].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
-function dedupeTrackingEntriesById(entries) {
-  return [...new Map(entries.filter(Boolean).map((entry) => [entry.id, entry])).values()];
-}
-
-function prepareTrackingEntryForSave(entry) {
-  const updatedAt = entry.updatedAt || new Date().toISOString();
-  const nextEntry = { ...entry, updatedAt };
-
-  if (nextEntry.status === 'Finalizado' && !nextEntry.finalizedAt) {
-    nextEntry.finalizedAt = updatedAt;
-  }
-
-  if (nextEntry.status === 'Em andamento' || nextEntry.status === 'Importação') {
-    nextEntry.finalizedAt = '';
-  }
-
-  return nextEntry;
-}
-
 export async function loadTrackingEntries() {
   if (!supabase) {
     return { entries: sortTrackingEntries(loadLocalTrackingEntries()), mode: 'local' };
@@ -131,7 +111,16 @@ export async function createTrackingEntry(entry) {
 }
 
 export async function updateTrackingEntry(id, changes) {
-  const nextChanges = prepareTrackingEntryForSave(changes);
+  const updatedAt = new Date().toISOString();
+  const nextChanges = { ...changes, updatedAt };
+
+  if (nextChanges.status === 'Finalizado' && !nextChanges.finalizedAt) {
+    nextChanges.finalizedAt = updatedAt;
+  }
+
+  if (nextChanges.status === 'Em andamento' || nextChanges.status === 'Importação') {
+    nextChanges.finalizedAt = '';
+  }
 
   if (!supabase) {
     const entries = loadLocalTrackingEntries().map((entry) =>
@@ -154,37 +143,6 @@ export async function updateTrackingEntry(id, changes) {
   const entries = loadLocalTrackingEntries().map((entry) => (entry.id === id ? savedEntry : entry));
   saveLocalTrackingEntries(sortTrackingEntries(entries));
   return savedEntry;
-}
-
-export async function upsertTrackingEntries(nextEntries) {
-  const dedupedEntries = dedupeTrackingEntriesById(nextEntries.map(prepareTrackingEntryForSave));
-
-  if (!supabase) {
-    const existingById = new Map(loadLocalTrackingEntries().map((entry) => [entry.id, entry]));
-    dedupedEntries.forEach((entry) => existingById.set(entry.id, { ...existingById.get(entry.id), ...entry }));
-    const entries = sortTrackingEntries([...existingById.values()]);
-    saveLocalTrackingEntries(entries);
-    return sortTrackingEntries(dedupedEntries);
-  }
-
-  const savedRows = [];
-  for (let index = 0; index < dedupedEntries.length; index += TRACKING_UPSERT_BATCH_SIZE) {
-    const batch = dedupedEntries.slice(index, index + TRACKING_UPSERT_BATCH_SIZE);
-    if (batch.length === 0) continue;
-
-    const { data, error } = await supabase
-      .from('tracking_entries')
-      .upsert(batch.map(toRow), { onConflict: 'id' })
-      .select('*');
-    if (error) throw error;
-    savedRows.push(...(data || []));
-  }
-
-  const savedEntries = sortTrackingEntries(savedRows.map(toTrackingEntry));
-  const existingById = new Map(loadLocalTrackingEntries().map((entry) => [entry.id, entry]));
-  savedEntries.forEach((entry) => existingById.set(entry.id, entry));
-  saveLocalTrackingEntries(sortTrackingEntries([...existingById.values()]));
-  return savedEntries;
 }
 
 export async function deleteTrackingEntry(id) {
