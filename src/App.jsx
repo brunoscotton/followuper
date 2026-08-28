@@ -2544,6 +2544,19 @@ function syncCollection(current, eventType, item, oldId, sorter, cache) {
   return sortedItems;
 }
 
+function withLoadTimeout(promise, label, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error(`${label} demorou demais para carregar.`));
+    }, timeoutMs);
+
+    promise
+      .then(resolve)
+      .catch(reject)
+      .finally(() => clearTimeout(timeoutId));
+  });
+}
+
 export function App() {
   const [quotes, setQuotes] = useState([]);
   const [trackingEntries, setTrackingEntries] = useState([]);
@@ -2831,58 +2844,79 @@ export function App() {
     }
 
     setIsLoading(true);
-    Promise.all([
-      loadStoredQuotes(),
-      loadTrackingEntries(),
-      loadInfoBlocks(),
-      loadRotaxTrainingData(),
-      loadShippingCarriers(),
-      loadUploadAudits(),
-      loadContractTemplates(),
-      loadBillingEntries(),
-      loadReturnEntries(),
-      loadWarrantyEntries(),
-      loadReminders(),
-      loadRegularizationEntries(),
-    ])
-      .then(
-        ([
-          quoteResult,
-          trackingResult,
-          infoResult,
-          rotaxResult,
-          shippingCarrierResult,
-          uploadAuditResult,
-          contractTemplateResult,
-          billingResult,
-          returnResult,
-          warrantyResult,
-          remindersResult,
-          regularizationResult,
-        ]) => {
-        if (!active) return;
-        setQuotes(quoteResult.quotes);
-        setTrackingEntries(trackingResult.entries);
-        setInfoBlocks(infoResult.blocks);
-        setRotaxBlocks(rotaxResult.blocks);
-        setRotaxSessions(rotaxResult.sessions);
-        setRotaxStudents(rotaxResult.students);
-        setRotaxContacts(rotaxResult.contacts);
-        setShippingCarriers(shippingCarrierResult.carriers);
-        setShippingCarrierMeta(shippingCarrierResult.meta || {});
-        setUploadAudits(uploadAuditResult.audits);
-        setContractTemplates(contractTemplateResult.templates);
-        setBillingEntries(billingResult.entries);
-        setBillingUploads(billingResult.uploads || []);
-        setReturnEntries(returnResult.entries);
-        setWarrantyEntries(warrantyResult.entries);
-        setReminders(remindersResult.reminders);
-        setRegularizationEntries(regularizationResult.entries);
-        setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
-        setDataStatus(quoteResult.mode === 'supabase' ? 'Supabase · tempo real' : 'Local');
-        setAppError('');
+    const loadTasks = [
+      { key: 'quotes', label: 'Cotações', promise: loadStoredQuotes() },
+      { key: 'tracking', label: 'Rastreios', promise: loadTrackingEntries() },
+      { key: 'info', label: 'Painel de informações', promise: loadInfoBlocks() },
+      { key: 'rotax', label: 'Treinamento Rotax', promise: loadRotaxTrainingData() },
+      { key: 'shippingCarriers', label: 'Transportadoras', promise: loadShippingCarriers() },
+      { key: 'uploadAudits', label: 'Auditoria de uploads', promise: loadUploadAudits() },
+      { key: 'contractTemplates', label: 'Contratos', promise: loadContractTemplates() },
+      { key: 'billing', label: 'Cobranças', promise: loadBillingEntries() },
+      { key: 'returns', label: 'Devoluções', promise: loadReturnEntries() },
+      { key: 'warranties', label: 'Garantias', promise: loadWarrantyEntries() },
+      { key: 'reminders', label: 'Lembretes', promise: loadReminders() },
+      { key: 'regularization', label: 'Regularização cadastral', promise: loadRegularizationEntries() },
+    ];
 
-        if (quoteResult.mode === 'supabase') {
+    Promise.allSettled(loadTasks.map((task) => withLoadTimeout(task.promise, task.label)))
+      .then((results) => {
+        if (!active) return;
+        const loadResults = new Map();
+        const loadErrors = [];
+
+        results.forEach((result, index) => {
+          const task = loadTasks[index];
+          if (result.status === 'fulfilled') {
+            loadResults.set(task.key, result.value);
+            return;
+          }
+          loadErrors.push(`${task.label}: ${result.reason?.message || 'falha ao carregar'}`);
+        });
+
+        const quoteResult = loadResults.get('quotes');
+        const trackingResult = loadResults.get('tracking');
+        const infoResult = loadResults.get('info');
+        const rotaxResult = loadResults.get('rotax');
+        const shippingCarrierResult = loadResults.get('shippingCarriers');
+        const uploadAuditResult = loadResults.get('uploadAudits');
+        const contractTemplateResult = loadResults.get('contractTemplates');
+        const billingResult = loadResults.get('billing');
+        const returnResult = loadResults.get('returns');
+        const warrantyResult = loadResults.get('warranties');
+        const remindersResult = loadResults.get('reminders');
+        const regularizationResult = loadResults.get('regularization');
+
+        if (quoteResult) setQuotes(quoteResult.quotes);
+        if (trackingResult) setTrackingEntries(trackingResult.entries);
+        if (infoResult) setInfoBlocks(infoResult.blocks);
+        if (rotaxResult) {
+          setRotaxBlocks(rotaxResult.blocks);
+          setRotaxSessions(rotaxResult.sessions);
+          setRotaxStudents(rotaxResult.students);
+          setRotaxContacts(rotaxResult.contacts);
+          setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
+        }
+        if (shippingCarrierResult) {
+          setShippingCarriers(shippingCarrierResult.carriers);
+          setShippingCarrierMeta(shippingCarrierResult.meta || {});
+        }
+        if (uploadAuditResult) setUploadAudits(uploadAuditResult.audits);
+        if (contractTemplateResult) setContractTemplates(contractTemplateResult.templates);
+        if (billingResult) {
+          setBillingEntries(billingResult.entries);
+          setBillingUploads(billingResult.uploads || []);
+        }
+        if (returnResult) setReturnEntries(returnResult.entries);
+        if (warrantyResult) setWarrantyEntries(warrantyResult.entries);
+        if (remindersResult) setReminders(remindersResult.reminders);
+        if (regularizationResult) setRegularizationEntries(regularizationResult.entries);
+
+        const isSupabaseMode = quoteResult?.mode === 'supabase' || (isSupabaseConfigured && user);
+        setDataStatus(isSupabaseMode ? 'Supabase · tempo real' : 'Local');
+        setAppError(loadErrors.length ? `Alguns dados não carregaram: ${loadErrors.join(' | ')}` : '');
+
+        if (isSupabaseMode) {
           const unsubscribeQuotes = subscribeToQuoteChanges(({ eventType, quote, oldId }) => {
             setQuotes((current) => syncCollection(current, eventType, quote, oldId, sortQuotes, cacheQuotes));
           });
@@ -2967,8 +3001,7 @@ export function App() {
             unsubscribeRegularization();
           };
         }
-      },
-      )
+      })
       .catch((error) => {
         if (!active) return;
         setAppError(error.message || 'Não foi possível carregar os dados.');
