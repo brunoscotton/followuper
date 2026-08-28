@@ -4223,7 +4223,6 @@ export function App() {
       invoiceIssueDate: '',
       carrier: details.carrier || '',
       trackingCode: '',
-      correiosUpdateFailed: false,
       deliverySituation: 'etiqueta',
       expectedDeliveryDate: '',
       notes: '',

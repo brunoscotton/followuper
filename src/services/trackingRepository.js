@@ -114,15 +114,13 @@ export async function loadTrackingEntries() {
 }
 
 export async function createTrackingEntry(entry) {
-  const nextEntry = { correiosUpdateFailed: false, ...entry };
-
   if (!supabase) {
-    const entries = sortTrackingEntries([nextEntry, ...loadLocalTrackingEntries()]);
+    const entries = sortTrackingEntries([entry, ...loadLocalTrackingEntries()]);
     saveLocalTrackingEntries(entries);
-    return nextEntry;
+    return entry;
   }
 
-  const { data, error } = await supabase.from('tracking_entries').insert(toRow(nextEntry)).select('*').single();
+  const { data, error } = await supabase.from('tracking_entries').insert(toRow(entry)).select('*').single();
   if (error) throw error;
 
   const savedEntry = toTrackingEntry(data);
@@ -159,8 +157,7 @@ export async function updateTrackingEntry(id, changes) {
 }
 
 export async function upsertTrackingEntries(nextEntries) {
-  const entriesWithDefaults = nextEntries.map((entry) => ({ correiosUpdateFailed: false, ...entry }));
-  const dedupedEntries = dedupeTrackingEntriesById(entriesWithDefaults.map(prepareTrackingEntryForSave));
+  const dedupedEntries = dedupeTrackingEntriesById(nextEntries.map(prepareTrackingEntryForSave));
 
   if (!supabase) {
     const existingById = new Map(loadLocalTrackingEntries().map((entry) => [entry.id, entry]));
