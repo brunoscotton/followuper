@@ -53,8 +53,20 @@ function verifyWebhookSecret(req) {
   return bearer === expected || headerSecret === expected;
 }
 
+function normalizeSupabaseUrl(value) {
+  const rawUrl = String(value || '').trim();
+  if (!rawUrl) return '';
+
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.origin;
+  } catch {
+    return rawUrl.replace(/\/(?:rest|auth|storage)\/v\d+\/?$/i, '').replace(/\/+$/, '');
+  }
+}
+
 function supabaseAdmin() {
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const supabaseUrl = normalizeSupabaseUrl(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceRoleKey) {
     throw Object.assign(new Error('Supabase server-side nao configurado no Followuper.'), { statusCode: 503 });
