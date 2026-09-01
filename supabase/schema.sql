@@ -25,6 +25,25 @@ create table if not exists public.quotes (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.online_quotes (
+  id uuid primary key default gen_random_uuid(),
+  control_number text,
+  source text not null default 'rotax-system',
+  customer_name text not null,
+  customer_email text not null,
+  customer_phone text,
+  customer_prefix text,
+  customer_state text,
+  customer jsonb not null default '{}'::jsonb,
+  items jsonb not null default '[]'::jsonb,
+  quote_text text,
+  codes_tsv text,
+  status text not null default 'nova' check (status in ('nova', 'em-analise', 'finalizada')),
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.tracking_entries (
   id uuid primary key,
   quote_id uuid references public.quotes(id) on delete cascade,
@@ -723,6 +742,21 @@ alter table public.quotes add column if not exists group_codes text;
 alter table public.quotes add column if not exists rotax_value numeric not null default 0;
 alter table public.quotes add column if not exists loss_reason jsonb;
 alter table public.quotes add column if not exists history jsonb not null default '[]'::jsonb;
+alter table public.online_quotes add column if not exists control_number text;
+alter table public.online_quotes add column if not exists source text not null default 'rotax-system';
+alter table public.online_quotes add column if not exists customer_name text;
+alter table public.online_quotes add column if not exists customer_email text;
+alter table public.online_quotes add column if not exists customer_phone text;
+alter table public.online_quotes add column if not exists customer_prefix text;
+alter table public.online_quotes add column if not exists customer_state text;
+alter table public.online_quotes add column if not exists customer jsonb not null default '{}'::jsonb;
+alter table public.online_quotes add column if not exists items jsonb not null default '[]'::jsonb;
+alter table public.online_quotes add column if not exists quote_text text;
+alter table public.online_quotes add column if not exists codes_tsv text;
+alter table public.online_quotes add column if not exists status text not null default 'nova';
+alter table public.online_quotes add column if not exists notes text;
+alter table public.online_quotes add column if not exists created_at timestamptz not null default now();
+alter table public.online_quotes add column if not exists updated_at timestamptz not null default now();
 alter table public.tracking_entries add column if not exists invoice_number text;
 alter table public.tracking_entries add column if not exists invoice_issue_date text;
 alter table public.tracking_entries add column if not exists phone text;
@@ -813,6 +847,8 @@ alter table public.quotes drop constraint if exists quotes_follow_up_amount_chec
 alter table public.quotes add constraint quotes_follow_up_amount_check check (follow_up_amount > 0);
 alter table public.quotes drop constraint if exists quotes_follow_up_unit_check;
 alter table public.quotes add constraint quotes_follow_up_unit_check check (follow_up_unit in ('days', 'hours', 'minutes'));
+alter table public.online_quotes drop constraint if exists online_quotes_status_check;
+alter table public.online_quotes add constraint online_quotes_status_check check (status in ('nova', 'em-analise', 'finalizada'));
 
 update public.quotes
 set follow_up_amount = coalesce(follow_up_amount, follow_up_days, 1),
@@ -823,6 +859,7 @@ where follow_up_started_at is null
    or follow_up_unit is null;
 
 alter table public.quotes replica identity full;
+alter table public.online_quotes replica identity full;
 alter table public.tracking_entries replica identity full;
 alter table public.info_blocks replica identity full;
 alter table public.rotax_training_blocks replica identity full;
@@ -855,6 +892,7 @@ alter table public.reminders replica identity full;
 alter table public.regularization_entries replica identity full;
 
 alter table public.quotes enable row level security;
+alter table public.online_quotes enable row level security;
 alter table public.tracking_entries enable row level security;
 alter table public.info_blocks enable row level security;
 alter table public.rotax_training_blocks enable row level security;
@@ -890,6 +928,9 @@ drop policy if exists "Authenticated users can read quotes" on public.quotes;
 drop policy if exists "Authenticated users can insert quotes" on public.quotes;
 drop policy if exists "Authenticated users can update quotes" on public.quotes;
 drop policy if exists "Authenticated users can delete quotes" on public.quotes;
+drop policy if exists "Authenticated users can read online quotes" on public.online_quotes;
+drop policy if exists "Authenticated users can update online quotes" on public.online_quotes;
+drop policy if exists "Authenticated users can delete online quotes" on public.online_quotes;
 drop policy if exists "Authenticated users can read tracking entries" on public.tracking_entries;
 drop policy if exists "Authenticated users can insert tracking entries" on public.tracking_entries;
 drop policy if exists "Authenticated users can update tracking entries" on public.tracking_entries;
@@ -1026,6 +1067,25 @@ create policy "Authenticated users can update quotes"
 
 create policy "Authenticated users can delete quotes"
   on public.quotes
+  for delete
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can read online quotes"
+  on public.online_quotes
+  for select
+  to authenticated
+  using (true);
+
+create policy "Authenticated users can update online quotes"
+  on public.online_quotes
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "Authenticated users can delete online quotes"
+  on public.online_quotes
   for delete
   to authenticated
   using (true);
@@ -1737,6 +1797,16 @@ begin
       and tablename = 'quotes'
   ) then
     alter publication supabase_realtime add table public.quotes;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'online_quotes'
+  ) then
+    alter publication supabase_realtime add table public.online_quotes;
   end if;
 
   if not exists (
