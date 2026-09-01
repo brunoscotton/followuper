@@ -145,6 +145,54 @@ function replaceNextTextNode(xml, search, replacement) {
   return xml.replace(pattern, `$1${xmlEscape(replacement)}$2`);
 }
 
+function getParagraphText(paragraphXml) {
+  return [...paragraphXml.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)]
+    .map((match) => match[1])
+    .join('')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+function replaceFirstParagraphText(xml, matcher, replacement) {
+  let replaced = false;
+  const shouldReplace = typeof matcher === 'function'
+    ? matcher
+    : (text) => matcher.every((fragment) => text.includes(fragment));
+
+  return xml.replace(/<w:p\b[\s\S]*?<\/w:p>/g, (paragraph) => {
+    if (replaced || !shouldReplace(getParagraphText(paragraph))) return paragraph;
+    let firstTextNode = true;
+    replaced = true;
+
+    return paragraph.replace(/(<w:t[^>]*>)([\s\S]*?)(<\/w:t>)/g, (match, open, text, close) => {
+      if (!firstTextNode) return `${open}${close}`;
+      firstTextNode = false;
+      return `${open}${xmlEscape(replacement)}${close}`;
+    });
+  });
+}
+
+function replaceMotorPaymentClause(xml, form) {
+  const totalValue = brl(form.value);
+  const paymentTerms = safeText(form.paymentTerms);
+  let nextXml = replaceFirstParagraphText(
+    xml,
+    (text) => /valor\s+total\s*:\s*r\$/i.test(text),
+    `Valor total: ${totalValue}`,
+  );
+
+  nextXml = replaceFirstParagraphText(
+    nextXml,
+    (text) => /pagamento\s+de\s+entrada\s+no\s+valor\s+de/i.test(text) || text.includes('VALOR E PAGAMENTO ACORDADO'),
+    paymentTerms,
+  );
+
+  return nextXml;
+}
+
 function replaceTrainingClauseValue(xml, value, valueInWords) {
   const amount = safeText(value).replace(/^R\$\s*/i, '');
   const pattern = new RegExp(
@@ -225,9 +273,9 @@ async function generateMotorWordContract(template, form) {
 
   let xml = await documentFile.async('string');
   xml = xml.replace(/<w:highlight w:val="yellow"\/>/g, '');
+  xml = replaceMotorPaymentClause(xml, form);
 
   [
-    ['VALOR E PAGAMENTO ACORDADO', `${brl(form.value)} - ${form.paymentTerms}`],
     ['TIPO MOTOR', form.motorModel],
     ['N SERIE', form.motorSerial],
     ['XXXXXXXXXXXXXX', form.aircraftModel],

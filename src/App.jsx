@@ -11453,7 +11453,7 @@ function ContractsWorkspace({
               <input value={form.value} onChange={(event) => onUpdateField('motor', 'value', event.target.value)} placeholder="R$ 0,00" />
             </label>
             <label>
-              Forma de pagamento
+              Condições de pagamento
               <input value={form.paymentTerms} onChange={(event) => onUpdateField('motor', 'paymentTerms', event.target.value)} />
             </label>
           </div>
