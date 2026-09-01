@@ -27,6 +27,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   Search,
   ShieldCheck,
@@ -2264,6 +2265,11 @@ function getUserDisplayName(user) {
 }
 
 function getSellerFromUser(user) {
+  const email = normalize(user?.email || '');
+  if (email.includes('stephanie')) return 'Stephanie';
+  if (email.includes('elton')) return 'Elton';
+  if (email.includes('bruno.scotton')) return 'Bruno';
+
   const userText = normalize(`${getUserDisplayName(user)} ${user?.email || ''}`);
   return sellers.find((seller) => userText.includes(normalize(seller))) || '';
 }
@@ -6360,6 +6366,35 @@ export function App() {
     }
   }
 
+  async function cancelOnlineQuoteAcceptance(id) {
+    const quote = onlineQuotes.find((item) => item.id === id);
+    if (!quote) return false;
+
+    const previousOnlineQuotes = onlineQuotes;
+    const updatedAt = new Date().toISOString();
+    const changes = {
+      status: 'nova',
+      acceptedBy: '',
+      acceptedByEmail: '',
+      acceptedAt: '',
+      customer: quote.customer || {},
+      updatedAt,
+    };
+
+    setOnlineQuotes((current) => current.map((item) => (item.id === id ? { ...item, ...changes } : item)));
+
+    try {
+      const savedQuote = await updateOnlineQuote(id, changes);
+      setOnlineQuotes((current) => current.map((item) => (item.id === id ? savedQuote : item)));
+      setAppError('');
+      return true;
+    } catch (error) {
+      setOnlineQuotes(previousOnlineQuotes);
+      setAppError(error.message || 'Não foi possível cancelar o aceite da cotação online.');
+      return false;
+    }
+  }
+
   async function finalizeOnlineQuote(id, cdsQuoteNumber) {
     const onlineQuote = onlineQuotes.find((item) => item.id === id);
     const quoteNumber = normalizeUploadQuoteNumber(cdsQuoteNumber);
@@ -7635,6 +7670,7 @@ export function App() {
           currentUser={user}
           onlineQuotes={onlineQuotes}
           onAccept={acceptOnlineQuote}
+          onCancelAccept={cancelOnlineQuoteAcceptance}
           onChangeStatus={changeOnlineQuoteStatus}
           onFinalize={finalizeOnlineQuote}
           onRemove={removeOnlineQuote}
@@ -9692,7 +9728,7 @@ function getOnlineQuoteNumber(quote, index = 0) {
   return quote.controlNumber || String(index + 1).padStart(5, '0');
 }
 
-function OnlineQuotesWorkspace({ currentUser, onlineQuotes, onAccept, onFinalize, onRemove }) {
+function OnlineQuotesWorkspace({ currentUser, onlineQuotes, onAccept, onCancelAccept, onFinalize, onRemove }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('nova');
   const [selectedQuoteId, setSelectedQuoteId] = useState('');
@@ -9722,6 +9758,13 @@ function OnlineQuotesWorkspace({ currentUser, onlineQuotes, onAccept, onFinalize
     if (!accepted) return;
     setSelectedQuoteId(quote.id);
     setStatusFilter('em-analise');
+  }
+
+  async function cancelAcceptQuote(quote) {
+    const canceled = await onCancelAccept(quote.id);
+    if (!canceled) return;
+    setSelectedQuoteId('');
+    setStatusFilter('nova');
   }
 
   function openFinalizeModal(quote) {
@@ -9760,13 +9803,22 @@ function OnlineQuotesWorkspace({ currentUser, onlineQuotes, onAccept, onFinalize
           </button>
         )}
         {quote.status === 'em-analise' && (
-          <button className="primary-button compact" type="button" onClick={(event) => {
-            event.stopPropagation();
-            openFinalizeModal(quote);
-          }}>
-            <Save size={16} />
-            Finalizar
-          </button>
+          <>
+            <button className="secondary-button compact" type="button" onClick={(event) => {
+              event.stopPropagation();
+              cancelAcceptQuote(quote);
+            }}>
+              <RotateCcw size={16} />
+              Cancelar aceite
+            </button>
+            <button className="primary-button compact" type="button" onClick={(event) => {
+              event.stopPropagation();
+              openFinalizeModal(quote);
+            }}>
+              <Save size={16} />
+              Finalizar
+            </button>
+          </>
         )}
         <button className="icon-button danger" type="button" title="Excluir cotação" aria-label="Excluir cotação" onClick={(event) => {
           event.stopPropagation();
