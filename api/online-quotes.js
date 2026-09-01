@@ -27,6 +27,20 @@ function buildCodesTsv(items) {
   return `${items.map((item) => `${item.quantity || 1}\t${formatPartNumberForCopy(item.partNumber)}`).join('\n')}\n`;
 }
 
+async function getNextControlNumber(supabase) {
+  const { data, error } = await supabase.from('online_quotes').select('control_number');
+  if (error) throw error;
+
+  const highestNumber = (data || []).reduce((highest, row) => {
+    const digits = String(row.control_number || '').trim();
+    if (!/^\d+$/.test(digits)) return highest;
+    const numeric = Number(digits);
+    return Number.isFinite(numeric) ? Math.max(highest, numeric) : highest;
+  }, 0);
+
+  return String(highestNumber + 1).padStart(5, '0');
+}
+
 function normalizeQuotePayload(body) {
   const customer = body.customer || {};
   const items = Array.isArray(body.items) ? body.items : [];
@@ -34,7 +48,7 @@ function normalizeQuotePayload(body) {
   const codesTsv = String(body.codesTsv || '').trim() ? `${String(body.codesTsv).trimEnd()}\n` : buildCodesTsv(items);
 
   return {
-    controlNumber: String(body.filename || body.controlNumber || '').trim(),
+    controlNumber: String(body.controlNumber || '').trim(),
     source: String(body.source || 'rotax-system').trim(),
     customer,
     items,
@@ -96,10 +110,11 @@ export default async function handler(req, res) {
     }
 
     const supabase = supabaseAdmin();
+    const controlNumber = await getNextControlNumber(supabase);
     const { data, error } = await supabase
       .from('online_quotes')
       .insert({
-        control_number: quote.controlNumber || null,
+        control_number: controlNumber,
         source: quote.source,
         customer_name: customer.name.trim(),
         customer_email: customer.email.trim(),

@@ -55,6 +55,7 @@ import {
 } from './services/quotesRepository';
 import {
   cacheOnlineQuotes,
+  deleteOnlineQuote,
   loadOnlineQuotes,
   sortOnlineQuotes,
   subscribeToOnlineQuoteChanges,
@@ -2260,6 +2261,11 @@ function getUserDisplayName(user) {
   if (metadataName) return metadataName;
   const emailName = String(user?.email || '').split('@')[0].replace(/[._-]+/g, ' ').trim();
   return emailName ? emailName.replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Usuário';
+}
+
+function getSellerFromUser(user) {
+  const userText = normalize(`${getUserDisplayName(user)} ${user?.email || ''}`);
+  return sellers.find((seller) => userText.includes(normalize(seller))) || '';
 }
 
 function getUploadAuditKind(audit) {
@@ -6324,6 +6330,127 @@ export function App() {
     }
   }
 
+  async function acceptOnlineQuote(id) {
+    const quote = onlineQuotes.find((item) => item.id === id);
+    if (!quote) return false;
+
+    const previousOnlineQuotes = onlineQuotes;
+    const updatedAt = new Date().toISOString();
+    const acceptedBy = getSellerFromUser(user) || getUserDisplayName(user);
+    const changes = {
+      status: 'em-analise',
+      acceptedBy,
+      acceptedByEmail: user?.email || '',
+      acceptedAt: updatedAt,
+      customer: quote.customer || {},
+      updatedAt,
+    };
+
+    setOnlineQuotes((current) => current.map((item) => (item.id === id ? { ...item, ...changes } : item)));
+
+    try {
+      const savedQuote = await updateOnlineQuote(id, changes);
+      setOnlineQuotes((current) => current.map((item) => (item.id === id ? savedQuote : item)));
+      setAppError('');
+      return true;
+    } catch (error) {
+      setOnlineQuotes(previousOnlineQuotes);
+      setAppError(error.message || 'Não foi possível aceitar a cotação online.');
+      return false;
+    }
+  }
+
+  async function finalizeOnlineQuote(id, cdsQuoteNumber) {
+    const onlineQuote = onlineQuotes.find((item) => item.id === id);
+    const quoteNumber = normalizeUploadQuoteNumber(cdsQuoteNumber);
+    if (!onlineQuote || !quoteNumber) return false;
+
+    const previousOnlineQuotes = onlineQuotes;
+    const previousQuotes = quotes;
+    const finalizedAt = new Date().toISOString();
+    const seller = sellers.includes(onlineQuote.acceptedBy) ? onlineQuote.acceptedBy : getSellerFromUser(user) || 'Bruno';
+    const existingQuote = findQuoteByQuoteNumber(quoteNumber);
+    const onlineNotes = [
+      `Cotação online ${onlineQuote.controlNumber || '-'}`,
+      onlineQuote.customerPrefix ? `Prefixo: ${onlineQuote.customerPrefix}` : '',
+      onlineQuote.quoteText ? `Solicitação:\n${onlineQuote.quoteText.trim()}` : '',
+    ].filter(Boolean).join('\n\n');
+    const changes = {
+      status: 'finalizada',
+      cdsQuoteNumber: quoteNumber,
+      finalizedAt,
+      customer: onlineQuote.customer || {},
+      updatedAt: finalizedAt,
+    };
+
+    setOnlineQuotes((current) => current.map((item) => (item.id === id ? { ...item, ...changes } : item)));
+
+    try {
+      let savedStandardQuote = existingQuote;
+
+      if (!existingQuote) {
+        const nextQuote = {
+          id: crypto.randomUUID(),
+          quoteNumber,
+          clientCode: '',
+          clientName: onlineQuote.customerName || 'Cliente sem nome',
+          phone: onlineQuote.customerPhone || '',
+          quoteValue: '',
+          paymentTerms: '',
+          quoteDate: getTodayInputValue(),
+          seller,
+          notes: onlineNotes,
+          isInterest: false,
+          followUpDays: 1,
+          followUpAmount: 1,
+          followUpUnit: 'days',
+          followUpStartedAt: finalizedAt,
+          status: 'sem-resposta',
+          createdAt: finalizedAt,
+          statusUpdatedAt: finalizedAt,
+          archivedAt: '',
+        };
+        nextQuote.history = [
+          ...createInitialQuoteHistory(nextQuote, finalizedAt, 'cotacao online'),
+          buildQuoteHistoryEvent('updated', 'Gerada a partir da cotação online', { onlineQuote: onlineQuote.controlNumber || '' }, finalizedAt),
+        ];
+
+        setQuotes((current) => [nextQuote, ...current]);
+        savedStandardQuote = await createQuote(nextQuote);
+        setQuotes((current) => current.map((quote) => (quote.id === nextQuote.id ? savedStandardQuote : quote)));
+      }
+
+      const savedOnlineQuote = await updateOnlineQuote(id, changes);
+      setOnlineQuotes((current) => current.map((item) => (item.id === id ? savedOnlineQuote : item)));
+      setAppError(
+        existingQuote
+          ? `Cotação online finalizada. O orçamento CDS ${quoteNumber} já existia no registro de cotações.`
+          : `Cotação online finalizada e orçamento CDS ${savedStandardQuote.quoteNumber} criado no registro de cotações.`,
+      );
+      return true;
+    } catch (error) {
+      setOnlineQuotes(previousOnlineQuotes);
+      setQuotes(previousQuotes);
+      setAppError(error.message || 'Não foi possível finalizar a cotação online.');
+      return false;
+    }
+  }
+
+  async function removeOnlineQuote(id) {
+    if (!window.confirm('Excluir esta cotação online?')) return;
+
+    const previousOnlineQuotes = onlineQuotes;
+    setOnlineQuotes((current) => current.filter((quote) => quote.id !== id));
+
+    try {
+      await deleteOnlineQuote(id);
+      setAppError('');
+    } catch (error) {
+      setOnlineQuotes(previousOnlineQuotes);
+      setAppError(error.message || 'Não foi possível excluir a cotação online.');
+    }
+  }
+
   async function confirmCloseQuote(event) {
     event.preventDefault();
     if (!closeModal || !validateCloseDetails()) return;
@@ -7505,8 +7632,12 @@ export function App() {
         />
       ) : activeView === 'onlineQuotes' ? (
         <OnlineQuotesWorkspace
+          currentUser={user}
           onlineQuotes={onlineQuotes}
+          onAccept={acceptOnlineQuote}
           onChangeStatus={changeOnlineQuoteStatus}
+          onFinalize={finalizeOnlineQuote}
+          onRemove={removeOnlineQuote}
         />
       ) : activeView === 'tracking' ? (
         <TrackingWorkspace
@@ -9557,23 +9688,94 @@ function SideNavigation({
   );
 }
 
-function OnlineQuotesWorkspace({ onlineQuotes, onChangeStatus }) {
+function getOnlineQuoteNumber(quote, index = 0) {
+  return quote.controlNumber || String(index + 1).padStart(5, '0');
+}
+
+function OnlineQuotesWorkspace({ currentUser, onlineQuotes, onAccept, onFinalize, onRemove }) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('nova');
+  const [selectedQuoteId, setSelectedQuoteId] = useState('');
   const [copiedId, setCopiedId] = useState('');
+  const [finalizeQuote, setFinalizeQuote] = useState(null);
+  const [finalizeQuoteNumber, setFinalizeQuoteNumber] = useState('');
+  const [finalizeError, setFinalizeError] = useState('');
   const normalizedSearch = normalizeSearchValue(searchTerm);
   const visibleOnlineQuotes = onlineQuotes.filter((quote) => {
-    const matchesStatus = statusFilter === 'all' || quote.status === statusFilter;
+    const matchesStatus = quote.status === statusFilter;
     const haystack = normalizeSearchValue(
-      `${quote.controlNumber} ${quote.customerName} ${quote.customerEmail} ${quote.customerPhone} ${quote.customerPrefix} ${quote.customerState}`,
+      `${quote.controlNumber} ${quote.customerName} ${quote.customerEmail} ${quote.customerPhone} ${quote.customerPrefix} ${quote.customerState} ${quote.acceptedBy} ${quote.cdsQuoteNumber}`,
     );
     return matchesStatus && (!normalizedSearch || haystack.includes(normalizedSearch));
   });
+  const selectedQuote = onlineQuotes.find((quote) => quote.id === selectedQuoteId);
+  const currentSeller = getSellerFromUser(currentUser) || getUserDisplayName(currentUser);
 
   async function copyCodes(quote) {
     await copyTextToClipboard(quote.codesTsv || '');
     setCopiedId(quote.id);
     window.setTimeout(() => setCopiedId(''), 1400);
+  }
+
+  async function acceptQuote(quote) {
+    const accepted = await onAccept(quote.id);
+    if (!accepted) return;
+    setSelectedQuoteId(quote.id);
+    setStatusFilter('em-analise');
+  }
+
+  function openFinalizeModal(quote) {
+    setFinalizeQuote(quote);
+    setFinalizeQuoteNumber(quote.cdsQuoteNumber || '');
+    setFinalizeError('');
+  }
+
+  async function submitFinalize(event) {
+    event.preventDefault();
+    const quoteNumber = normalizeUploadQuoteNumber(finalizeQuoteNumber);
+    if (!quoteNumber) {
+      setFinalizeError('Informe o número do orçamento CDS.');
+      return;
+    }
+
+    const finalized = await onFinalize(finalizeQuote.id, quoteNumber);
+    if (!finalized) return;
+    setFinalizeQuote(null);
+    setFinalizeQuoteNumber('');
+    setFinalizeError('');
+    setStatusFilter('finalizada');
+    setSelectedQuoteId(finalizeQuote.id);
+  }
+
+  function renderQuoteActions(quote) {
+    return (
+      <div className="online-quote-actions">
+        {quote.status === 'nova' && (
+          <button className="primary-button compact" type="button" onClick={(event) => {
+            event.stopPropagation();
+            acceptQuote(quote);
+          }}>
+            <CheckCircle2 size={16} />
+            Aceitar
+          </button>
+        )}
+        {quote.status === 'em-analise' && (
+          <button className="primary-button compact" type="button" onClick={(event) => {
+            event.stopPropagation();
+            openFinalizeModal(quote);
+          }}>
+            <Save size={16} />
+            Finalizar
+          </button>
+        )}
+        <button className="icon-button danger" type="button" title="Excluir cotação" aria-label="Excluir cotação" onClick={(event) => {
+          event.stopPropagation();
+          onRemove(quote.id);
+        }}>
+          <Trash2 size={16} />
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -9584,99 +9786,123 @@ function OnlineQuotesWorkspace({ onlineQuotes, onChangeStatus }) {
           <h2>Cotações online</h2>
           <small>Solicitações recebidas diretamente do catálogo online.</small>
         </div>
-        <div className="panel-actions">
-          <label className="search-box">
+        <div className="panel-actions online-quotes-actions">
+          <label className="search-box online-quote-search">
             <Search size={17} />
             <input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Buscar cliente, prefixo ou controle"
+              placeholder="Buscar por cliente, prefixo, número ou vendedor"
             />
           </label>
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            <option value="all">Todos os status</option>
-            {onlineQuoteStatuses.map((status) => (
-              <option key={status.value} value={status.value}>
-                {status.label}
-              </option>
-            ))}
-          </select>
         </div>
       </div>
 
       <div className="online-quotes-summary">
-        <span>
-          <strong>{onlineQuotes.filter((quote) => quote.status === 'nova').length}</strong>
-          Novas
-        </span>
-        <span>
-          <strong>{onlineQuotes.filter((quote) => quote.status === 'em-analise').length}</strong>
-          Em análise
-        </span>
-        <span>
-          <strong>{onlineQuotes.filter((quote) => quote.status === 'finalizada').length}</strong>
-          Finalizadas
-        </span>
+        {onlineQuoteStatuses.map((status) => (
+          <button
+            className={statusFilter === status.value ? 'online-status-tab active' : 'online-status-tab'}
+            key={status.value}
+            type="button"
+            onClick={() => {
+              setStatusFilter(status.value);
+              setSelectedQuoteId('');
+            }}
+          >
+            <strong>{onlineQuotes.filter((quote) => quote.status === status.value).length}</strong>
+            {status.label}
+          </button>
+        ))}
       </div>
 
+      {selectedQuote ? (
+        <article className="online-quote-card online-quote-detail-card">
+          <div className="online-quote-header">
+            <button className="secondary-button compact" type="button" onClick={() => setSelectedQuoteId('')}>
+              <ChevronLeft size={16} />
+              Voltar
+            </button>
+            {renderQuoteActions(selectedQuote)}
+          </div>
+
+          <div className="online-quote-title-row">
+            <span className="online-quote-number">{getOnlineQuoteNumber(selectedQuote)}</span>
+            <div>
+              <strong>{selectedQuote.customerName || 'Cliente sem nome'}</strong>
+              <span>Prefixo: {selectedQuote.customerPrefix || '-'}</span>
+            </div>
+          </div>
+
+          <div className="online-quote-details">
+            <span>E-mail: {selectedQuote.customerEmail || '-'}</span>
+            <span>Telefone: {selectedQuote.customerPhone || '-'}</span>
+            <span>Estado: {selectedQuote.customerState || '-'}</span>
+            <span>Recebida em: {formatDateTime(selectedQuote.createdAt)}</span>
+            <span>Aceita por: {selectedQuote.acceptedBy || '-'}</span>
+            <span>Orçamento CDS: {selectedQuote.cdsQuoteNumber || '-'}</span>
+          </div>
+
+          {selectedQuote.quoteText && (
+            <div className="online-quote-request">
+              <strong>Informações recebidas</strong>
+              <p>{selectedQuote.quoteText}</p>
+            </div>
+          )}
+
+          <div className="online-quote-items">
+            <table>
+              <thead>
+                <tr>
+                  <th>Qtd</th>
+                  <th>PN</th>
+                  <th>Descrição</th>
+                  <th>Motor</th>
+                  <th>Seção</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedQuote.items.map((item, index) => (
+                  <tr key={`${selectedQuote.id}-${item.partNumber}-${index}`}>
+                    <td>{item.quantity || 1}</td>
+                    <td>{item.partNumber || '-'}</td>
+                    <td>{item.description || '-'}</td>
+                    <td>{item.engine || '-'}</td>
+                    <td>{item.section || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="online-quote-copy">
+            <button className="secondary-button compact" type="button" onClick={() => copyCodes(selectedQuote)}>
+              <FileText size={16} />
+              {copiedId === selectedQuote.id ? 'Copiado' : 'Copiar códigos TSV'}
+            </button>
+            <pre>{selectedQuote.codesTsv || 'Sem códigos disponíveis.'}</pre>
+          </div>
+        </article>
+      ) : (
       <div className="online-quotes-list">
         {visibleOnlineQuotes.length ? (
-          visibleOnlineQuotes.map((quote) => (
-            <article className="online-quote-card" key={quote.id}>
+          visibleOnlineQuotes.map((quote, index) => (
+            <article className="online-quote-card online-quote-list-card" key={quote.id} onClick={() => setSelectedQuoteId(quote.id)}>
               <div className="online-quote-header">
-                <div>
-                  <strong>{quote.customerName || 'Cliente sem nome'}</strong>
-                  <span>{quote.controlNumber || 'Sem número de controle'}</span>
+                <div className="online-quote-title-row">
+                  <span className="online-quote-number">{getOnlineQuoteNumber(quote, index)}</span>
+                  <div>
+                    <strong>{quote.customerName || 'Cliente sem nome'}</strong>
+                    <span>Prefixo: {quote.customerPrefix || '-'}</span>
+                  </div>
                 </div>
-                <select value={quote.status} onChange={(event) => onChangeStatus(quote.id, event.target.value)}>
-                  {onlineQuoteStatuses.map((status) => (
-                    <option key={status.value} value={status.value}>
-                      {status.label}
-                    </option>
-                  ))}
-                </select>
+                {renderQuoteActions(quote)}
               </div>
 
               <div className="online-quote-details">
-                <span>E-mail: {quote.customerEmail || '-'}</span>
-                <span>Telefone: {quote.customerPhone || '-'}</span>
-                <span>Prefixo: {quote.customerPrefix || '-'}</span>
-                <span>Estado: {quote.customerState || '-'}</span>
                 <span>Recebida em: {formatDateTime(quote.createdAt)}</span>
                 <span>Itens: {quote.items.length}</span>
-              </div>
-
-              <div className="online-quote-items">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Qtd</th>
-                      <th>PN</th>
-                      <th>Descrição</th>
-                      <th>Motor</th>
-                      <th>Seção</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {quote.items.map((item, index) => (
-                      <tr key={`${quote.id}-${item.partNumber}-${index}`}>
-                        <td>{item.quantity || 1}</td>
-                        <td>{item.partNumber || '-'}</td>
-                        <td>{item.description || '-'}</td>
-                        <td>{item.engine || '-'}</td>
-                        <td>{item.section || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="online-quote-copy">
-                <button className="secondary-button compact" type="button" onClick={() => copyCodes(quote)}>
-                  <FileText size={16} />
-                  {copiedId === quote.id ? 'Copiado' : 'Copiar códigos TSV'}
-                </button>
-                <pre>{quote.codesTsv || 'Sem códigos disponíveis.'}</pre>
+                <span>Aceita por: {quote.acceptedBy || (quote.status === 'nova' ? '-' : currentSeller)}</span>
+                {quote.cdsQuoteNumber && <span>Orçamento CDS: {quote.cdsQuoteNumber}</span>}
               </div>
             </article>
           ))
@@ -9687,6 +9913,39 @@ function OnlineQuotesWorkspace({ onlineQuotes, onChangeStatus }) {
           </div>
         )}
       </div>
+      )}
+
+      {finalizeQuote && (
+        <div className="modal-backdrop" role="presentation">
+          <form className="close-modal online-finalize-modal" onSubmit={submitFinalize} noValidate>
+            <div className="modal-header">
+              <div>
+                <h3>Finalizar cotação online</h3>
+                <p>{finalizeQuote.customerName || 'Cliente sem nome'} - {getOnlineQuoteNumber(finalizeQuote)}</p>
+              </div>
+              <button className="modal-close" type="button" aria-label="Fechar janela" onClick={() => setFinalizeQuote(null)}>
+                <X size={18} />
+              </button>
+            </div>
+            <label>
+              Nº orçamento CDS
+              <input value={finalizeQuoteNumber} onChange={(event) => {
+                setFinalizeQuoteNumber(event.target.value);
+                setFinalizeError('');
+              }} placeholder="Ex: 232545" autoFocus />
+              {finalizeError && <small>{finalizeError}</small>}
+            </label>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={() => setFinalizeQuote(null)}>
+                Cancelar
+              </button>
+              <button className="primary-button" type="submit">
+                Finalizar
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </section>
   );
 }
