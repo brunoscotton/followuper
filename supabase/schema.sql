@@ -1034,6 +1034,7 @@ drop policy if exists "Users can read own profile and master can read all" on pu
 drop policy if exists "Users can create own profile" on public.user_profiles;
 drop policy if exists "Users can update own profile" on public.user_profiles;
 drop policy if exists "Master user can read activity logs" on public.activity_logs;
+drop policy if exists "Master user can delete old activity logs" on public.activity_logs;
 drop policy if exists "Authenticated users can read reminders" on public.reminders;
 drop policy if exists "Authenticated users can insert reminders" on public.reminders;
 drop policy if exists "Authenticated users can update reminders" on public.reminders;
@@ -1716,6 +1717,12 @@ create policy "Users can update own profile"
 create policy "Master user can read activity logs"
   on public.activity_logs
   for select
+  to authenticated
+  using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'bruno.scotton@cdsav.com.br');
+
+create policy "Master user can delete old activity logs"
+  on public.activity_logs
+  for delete
   to authenticated
   using (lower(coalesce(auth.jwt() ->> 'email', '')) = 'bruno.scotton@cdsav.com.br');
 

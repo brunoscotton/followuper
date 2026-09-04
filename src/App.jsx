@@ -2548,6 +2548,156 @@ function buildUploadPreview(importedRows, quotes, ignoredCruzeiroCount, fileName
   };
 }
 
+function ensureAuditSellerBucket(container, dateKey, seller) {
+  if (!container[dateKey]) container[dateKey] = {};
+  if (!container[dateKey][seller]) {
+    container[dateKey][seller] = {
+      closedQuoteNumbers: [],
+      closedValue: 0,
+      quoteNumbers: [],
+      quoteValue: 0,
+    };
+  }
+  return container[dateKey][seller];
+}
+
+function buildQuotesUploadPerformance(importedRows, quotes, createdAt) {
+  const uploadDate = formatDateInputValue(new Date(createdAt));
+  const existingQuotesByNumber = new Map(
+    quotes.map((quote) => [normalizeUploadQuoteNumber(quote.quoteNumber), quote]),
+  );
+  const byDate = {};
+
+  importedRows.forEach((row) => {
+    const seller = sellers.includes(row.seller) ? row.seller : 'Sem vendedor';
+    const quoteDate = row.quoteDate || uploadDate;
+    const quoteBucket = ensureAuditSellerBucket(byDate, quoteDate, seller);
+    if (!quoteBucket.quoteNumbers.includes(row.quoteNumber)) quoteBucket.quoteNumbers.push(row.quoteNumber);
+    quoteBucket.quoteValue = Math.round((quoteBucket.quoteValue + Number(row.totalValue || 0)) * 100) / 100;
+
+    const existingQuote = existingQuotesByNumber.get(row.quoteNumber);
+    if (row.orderNumber && (!existingQuote || existingQuote.status !== 'fechada')) {
+      const closedBucket = ensureAuditSellerBucket(byDate, uploadDate, seller);
+      if (!closedBucket.closedQuoteNumbers.includes(row.quoteNumber)) closedBucket.closedQuoteNumbers.push(row.quoteNumber);
+      closedBucket.closedValue = Math.round((closedBucket.closedValue + Number(row.totalValue || 0)) * 100) / 100;
+    }
+  });
+
+  return {
+    generatedAt: createdAt,
+    uploadDate,
+    byDate: Object.entries(byDate)
+      .sort(([dateA], [dateB]) => dateA.localeCompare(dateB))
+      .map(([date, sellerStats]) => ({
+        date,
+        sellers: Object.fromEntries(
+          Object.entries(sellerStats).map(([seller, stats]) => [
+            seller,
+            {
+              closedQuoteNumbers: stats.closedQuoteNumbers,
+              closedValue: stats.closedValue,
+              ordersClosed: stats.closedQuoteNumbers.length,
+              quoteNumbers: stats.quoteNumbers,
+              quoteValue: stats.quoteValue,
+              quotesCreated: stats.quoteNumbers.length,
+            },
+          ]),
+        ),
+      })),
+  };
+}
+
+function getAuditMonthKey(value) {
+  if (!value) return '';
+  const date = new Date(`${String(value).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  return formatDateInputValue(date).slice(0, 7);
+}
+
+function getAuditMonthLabel(monthKey) {
+  if (!monthKey) return 'Sem mês';
+  const date = new Date(`${monthKey}-02T12:00:00`);
+  return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(date);
+}
+
+function addAuditStats(target, stats = {}) {
+  stats.quoteNumbers?.forEach((quoteNumber) => target.quoteNumbers.add(quoteNumber));
+  stats.closedQuoteNumbers?.forEach((quoteNumber) => target.closedQuoteNumbers.add(quoteNumber));
+  target.quoteValue += Number(stats.quoteValue || 0);
+  target.closedValue += Number(stats.closedValue || 0);
+}
+
+function createAuditSellerStats() {
+  return {
+    closedQuoteNumbers: new Set(),
+    closedValue: 0,
+    quoteNumbers: new Set(),
+    quoteValue: 0,
+  };
+}
+
+function buildQuotesAuditReport(uploadAudits, selectedMonth) {
+  const reportDays = new Map();
+  const monthlyBySeller = new Map(sellers.map((seller) => [seller, createAuditSellerStats()]));
+
+  uploadAudits
+    .filter((audit) => getUploadAuditKind(audit) === 'quotes')
+    .forEach((audit) => {
+      const performance = audit.summary?.performance;
+      if (!performance?.byDate?.length) return;
+
+      performance.byDate.forEach((day) => {
+        if (selectedMonth !== 'all' && getAuditMonthKey(day.date) !== selectedMonth) return;
+        if (!reportDays.has(day.date)) {
+          reportDays.set(day.date, new Map(sellers.map((seller) => [seller, createAuditSellerStats()])));
+        }
+
+        const daySellers = reportDays.get(day.date);
+        Object.entries(day.sellers || {}).forEach(([seller, stats]) => {
+          const normalizedSeller = sellers.includes(seller) ? seller : 'Sem vendedor';
+          if (!daySellers.has(normalizedSeller)) daySellers.set(normalizedSeller, createAuditSellerStats());
+          if (!monthlyBySeller.has(normalizedSeller)) monthlyBySeller.set(normalizedSeller, createAuditSellerStats());
+          addAuditStats(daySellers.get(normalizedSeller), stats);
+          addAuditStats(monthlyBySeller.get(normalizedSeller), stats);
+        });
+      });
+    });
+
+  const normalizeStats = (stats) => ({
+    closedValue: stats.closedValue,
+    ordersClosed: stats.closedQuoteNumbers.size,
+    quoteValue: stats.quoteValue,
+    quotesCreated: stats.quoteNumbers.size,
+  });
+
+  return {
+    days: [...reportDays.entries()]
+      .sort(([dateA], [dateB]) => dateA.localeCompare(dateB))
+      .map(([date, sellerMap]) => ({
+        date,
+        sellers: Object.fromEntries([...sellerMap.entries()].map(([seller, stats]) => [seller, normalizeStats(stats)])),
+      })),
+    sellers: Object.fromEntries([...monthlyBySeller.entries()].map(([seller, stats]) => [seller, normalizeStats(stats)])),
+  };
+}
+
+function buildAuditCalendarDays(report, selectedMonth) {
+  if (selectedMonth === 'all') return report.days;
+
+  const daysByDate = new Map(report.days.map((day) => [day.date, day]));
+  const [year, month] = selectedMonth.split('-').map(Number);
+  if (!year || !month) return report.days;
+
+  const totalDays = new Date(year, month, 0).getDate();
+  return Array.from({ length: totalDays }, (_, index) => {
+    const date = `${selectedMonth}-${String(index + 1).padStart(2, '0')}`;
+    return daysByDate.get(date) || {
+      date,
+      sellers: Object.fromEntries(sellers.map((seller) => [seller, { closedValue: 0, ordersClosed: 0, quoteValue: 0, quotesCreated: 0 }])),
+    };
+  });
+}
+
 function sortQuotes(quotes) {
   return [...quotes].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
@@ -2761,7 +2911,7 @@ export function App() {
         if (!active) return;
 
         if (collection === 'logs' && item) {
-          setActivityLogs((current) => [item, ...current.filter((log) => log.id !== item.id)].slice(0, 500));
+          setActivityLogs((current) => [item, ...current.filter((log) => log.id !== item.id)].slice(0, 50));
           return;
         }
 
@@ -4793,6 +4943,7 @@ export function App() {
         return [...changedQuotes, ...current.filter((quote) => !changedQuotes.some((saved) => saved.id === quote.id))];
       });
 
+      const auditCreatedAt = new Date().toISOString();
       const audit = {
         id: crypto.randomUUID(),
         userEmail: user?.email || '',
@@ -4801,6 +4952,7 @@ export function App() {
           kind: 'quotes',
           userName: getUserDisplayName(user),
           ...uploadPreview.summary,
+          performance: buildQuotesUploadPerformance(importedRows, quotes, auditCreatedAt),
           novos: savedQuotes.length,
           atualizados: updatedQuotes.length,
           finalizados: closedCount,
@@ -4808,7 +4960,7 @@ export function App() {
         },
         totalOpenValue: uploadPreview.totals.open,
         totalClosedValue: uploadPreview.totals.closed,
-        createdAt: new Date().toISOString(),
+        createdAt: auditCreatedAt,
       };
       const savedAudit = await createUploadAudit(audit);
       setUploadAudits((current) => [savedAudit, ...current]);
@@ -7862,12 +8014,13 @@ export function App() {
           onUploadTrackingComplete={(first, second) => uploadTrackingCompleteFiles(first, second, { rethrow: true })}
           onUploadTrackingSimple={(file) => uploadTrackingSheetFile(file, { rethrow: true })}
         />
-      ) : activeView === 'users' && isMasterUser ? (
-        <UsersWorkspace
+      ) : (activeView === 'audit' || activeView === 'users') && isMasterUser ? (
+        <AuditWorkspace
           activityLogs={activityLogs}
           now={now}
           onlineUsers={onlineUsers}
           profiles={userProfiles}
+          uploadAudits={uploadAudits}
         />
       ) : activeView === 'rotax' ? (
         <RotaxTrainingWorkspace
@@ -9665,9 +9818,9 @@ function SideNavigation({
           Garantias
         </button>
         {isMasterUser && (
-          <button className={activeView === 'users' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('users')}>
-            <Users size={17} />
-            Usuários
+          <button className={(activeView === 'audit' || activeView === 'users') ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('audit')}>
+            <Activity size={17} />
+            Auditoria
           </button>
         )}
         <button className={activeView === 'rotaxParts' ? 'side-nav-button active' : 'side-nav-button'} type="button" onClick={() => onNavigate('rotaxParts')}>
@@ -13643,6 +13796,7 @@ const activityFieldLabels = {
 };
 
 const userViewLabels = {
+  audit: 'Auditoria',
   billing: 'Cobranças',
   contracts: 'Contratos',
   customers: 'Clientes',
@@ -13680,7 +13834,193 @@ function getActivityDescription(log) {
   return `${actionLabels[log.action] || log.action} em ${entityLabel}${identifier}`;
 }
 
-function UsersWorkspace({ activityLogs, now, onlineUsers, profiles }) {
+function AuditWorkspace({ activityLogs, now, onlineUsers, profiles, uploadAudits }) {
+  const [activeAuditTab, setActiveAuditTab] = useState('performance');
+
+  return (
+    <section className="users-panel audit-panel">
+      <div className="section-heading users-heading">
+        <div>
+          <span className="eyebrow">Acesso master</span>
+          <h1>
+            <Activity size={24} />
+            Auditoria
+          </h1>
+          <p>Performance por upload de orçamentos, usuários online e últimas alterações do FollowUper.</p>
+        </div>
+      </div>
+
+      <div className="audit-tabs">
+        <button className={activeAuditTab === 'performance' ? 'online-status-tab active' : 'online-status-tab'} type="button" onClick={() => setActiveAuditTab('performance')}>
+          <CalendarClock size={18} />
+          Performance
+        </button>
+        <button className={activeAuditTab === 'users' ? 'online-status-tab active' : 'online-status-tab'} type="button" onClick={() => setActiveAuditTab('users')}>
+          <Users size={18} />
+          Usuários
+        </button>
+      </div>
+
+      {activeAuditTab === 'performance' ? (
+        <QuotesAuditPerformance uploadAudits={uploadAudits} />
+      ) : (
+        <UsersWorkspace activityLogs={activityLogs} now={now} onlineUsers={onlineUsers} profiles={profiles} compact />
+      )}
+    </section>
+  );
+}
+
+function QuotesAuditPerformance({ uploadAudits }) {
+  const currentMonth = formatDateInputValue(new Date()).slice(0, 7);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const quoteAudits = useMemo(
+    () => uploadAudits.filter((audit) => getUploadAuditKind(audit) === 'quotes'),
+    [uploadAudits],
+  );
+  const monthOptions = useMemo(() => {
+    const months = new Set();
+    quoteAudits.forEach((audit) => {
+      const performanceDays = audit.summary?.performance?.byDate || [];
+      if (performanceDays.length === 0) {
+        const auditMonth = getAuditMonthKey(audit.createdAt);
+        if (auditMonth) months.add(auditMonth);
+      }
+      performanceDays.forEach((day) => {
+        const monthKey = getAuditMonthKey(day.date);
+        if (monthKey) months.add(monthKey);
+      });
+    });
+    return [...months].sort((a, b) => b.localeCompare(a));
+  }, [quoteAudits]);
+  const report = useMemo(() => buildQuotesAuditReport(quoteAudits, selectedMonth), [quoteAudits, selectedMonth]);
+  const calendarDays = useMemo(() => buildAuditCalendarDays(report, selectedMonth), [report, selectedMonth]);
+  const monthlyTotals = sellers.reduce(
+    (totals, seller) => {
+      const stats = report.sellers[seller] || {};
+      totals.quotesCreated += Number(stats.quotesCreated || 0);
+      totals.ordersClosed += Number(stats.ordersClosed || 0);
+      totals.quoteValue += Number(stats.quoteValue || 0);
+      totals.closedValue += Number(stats.closedValue || 0);
+      return totals;
+    },
+    { closedValue: 0, ordersClosed: 0, quoteValue: 0, quotesCreated: 0 },
+  );
+
+  function downloadMonthlyReport() {
+    const lines = [
+      ['Dia', 'Vendedor', 'Orçamentos feitos', 'Pedidos fechados', 'Valor orçado', 'Valor fechado'],
+      ...calendarDays.flatMap((day) => sellers.map((seller) => {
+        const stats = day.sellers[seller] || {};
+        return [
+          formatDate(`${day.date}T12:00:00`),
+          seller,
+          stats.quotesCreated || 0,
+          stats.ordersClosed || 0,
+          Number(stats.quoteValue || 0).toFixed(2).replace('.', ','),
+          Number(stats.closedValue || 0).toFixed(2).replace('.', ','),
+        ];
+      })),
+    ];
+    const content = lines.map((line) => line.join('\t')).join('\n');
+    const blob = new Blob([content], { type: 'text/tab-separated-values;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `auditoria-cotacoes-${selectedMonth === 'all' ? 'geral' : selectedMonth}.tsv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="audit-performance">
+      <div className="panel-toolbar audit-toolbar">
+        <div>
+          <h2>Orçamentos por vendedor</h2>
+          <small>Relatório criado a partir dos uploads de orçamento confirmados.</small>
+        </div>
+        <div className="panel-actions">
+          <select value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)}>
+            <option value="all">Geral</option>
+            {!monthOptions.includes(currentMonth) && <option value={currentMonth}>{getAuditMonthLabel(currentMonth)}</option>}
+            {monthOptions.map((monthKey) => (
+              <option key={monthKey} value={monthKey}>
+                {getAuditMonthLabel(monthKey)}
+              </option>
+            ))}
+          </select>
+          <button className="secondary-button compact" type="button" onClick={downloadMonthlyReport} disabled={calendarDays.length === 0}>
+            <Save size={16} />
+            Baixar relatório
+          </button>
+        </div>
+      </div>
+
+      <div className="audit-summary-grid">
+        <article>
+          <span>Orçamentos feitos</span>
+          <strong>{monthlyTotals.quotesCreated}</strong>
+          <small>{formatCurrencyValue(monthlyTotals.quoteValue)}</small>
+        </article>
+        <article>
+          <span>Pedidos fechados</span>
+          <strong>{monthlyTotals.ordersClosed}</strong>
+          <small>{formatCurrencyValue(monthlyTotals.closedValue)}</small>
+        </article>
+        {sellers.map((seller) => {
+          const stats = report.sellers[seller] || {};
+          return (
+            <article key={seller}>
+              <span>{seller}</span>
+              <strong>{stats.quotesCreated || 0} / {stats.ordersClosed || 0}</strong>
+              <small>orçamentos / pedidos</small>
+            </article>
+          );
+        })}
+      </div>
+
+      <div className="audit-calendar">
+        <table>
+          <thead>
+            <tr>
+              <th>Dia</th>
+              {sellers.map((seller) => (
+                <th key={seller}>{seller}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {calendarDays.map((day) => (
+              <tr key={day.date}>
+                <td>
+                  <strong>{formatDateWithWeekday(day.date)}</strong>
+                </td>
+                {sellers.map((seller) => {
+                  const stats = day.sellers[seller] || {};
+                  return (
+                    <td key={`${day.date}-${seller}`}>
+                      <span>{stats.quotesCreated || 0} orçamento(s)</span>
+                      <b>{stats.ordersClosed || 0} pedido(s)</b>
+                      <small>{formatCurrencyValue(stats.closedValue || 0)} fechado</small>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+            {calendarDays.length === 0 && (
+              <tr>
+                <td colSpan={sellers.length + 1}>
+                  <div className="empty-state">Nenhum upload de orçamento com auditoria de performance neste período.</div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function UsersWorkspace({ activityLogs, now, onlineUsers, profiles, compact = false }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState('all');
   const [selectedArea, setSelectedArea] = useState('all');
@@ -13749,21 +14089,33 @@ function UsersWorkspace({ activityLogs, now, onlineUsers, profiles }) {
   }, [activityLogs, searchTerm, selectedArea, selectedUser]);
 
   return (
-    <section className="users-panel">
-      <div className="section-heading users-heading">
-        <div>
-          <span className="eyebrow">Acesso master</span>
-          <h1>
-            <Users size={24} />
-            Usuários
-          </h1>
-          <p>Presença em tempo real e histórico das alterações realizadas no FollowUper.</p>
+    <section className={compact ? 'users-panel users-panel-embedded' : 'users-panel'}>
+      {!compact && (
+        <div className="section-heading users-heading">
+          <div>
+            <span className="eyebrow">Acesso master</span>
+            <h1>
+              <Users size={24} />
+              Usuários
+            </h1>
+            <p>Presença em tempo real e histórico das alterações realizadas no FollowUper.</p>
+          </div>
+          <span className="users-online-summary">
+            <i />
+            {onlineByUserId.size} online
+          </span>
         </div>
-        <span className="users-online-summary">
-          <i />
-          {onlineByUserId.size} online
-        </span>
-      </div>
+      )}
+
+      {compact && (
+        <div className="activity-section-heading">
+          <div>
+            <Users size={21} />
+            <h2>Usuários</h2>
+          </div>
+          <span>{onlineByUserId.size} online</span>
+        </div>
+      )}
 
       <div className="user-presence-grid">
         {displayedProfiles.map((profile) => {

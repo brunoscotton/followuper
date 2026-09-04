@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient';
 
 export const MASTER_USER_EMAIL = 'bruno.scotton@cdsav.com.br';
+const ACTIVITY_LOG_LIMIT = 50;
 
 function getDisplayName(user) {
   const metadataName = user?.user_metadata?.full_name || user?.user_metadata?.name;
@@ -59,13 +60,21 @@ export async function registerUserProfile(user, currentView = 'quotes') {
 export async function loadUserActivity() {
   if (!supabase) return { profiles: [], logs: [] };
 
-  const [profilesResult, logsResult] = await Promise.all([
+  const [profilesResult, logsResult, oldLogsResult] = await Promise.all([
     supabase.from('user_profiles').select('*').order('last_seen_at', { ascending: false }),
-    supabase.from('activity_logs').select('*').order('created_at', { ascending: false }).limit(500),
+    supabase.from('activity_logs').select('*').order('created_at', { ascending: false }).limit(ACTIVITY_LOG_LIMIT),
+    supabase.from('activity_logs').select('id').order('created_at', { ascending: false }).range(ACTIVITY_LOG_LIMIT, 1049),
   ]);
 
   if (profilesResult.error) throw profilesResult.error;
   if (logsResult.error) throw logsResult.error;
+  if (oldLogsResult.error) throw oldLogsResult.error;
+
+  const oldLogIds = oldLogsResult.data.map((log) => log.id).filter(Boolean);
+  if (oldLogIds.length > 0) {
+    const { error } = await supabase.from('activity_logs').delete().in('id', oldLogIds);
+    if (error) console.warn('Não foi possível limpar logs antigos.', error);
+  }
 
   return {
     profiles: profilesResult.data.map(toUserProfile),
