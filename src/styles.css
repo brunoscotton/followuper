@@ -4167,6 +4167,12 @@ td {
   font-size: 0.82rem;
 }
 
+.audit-calendar tr.audit-current-day td {
+  background: #fff7db;
+  border-bottom-color: #f2c94c;
+  box-shadow: inset 4px 0 #f2c94c;
+}
+
 .audit-calendar td:not(:first-child) {
   min-width: 190px;
 }

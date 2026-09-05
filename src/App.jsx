@@ -740,6 +740,20 @@ function formatDateInputValue(date) {
   return date.toISOString().slice(0, 10);
 }
 
+function formatLocalDateInputValue(dateValue = new Date()) {
+  const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return formatDateInputValue(new Date());
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function parseUploadCurrency(value) {
   if (typeof value === 'number') return value;
   const normalized = normalizeUploadValue(value)
@@ -2562,11 +2576,8 @@ function ensureAuditSellerBucket(container, dateKey, seller) {
   return container[dateKey][seller];
 }
 
-function buildQuotesUploadPerformance(importedRows, quotes, createdAt) {
-  const uploadDate = formatDateInputValue(new Date(createdAt));
-  const existingQuotesByNumber = new Map(
-    quotes.map((quote) => [normalizeUploadQuoteNumber(quote.quoteNumber), quote]),
-  );
+function buildQuotesUploadPerformance(importedRows, createdAt) {
+  const uploadDate = formatLocalDateInputValue(createdAt);
   const byDate = {};
 
   importedRows.forEach((row) => {
@@ -2576,8 +2587,7 @@ function buildQuotesUploadPerformance(importedRows, quotes, createdAt) {
     if (!quoteBucket.quoteNumbers.includes(row.quoteNumber)) quoteBucket.quoteNumbers.push(row.quoteNumber);
     quoteBucket.quoteValue = Math.round((quoteBucket.quoteValue + Number(row.totalValue || 0)) * 100) / 100;
 
-    const existingQuote = existingQuotesByNumber.get(row.quoteNumber);
-    if (row.orderNumber && (!existingQuote || existingQuote.status !== 'fechada')) {
+    if (row.orderNumber) {
       const closedBucket = ensureAuditSellerBucket(byDate, uploadDate, seller);
       if (!closedBucket.closedQuoteNumbers.includes(row.quoteNumber)) closedBucket.closedQuoteNumbers.push(row.quoteNumber);
       closedBucket.closedValue = Math.round((closedBucket.closedValue + Number(row.totalValue || 0)) * 100) / 100;
@@ -2610,9 +2620,8 @@ function buildQuotesUploadPerformance(importedRows, quotes, createdAt) {
 
 function getAuditMonthKey(value) {
   if (!value) return '';
-  const date = new Date(`${String(value).slice(0, 10)}T12:00:00`);
-  if (Number.isNaN(date.getTime())) return '';
-  return formatDateInputValue(date).slice(0, 7);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return String(value).slice(0, 7);
+  return formatLocalDateInputValue(value).slice(0, 7);
 }
 
 function getAuditMonthLabel(monthKey) {
@@ -2640,26 +2649,44 @@ function createAuditSellerStats() {
 function buildQuotesAuditReport(uploadAudits, selectedMonth) {
   const reportDays = new Map();
   const monthlyBySeller = new Map(sellers.map((seller) => [seller, createAuditSellerStats()]));
+  const ensureReportDaySeller = (date, seller) => {
+    if (!reportDays.has(date)) {
+      reportDays.set(date, new Map(sellers.map((sellerName) => [sellerName, createAuditSellerStats()])));
+    }
+    const daySellers = reportDays.get(date);
+    if (!daySellers.has(seller)) daySellers.set(seller, createAuditSellerStats());
+    if (!monthlyBySeller.has(seller)) monthlyBySeller.set(seller, createAuditSellerStats());
+    return daySellers.get(seller);
+  };
 
   uploadAudits
     .filter((audit) => getUploadAuditKind(audit) === 'quotes')
     .forEach((audit) => {
       const performance = audit.summary?.performance;
       if (!performance?.byDate?.length) return;
+      const localUploadDate = formatLocalDateInputValue(performance.generatedAt || audit.createdAt);
 
       performance.byDate.forEach((day) => {
-        if (selectedMonth !== 'all' && getAuditMonthKey(day.date) !== selectedMonth) return;
-        if (!reportDays.has(day.date)) {
-          reportDays.set(day.date, new Map(sellers.map((seller) => [seller, createAuditSellerStats()])));
-        }
-
-        const daySellers = reportDays.get(day.date);
         Object.entries(day.sellers || {}).forEach(([seller, stats]) => {
           const normalizedSeller = sellers.includes(seller) ? seller : 'Sem vendedor';
-          if (!daySellers.has(normalizedSeller)) daySellers.set(normalizedSeller, createAuditSellerStats());
-          if (!monthlyBySeller.has(normalizedSeller)) monthlyBySeller.set(normalizedSeller, createAuditSellerStats());
-          addAuditStats(daySellers.get(normalizedSeller), stats);
-          addAuditStats(monthlyBySeller.get(normalizedSeller), stats);
+          const quoteStats = {
+            quoteNumbers: stats.quoteNumbers || [],
+            quoteValue: stats.quoteValue || 0,
+          };
+          const closedStats = {
+            closedQuoteNumbers: stats.closedQuoteNumbers || [],
+            closedValue: stats.closedValue || 0,
+          };
+
+          if (quoteStats.quoteNumbers.length > 0 && (selectedMonth === 'all' || getAuditMonthKey(day.date) === selectedMonth)) {
+            addAuditStats(ensureReportDaySeller(day.date, normalizedSeller), quoteStats);
+            addAuditStats(monthlyBySeller.get(normalizedSeller), quoteStats);
+          }
+
+          if (closedStats.closedQuoteNumbers.length > 0 && (selectedMonth === 'all' || getAuditMonthKey(localUploadDate) === selectedMonth)) {
+            addAuditStats(ensureReportDaySeller(localUploadDate, normalizedSeller), closedStats);
+            addAuditStats(monthlyBySeller.get(normalizedSeller), closedStats);
+          }
         });
       });
     });
@@ -5036,7 +5063,7 @@ export function App() {
           kind: 'quotes',
           userName: getUserDisplayName(user),
           ...uploadPreview.summary,
-          performance: buildQuotesUploadPerformance(importedRows, quotes, auditCreatedAt),
+          performance: buildQuotesUploadPerformance(importedRows, auditCreatedAt),
           novos: savedQuotes.length,
           atualizados: updatedQuotes.length,
           finalizados: closedCount,
@@ -13988,7 +14015,8 @@ function AuditWorkspace({ activityLogs, now, onlineUsers, profiles, uploadAudits
 }
 
 function QuotesAuditPerformance({ uploadAudits }) {
-  const currentMonth = formatDateInputValue(new Date()).slice(0, 7);
+  const todayKey = formatLocalDateInputValue(new Date());
+  const currentMonth = todayKey.slice(0, 7);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const quoteAudits = useMemo(
     () => uploadAudits.filter((audit) => getUploadAuditKind(audit) === 'quotes'),
@@ -14107,7 +14135,7 @@ function QuotesAuditPerformance({ uploadAudits }) {
           </thead>
           <tbody>
             {calendarDays.map((day) => (
-              <tr key={day.date}>
+              <tr className={day.date === todayKey ? 'audit-current-day' : undefined} key={day.date}>
                 <td>
                   <strong>{formatDateWithWeekday(day.date)}</strong>
                 </td>
