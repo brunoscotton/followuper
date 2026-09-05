@@ -75,6 +75,7 @@ import {
   cacheTrackingEntries,
   createTrackingEntry,
   deleteTrackingEntry,
+  findTrackingEntryByQuoteId,
   loadTrackingEntries,
   subscribeToTrackingChanges,
   updateTrackingEntry,
@@ -2871,6 +2872,7 @@ export function App() {
   const closedUnarchiveRunningRef = useRef(false);
   const celebrationTimeoutRef = useRef(null);
   const presenceSessionRef = useRef(null);
+  const loadedSectionsRef = useRef(new Map());
   const currentPresenceStateRef = useRef({ currentView: activeView, layoutMode });
   currentPresenceStateRef.current = { currentView: activeView, layoutMode };
 
@@ -2986,6 +2988,7 @@ export function App() {
     if (!authChecked) return () => {};
 
     if (isSupabaseConfigured && !user) {
+      loadedSectionsRef.current.clear();
       setQuotes([]);
       setOnlineQuotes([]);
       setTrackingEntries([]);
@@ -3028,167 +3031,13 @@ export function App() {
           const unsubscribeQuotes = subscribeToQuoteChanges(({ eventType, quote, oldId }) => {
             setQuotes((current) => syncCollection(current, eventType, quote, oldId, sortQuotes, cacheQuotes));
           });
-          const unsubscribeOnlineQuotes = subscribeToOnlineQuoteChanges(({ eventType, onlineQuote, oldId }) => {
-            setOnlineQuotes((current) =>
-              syncCollection(current, eventType, onlineQuote, oldId, sortOnlineQuotes, cacheOnlineQuotes),
-            );
-          });
-          const unsubscribeTracking = subscribeToTrackingChanges(({ eventType, entry, oldId }) => {
-            setTrackingEntries((current) =>
-              syncCollection(current, eventType, entry, oldId, sortTrackingEntries, cacheTrackingEntries),
-            );
-          });
-          const unsubscribeInfoBlocks = subscribeToInfoBlockChanges(({ eventType, block, oldId }) => {
-            setInfoBlocks((current) => syncCollection(current, eventType, block, oldId, sortInfoBlocks, cacheInfoBlocks));
-          });
-          const unsubscribeRotax = subscribeToRotaxTrainingChanges(({ eventType, key, item, oldId }) => {
-            if (key === 'block') {
-              setRotaxBlocks((current) => syncCollection(current, eventType, item, oldId, sortRotaxBlocks, cacheRotaxBlocks));
-            }
-            if (key === 'session') {
-              setRotaxSessions((current) =>
-                syncCollection(current, eventType, item, oldId, sortRotaxSessions, cacheRotaxSessions),
-              );
-            }
-            if (key === 'student') {
-              setRotaxStudents((current) =>
-                syncCollection(current, eventType, item, oldId, sortRotaxStudents, cacheRotaxStudents),
-              );
-            }
-            if (key === 'contact') {
-              setRotaxContacts((current) =>
-                syncCollection(current, eventType, item, oldId, sortRotaxContacts, cacheRotaxContacts),
-              );
-            }
-          });
-          const unsubscribeContractTemplates = subscribeToContractTemplateChanges(({ eventType, template, oldId }) => {
-            setContractTemplates((current) => {
-              let nextTemplates = current;
-              if ((eventType === 'INSERT' || eventType === 'UPDATE') && template) {
-                nextTemplates = [template, ...current.filter((item) => item.type !== template.type)];
-              }
-              if (eventType === 'DELETE' && oldId) {
-                nextTemplates = current.filter((item) => item.type !== oldId);
-              }
-              const sortedTemplates = [...nextTemplates].sort((a, b) => a.type.localeCompare(b.type));
-              cacheContractTemplates(sortedTemplates);
-              return sortedTemplates;
-            });
-          });
-          const unsubscribeBilling = subscribeToBillingChanges(({ collection, eventType, entry, upload, oldId }) => {
-            if (collection === 'uploads') {
-              setBillingUploads((current) => {
-                if (eventType === 'DELETE') return current.filter((item) => item.seller !== oldId);
-                if (!upload) return current;
-                return [upload, ...current.filter((item) => item.seller !== upload.seller)];
-              });
-              return;
-            }
-            setBillingEntries((current) => syncCollection(current, eventType, entry, oldId, sortBillingEntries, cacheBillingEntries));
-          });
-          const unsubscribeReturns = subscribeToReturnChanges(({ eventType, entry, oldId }) => {
-            setReturnEntries((current) => syncCollection(current, eventType, entry, oldId, sortReturnEntries, cacheReturnEntries));
-          });
-          const unsubscribeWarranties = subscribeToWarrantyChanges(({ eventType, entry, oldId }) => {
-            setWarrantyEntries((current) => syncCollection(current, eventType, entry, oldId, sortWarrantyEntries, cacheWarrantyEntries));
-          });
-          const unsubscribeReminders = subscribeToReminderChanges(({ eventType, reminder, oldId }) => {
-            setReminders((current) => syncCollection(current, eventType, reminder, oldId, sortReminders, cacheReminders));
-          });
-          const unsubscribeRegularization = subscribeToRegularizationChanges(({ eventType, entry, oldId }) => {
-            setRegularizationEntries((current) =>
-              syncCollection(current, eventType, entry, oldId, sortRegularizationEntries, cacheRegularizationEntries),
-            );
-          });
 
           unsubscribeRealtime = () => {
             unsubscribeQuotes();
-            unsubscribeOnlineQuotes();
-            unsubscribeTracking();
-            unsubscribeInfoBlocks();
-            unsubscribeRotax();
-            unsubscribeContractTemplates();
-            unsubscribeBilling();
-            unsubscribeReturns();
-            unsubscribeWarranties();
-            unsubscribeReminders();
-            unsubscribeRegularization();
           };
         }
 
         setIsLoading(false);
-
-        const backgroundTasks = [
-          { key: 'onlineQuotes', label: 'Cotações online', promise: loadOnlineQuotes() },
-          { key: 'tracking', label: 'Rastreios', promise: loadTrackingEntries() },
-          { key: 'info', label: 'Painel de informações', promise: loadInfoBlocks() },
-          { key: 'rotax', label: 'Treinamento Rotax', promise: loadRotaxTrainingData() },
-          { key: 'shippingCarriers', label: 'Transportadoras', promise: loadShippingCarriers() },
-          { key: 'uploadAudits', label: 'Auditoria de uploads', promise: loadUploadAudits() },
-          { key: 'contractTemplates', label: 'Contratos', promise: loadContractTemplates() },
-          { key: 'billing', label: 'Cobranças', promise: loadBillingEntries() },
-          { key: 'returns', label: 'Devoluções', promise: loadReturnEntries() },
-          { key: 'warranties', label: 'Garantias', promise: loadWarrantyEntries() },
-          { key: 'reminders', label: 'Lembretes', promise: loadReminders() },
-          { key: 'regularization', label: 'Regularização cadastral', promise: loadRegularizationEntries() },
-        ];
-
-        Promise.allSettled(backgroundTasks.map((task) => task.promise)).then((results) => {
-          if (!active) return;
-          const loadResults = new Map();
-          const loadErrors = [];
-
-          results.forEach((result, index) => {
-            const task = backgroundTasks[index];
-            if (result.status === 'fulfilled') {
-              loadResults.set(task.key, result.value);
-              return;
-            }
-            loadErrors.push(`${task.label}: ${result.reason?.message || 'falha ao carregar'}`);
-          });
-
-          const trackingResult = loadResults.get('tracking');
-          const infoResult = loadResults.get('info');
-          const rotaxResult = loadResults.get('rotax');
-          const shippingCarrierResult = loadResults.get('shippingCarriers');
-          const uploadAuditResult = loadResults.get('uploadAudits');
-          const contractTemplateResult = loadResults.get('contractTemplates');
-          const billingResult = loadResults.get('billing');
-          const returnResult = loadResults.get('returns');
-          const warrantyResult = loadResults.get('warranties');
-          const remindersResult = loadResults.get('reminders');
-          const regularizationResult = loadResults.get('regularization');
-          const onlineQuotesResult = loadResults.get('onlineQuotes');
-
-          if (onlineQuotesResult) setOnlineQuotes(onlineQuotesResult.onlineQuotes);
-          if (trackingResult) setTrackingEntries(trackingResult.entries);
-          if (infoResult) setInfoBlocks(infoResult.blocks);
-          if (rotaxResult) {
-            setRotaxBlocks(rotaxResult.blocks);
-            setRotaxSessions(rotaxResult.sessions);
-            setRotaxStudents(rotaxResult.students);
-            setRotaxContacts(rotaxResult.contacts);
-            setActiveRotaxSessionId((current) => current || rotaxResult.sessions[0]?.id || '');
-          }
-          if (shippingCarrierResult) {
-            setShippingCarriers(shippingCarrierResult.carriers);
-            setShippingCarrierMeta(shippingCarrierResult.meta || {});
-          }
-          if (uploadAuditResult) setUploadAudits(uploadAuditResult.audits);
-          if (contractTemplateResult) setContractTemplates(contractTemplateResult.templates);
-          if (billingResult) {
-            setBillingEntries(billingResult.entries);
-            setBillingUploads(billingResult.uploads || []);
-          }
-          if (returnResult) setReturnEntries(returnResult.entries);
-          if (warrantyResult) setWarrantyEntries(warrantyResult.entries);
-          if (remindersResult) setReminders(remindersResult.reminders);
-          if (regularizationResult) setRegularizationEntries(regularizationResult.entries);
-
-          if (loadErrors.length) {
-            setAppError(`Alguns dados secundários não carregaram: ${loadErrors.join(' | ')}`);
-          }
-        });
       })
       .catch((error) => {
         if (!active) return;
@@ -3204,8 +3053,9 @@ export function App() {
 
   useEffect(() => {
     let active = true;
+    const needsCustomers = activeView === 'customers' || activeView === 'contracts';
 
-    if (!authChecked || activeView !== 'customers' || customersLoaded) return () => {};
+    if (!authChecked || !needsCustomers || customersLoaded) return () => {};
 
     if (isSupabaseConfigured && !user) {
       setCustomers([]);
@@ -3223,13 +3073,15 @@ export function App() {
         let nextCustomers = result.customers;
         let removedDuplicates = 0;
 
-        try {
-          const cleanupResult = await removeDuplicateCustomers(nextCustomers);
-          if (!active) return;
-          nextCustomers = cleanupResult.customers;
-          removedDuplicates = cleanupResult.removedCount;
-        } catch (cleanupError) {
-          if (active) setAppError(cleanupError.message || 'Nao foi possivel limpar clientes duplicados.');
+        if (activeView === 'customers') {
+          try {
+            const cleanupResult = await removeDuplicateCustomers(nextCustomers);
+            if (!active) return;
+            nextCustomers = cleanupResult.customers;
+            removedDuplicates = cleanupResult.removedCount;
+          } catch (cleanupError) {
+            if (active) setAppError(cleanupError.message || 'Nao foi possivel limpar clientes duplicados.');
+          }
         }
 
         setCustomers(nextCustomers);
@@ -3297,6 +3149,238 @@ export function App() {
 
   useEffect(() => {
     let active = true;
+    let unsubscribe = () => {};
+
+    if (!authChecked || (isSupabaseConfigured && !user)) return () => {};
+
+    const sectionKey = activeView;
+    const lastLoadedAt = loadedSectionsRef.current.get(sectionKey) || 0;
+    const shouldReload = Date.now() - lastLoadedAt > 5 * 60 * 1000;
+    const markLoaded = () => loadedSectionsRef.current.set(sectionKey, Date.now());
+
+    async function loadSecondarySection() {
+      try {
+        if (activeView === 'onlineQuotes') {
+          if (shouldReload) {
+            const result = await loadOnlineQuotes();
+            if (!active) return;
+            setOnlineQuotes(result.onlineQuotes);
+            markLoaded();
+          }
+          if (isSupabaseConfigured) {
+            unsubscribe = subscribeToOnlineQuoteChanges(({ eventType, onlineQuote, oldId }) => {
+              setOnlineQuotes((current) =>
+                syncCollection(current, eventType, onlineQuote, oldId, sortOnlineQuotes, cacheOnlineQuotes),
+              );
+            });
+          }
+          return;
+        }
+
+        if (activeView === 'tracking') {
+          if (shouldReload) {
+            const [trackingResult, carrierResult] = await Promise.all([loadTrackingEntries(), loadShippingCarriers()]);
+            if (!active) return;
+            setTrackingEntries(trackingResult.entries);
+            setShippingCarriers(carrierResult.carriers);
+            setShippingCarrierMeta(carrierResult.meta || {});
+            markLoaded();
+            loadedSectionsRef.current.set('shippingCarriers', Date.now());
+          }
+          if (isSupabaseConfigured) {
+            unsubscribe = subscribeToTrackingChanges(({ eventType, entry, oldId }) => {
+              setTrackingEntries((current) =>
+                syncCollection(current, eventType, entry, oldId, sortTrackingEntries, cacheTrackingEntries),
+              );
+            });
+          }
+          return;
+        }
+
+        if (activeView === 'info') {
+          if (shouldReload) {
+            const result = await loadInfoBlocks();
+            if (!active) return;
+            setInfoBlocks(result.blocks);
+            markLoaded();
+          }
+          if (isSupabaseConfigured) {
+            unsubscribe = subscribeToInfoBlockChanges(({ eventType, block, oldId }) => {
+              setInfoBlocks((current) => syncCollection(current, eventType, block, oldId, sortInfoBlocks, cacheInfoBlocks));
+            });
+          }
+          return;
+        }
+
+        if (activeView === 'rotax') {
+          if (shouldReload) {
+            const result = await loadRotaxTrainingData();
+            if (!active) return;
+            setRotaxBlocks(result.blocks);
+            setRotaxSessions(result.sessions);
+            setRotaxStudents(result.students);
+            setRotaxContacts(result.contacts);
+            setActiveRotaxSessionId((current) => current || result.sessions[0]?.id || '');
+            markLoaded();
+          }
+          if (isSupabaseConfigured) {
+            unsubscribe = subscribeToRotaxTrainingChanges(({ eventType, key, item, oldId }) => {
+              if (key === 'block') {
+                setRotaxBlocks((current) => syncCollection(current, eventType, item, oldId, sortRotaxBlocks, cacheRotaxBlocks));
+              }
+              if (key === 'session') {
+                setRotaxSessions((current) =>
+                  syncCollection(current, eventType, item, oldId, sortRotaxSessions, cacheRotaxSessions),
+                );
+              }
+              if (key === 'student') {
+                setRotaxStudents((current) =>
+                  syncCollection(current, eventType, item, oldId, sortRotaxStudents, cacheRotaxStudents),
+                );
+              }
+              if (key === 'contact') {
+                setRotaxContacts((current) =>
+                  syncCollection(current, eventType, item, oldId, sortRotaxContacts, cacheRotaxContacts),
+                );
+              }
+            });
+          }
+          return;
+        }
+
+        if (activeView === 'contracts') {
+          if (shouldReload) {
+            const result = await loadContractTemplates();
+            if (!active) return;
+            setContractTemplates(result.templates);
+            markLoaded();
+          }
+          if (isSupabaseConfigured) {
+            unsubscribe = subscribeToContractTemplateChanges(({ eventType, template, oldId }) => {
+              setContractTemplates((current) => {
+                let nextTemplates = current;
+                if ((eventType === 'INSERT' || eventType === 'UPDATE') && template) {
+                  nextTemplates = [template, ...current.filter((item) => item.type !== template.type)];
+                }
+                if (eventType === 'DELETE' && oldId) nextTemplates = current.filter((item) => item.type !== oldId);
+                const sortedTemplates = [...nextTemplates].sort((a, b) => a.type.localeCompare(b.type));
+                cacheContractTemplates(sortedTemplates);
+                return sortedTemplates;
+              });
+            });
+          }
+          return;
+        }
+
+        if (activeView === 'billing') {
+          if (shouldReload) {
+            const result = await loadBillingEntries();
+            if (!active) return;
+            setBillingEntries(result.entries);
+            setBillingUploads(result.uploads || []);
+            markLoaded();
+          }
+          if (isSupabaseConfigured) {
+            unsubscribe = subscribeToBillingChanges(({ collection, eventType, entry, upload, oldId }) => {
+              if (collection === 'uploads') {
+                setBillingUploads((current) => {
+                  if (eventType === 'DELETE') return current.filter((item) => item.seller !== oldId);
+                  if (!upload) return current;
+                  return [upload, ...current.filter((item) => item.seller !== upload.seller)];
+                });
+                return;
+              }
+              setBillingEntries((current) => syncCollection(current, eventType, entry, oldId, sortBillingEntries, cacheBillingEntries));
+            });
+          }
+          return;
+        }
+
+        if (activeView === 'returns') {
+          if (shouldReload) {
+            const result = await loadReturnEntries();
+            if (!active) return;
+            setReturnEntries(result.entries);
+            markLoaded();
+          }
+          if (isSupabaseConfigured) {
+            unsubscribe = subscribeToReturnChanges(({ eventType, entry, oldId }) => {
+              setReturnEntries((current) => syncCollection(current, eventType, entry, oldId, sortReturnEntries, cacheReturnEntries));
+            });
+          }
+          return;
+        }
+
+        if (activeView === 'warranties') {
+          if (shouldReload) {
+            const result = await loadWarrantyEntries();
+            if (!active) return;
+            setWarrantyEntries(result.entries);
+            markLoaded();
+          }
+          if (isSupabaseConfigured) {
+            unsubscribe = subscribeToWarrantyChanges(({ eventType, entry, oldId }) => {
+              setWarrantyEntries((current) => syncCollection(current, eventType, entry, oldId, sortWarrantyEntries, cacheWarrantyEntries));
+            });
+          }
+          return;
+        }
+
+        if (activeView === 'reminders') {
+          if (shouldReload) {
+            const result = await loadReminders();
+            if (!active) return;
+            setReminders(result.reminders);
+            markLoaded();
+          }
+          if (isSupabaseConfigured) {
+            unsubscribe = subscribeToReminderChanges(({ eventType, reminder, oldId }) => {
+              setReminders((current) => syncCollection(current, eventType, reminder, oldId, sortReminders, cacheReminders));
+            });
+          }
+          return;
+        }
+
+        if (activeView === 'regularization') {
+          if (shouldReload) {
+            const result = await loadRegularizationEntries();
+            if (!active) return;
+            setRegularizationEntries(result.entries);
+            markLoaded();
+          }
+          if (isSupabaseConfigured) {
+            unsubscribe = subscribeToRegularizationChanges(({ eventType, entry, oldId }) => {
+              setRegularizationEntries((current) =>
+                syncCollection(current, eventType, entry, oldId, sortRegularizationEntries, cacheRegularizationEntries),
+              );
+            });
+          }
+          return;
+        }
+
+        if ((activeView === 'audit' || activeView === 'users') && isMasterUser) {
+          if (shouldReload) {
+            const result = await loadUploadAudits();
+            if (!active) return;
+            setUploadAudits(result.audits);
+            markLoaded();
+          }
+        }
+      } catch (error) {
+        if (active) setAppError(error.message || 'Não foi possível carregar os dados desta área.');
+      }
+    }
+
+    loadSecondarySection();
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [activeView, authChecked, isMasterUser, user]);
+
+  useEffect(() => {
+    let active = true;
     if (!dashboardControlLoaded || dashboardPeriod === 'current' || dashboardPeriod === 'general') {
       setDashboardSnapshotQuotes([]);
       return () => {
@@ -3350,7 +3434,7 @@ export function App() {
   useEffect(() => {
     let active = true;
     let unsubscribe = () => {};
-    if (!authChecked || (isSupabaseConfigured && !user)) {
+    if (!authChecked || activeView !== 'stockTransfers' || (isSupabaseConfigured && !user)) {
       setStockCatalog(null);
       setStockItems([]);
       setStockTransferLists([]);
@@ -3406,12 +3490,12 @@ export function App() {
       active = false;
       unsubscribe();
     };
-  }, [authChecked, user]);
+  }, [activeView, authChecked, user]);
 
   useEffect(() => {
     let active = true;
     let unsubscribe = () => {};
-    if (!authChecked || (isSupabaseConfigured && !user)) {
+    if (!authChecked || activeView !== 'rotaxParts' || (isSupabaseConfigured && !user)) {
       setRotaxPartsCatalog(null);
       return () => {};
     }
@@ -3434,13 +3518,13 @@ export function App() {
       active = false;
       unsubscribe();
     };
-  }, [authChecked, user]);
+  }, [activeView, authChecked, user]);
 
   useEffect(() => {
     let active = true;
     let unsubscribeRealtime = () => {};
 
-    if (!authChecked) return () => {};
+    if (!authChecked || (activeView !== 'rotaxRevenue' && layoutMode !== 'dashboard')) return () => {};
 
     if (isSupabaseConfigured && !user) {
       setRotaxRevenueEntries([]);
@@ -3475,7 +3559,7 @@ export function App() {
       active = false;
       unsubscribeRealtime();
     };
-  }, [authChecked, user]);
+  }, [activeView, authChecked, layoutMode, user]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
@@ -6400,7 +6484,40 @@ export function App() {
     }
   }
 
+  function loadShippingCarrierOptionsIfNeeded() {
+    const lastLoadedAt = loadedSectionsRef.current.get('shippingCarriers') || 0;
+    if (shippingCarriers.length > 0 && Date.now() - lastLoadedAt < 5 * 60 * 1000) return;
+
+    loadShippingCarriers()
+      .then((result) => {
+        setShippingCarriers(result.carriers);
+        setShippingCarrierMeta(result.meta || {});
+        loadedSectionsRef.current.set('shippingCarriers', Date.now());
+      })
+      .catch((error) => {
+        setAppError(error.message || 'Não foi possível carregar as transportadoras.');
+      });
+  }
+
+  function loadCustomerLookupForQuote(quote) {
+    if (customersLoaded) return;
+
+    loadCustomers()
+      .then((result) => {
+        setCustomers(result.customers);
+        setCustomersLoaded(true);
+        setCustomersMode(result.mode);
+        const customer = result.customers.find((item) => normalizeSearchValue(item.clientName) === normalizeSearchValue(quote.clientName));
+        if (customer?.phone) {
+          setCloseDetails((current) => (current.phone ? current : { ...current, phone: customer.phone }));
+        }
+      })
+      .catch(() => {});
+  }
+
   function openCloseModal(quote) {
+    loadShippingCarrierOptionsIfNeeded();
+    loadCustomerLookupForQuote(quote);
     setCloseModal({ quoteId: quote.id, quoteNumber: quote.quoteNumber, clientName: quote.clientName });
     const totalValue = quote.closeDetails?.totalValue || quote.quoteValue || '';
     const customer = findCustomerByName(quote.clientName);
@@ -6901,7 +7018,7 @@ export function App() {
   }
 
   async function ensureTrackingEntry(quote, details) {
-    const existingEntry = trackingEntries.find((entry) => entry.quoteId === quote.id);
+    const existingEntry = trackingEntries.find((entry) => entry.quoteId === quote.id) || await findTrackingEntryByQuoteId(quote.id);
     const nowIso = new Date().toISOString();
     const customer = findCustomerByName(quote.clientName);
     const phone = quote.phone || customer?.phone || '';

@@ -93,6 +93,23 @@ export async function loadTrackingEntries() {
   return { entries, mode: 'supabase' };
 }
 
+export async function findTrackingEntryByQuoteId(quoteId) {
+  if (!quoteId) return null;
+
+  if (!supabase) {
+    return loadLocalTrackingEntries().find((entry) => entry.quoteId === quoteId) || null;
+  }
+
+  const { data, error } = await supabase
+    .from('tracking_entries')
+    .select('*')
+    .eq('quote_id', quoteId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? toTrackingEntry(data) : null;
+}
+
 export async function createTrackingEntry(entry) {
   if (!supabase) {
     const entries = sortTrackingEntries([entry, ...loadLocalTrackingEntries()]);
